@@ -55,6 +55,20 @@ Suggested CLI exit codes:
 | `FXDNA_OFFLINE` | `false` | Prohibit model acquisition; cached/local models still work. |
 | `FXDNA_ALLOW_UPLOADS` | `true` | Allow ordinary ONNX model bytes over trusted ZMQ. Disabling does not make ZMQ authenticated. |
 
+Rationale for the `true` default (product decision, 2026-09-18): stock
+Frigate rc2 only becomes ready when its startup model transfer returns
+`model_saved=true` and `model_loaded=true`, and the sidecar deliberately
+requires a source-byte transfer on every new connection — even for a
+cached basename — because basenames are not identities and only the
+transferred bytes bind a routing identity to an exact source hash.
+Defaulting to `false` would break unmodified stock Frigate out of the box
+and defeat byte-verified identity. The security boundary is therefore the
+narrow network exposure (Compose network only, no published port by
+default, loopback/trusted-LAN only when explicitly published) plus
+bounded sizes, model validation, no arbitrary URLs/custom ops, and
+compiler resource limits. `false` remains a supported hardening mode for
+deployments that intentionally disable Frigate model transfer.
+
 Advanced limits should initially be pinned defaults in the versioned config model, with CLI overrides for development where needed—not fifty environment variables. Defaults: compiler concurrency 1, queue 8 inference requests, header 16 KiB, tensor 16 MiB, model 256 MiB, model-operation deadline 25 s (below Frigate's 30 s), inference service budget 150 ms (below default client timeout), compiler timeout 2700 s, four compiler threads, memory allowance 6 GiB. Larger models can fail explicitly; do not silently increase limits.
 
 Docker resource limits remain container settings, not magic application guarantees. A dedicated launcher must enforce compiler child limits or honestly report only aggregate container enforcement.
