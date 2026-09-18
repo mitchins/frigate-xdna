@@ -30,8 +30,7 @@ Done:
 3. **Task 05 — acceptance**: full Frigate rc2 container test, private Plus
    model fetch (needs user-supplied key/ID at runtime, never in repo),
    A→B update flow, 24 h service soak, SBOM, release report.
-4. **Project LICENSE owner**: replace `[PROJECT OWNER]` in `LICENSE` with
-   the copyright holder's name before any release.
+4. **Project LICENSE owner**: done — `Copyright (c) 2026 Mitchell Currie`.
 5. **Docker availability**: no docker/podman in this CT; install at Task 03
    (user pre-approved mid-way install).
 6. **Plus credentials/model ID**: operator key present in /root/.env
@@ -40,3 +39,6 @@ Done:
 7. **`input_dtype: float_denorm`**: contract covers only normalized float32;
    non-normalized float inputs need an explicit serving-contract decision
    (Task 02/04), not silent acceptance.
+8. **`FXDNA_ALLOW_UPLOADS` default**: stays `true` per the issued spec
+   (operator decision 2026-09-18; CodeRabbit's opt-in suggestion recorded
+   here for a future product review, not applied silently).

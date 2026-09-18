@@ -49,6 +49,7 @@ class AdminServer(threading.Thread):
                 t.start()
         finally:
             srv.close()
+            self._cleanup_socket()
 
     def _serve_one(self, conn):
         with conn:
@@ -83,6 +84,12 @@ class AdminServer(threading.Thread):
 
     def stop(self):
         self._stop_event.set()
+
+    def _cleanup_socket(self):
+        try:
+            os.unlink(self.path)
+        except FileNotFoundError:
+            pass
 
 
 def admin_call(data_dir: str, request: dict, timeout_s: float = 10.0) -> dict:

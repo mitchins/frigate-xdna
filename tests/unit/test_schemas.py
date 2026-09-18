@@ -56,12 +56,44 @@ class TestSchemas(unittest.TestCase):
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(bad, schema)
 
+    def test_descriptor_rejects_batch_and_channel_mismatch(self):
+        import copy
+        schema = load_schema("model-descriptor.schema.json")
+        base = load_fixture("yolov9s-320.descriptor.json")
+        bad = copy.deepcopy(base)
+        bad["input"]["shape"] = [2, 3, 320, 320]
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(bad, schema)
+        bad = copy.deepcopy(base)
+        bad["input"]["shape"] = [1, 320, 320, 3]  # channels-last under nchw
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(bad, schema)
+
+    def test_bundle_manifest_required_and_confined(self):
+        import copy
+        schema = load_schema("model-descriptor.schema.json")
+        base = load_fixture("yolov9s-320.descriptor.json")
+        bad = copy.deepcopy(base)
+        bad["source"] = {"kind": "onnx-bundle", "sha256": "a" * 64}
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(bad, schema)
+        bad["source"]["bundle_manifest"] = {"members": [
+            {"path": "../escape.bin", "sha256": "b" * 64, "size_bytes": 1}]}
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(bad, schema)
+
     def test_artifact_schema_rejects_absolute_paths_and_secrets(self):
         schema = load_schema("artifact.schema.json")
         doc = {"schema_version": 1, "compile_key": "a" * 64,
-               "source_sha256": "b" * 64, "artifact_sha256": "c" * 64,
-               "recipe_id": "bf16-vaiml-v1", "target_profile": "t",
+               "source_sha256": "b" * 64, "source_size_bytes": 123,
+               "artifact_sha256": "c" * 64,
+               "recipe_id": "bf16-vaiml-v1",
+               "recipe_config_sha256": "d" * 64,
+               "compiler_payload_sha256": "e" * 64,
+               "target_profile": "t",
                "artifact_compatibility_id": "fbs-v1",
+               "compile_input": {"shape": [1, 3, 320, 320],
+                                 "dtype": "float32"},
                "paths": {"rai": "/abs/model.rai", "descriptor": "d.json"}}
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)

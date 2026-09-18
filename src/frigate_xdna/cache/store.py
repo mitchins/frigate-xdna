@@ -206,8 +206,17 @@ def recover(data_dir: str, registry) -> dict:
             adopted = False
         if adopted:
             summary["adopted"].append(key)
-        else:
-            q = os.path.join(data_dir, "quarantine", f"{key}.json")
-            atomic_write(q, b'{"reason":"orphan-without-valid-manifest"}')
-            summary["quarantined"].append(key)
+            continue
+        # Invalid manifest: move the directory OUT of artifacts/ into
+        # quarantine/<key> (replacing any previous quarantine dir) so the
+        # key is recompilable and later recoveries converge. Marker records
+        # the reason; quarantine dir fsynced afterward.
+        qdir = os.path.join(data_dir, "quarantine", key)
+        if os.path.isdir(qdir) or os.path.islink(qdir):
+            shutil.rmtree(qdir)
+        os.rename(os.path.join(arts, key), qdir)
+        q = os.path.join(data_dir, "quarantine", f"{key}.json")
+        atomic_write(q, b'{"reason":"orphan-without-valid-manifest"}')
+        _fsync_dir(os.path.join(data_dir, "quarantine"))
+        summary["quarantined"].append(key)
     return summary

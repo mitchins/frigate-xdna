@@ -92,6 +92,16 @@ def apply_prune(data_dir: str, registry, plan: dict,
             removed.append(digest)
         except FileNotFoundError:
             pass
+        # Registry cleanup AFTER filesystem deletion, per CACHE.md §6:
+        # drop the sources row and clear dangling ref pointers so status
+        # can never report a missing source as present.
+        registry.execute("DELETE FROM sources WHERE sha256=?", (digest,))
+        for row in registry.query(
+                "SELECT ref FROM model_refs WHERE source_sha256=?",
+                (digest,)):
+            registry.execute(
+                "UPDATE model_refs SET source_sha256=NULL WHERE ref=?",
+                (row[0],))
         if max_bytes is not None and freed >= max_bytes:
             break
     return {"removed": removed, "freed_bytes": freed}

@@ -129,6 +129,7 @@ class Supervisor:
         if self._server is not None:
             self._server.stop()
             self._server.join(timeout=5)
+            self._server._cleanup_socket()
         self.registry.close()
         try:
             self.lock_file.close()
@@ -143,7 +144,8 @@ class Supervisor:
             job = self.prepare(req.get("ref", ""),
                                descriptor_path=req.get("descriptor"),
                                wire_name=req.get("wire_name"),
-                               refresh=bool(req.get("refresh", False)))
+                               refresh=bool(req.get("refresh", False)),
+                               maintenance=bool(req.get("maintenance", False)))
             return {"job": job}
         if cmd == "wait":
             job = self.wait_job(req.get("job_uuid", ""),
@@ -237,8 +239,19 @@ class Supervisor:
         if descriptor_path is None:
             raise FxdnaError(INVALID_ARGS, "INVALID_MODEL",
                              "local RAI import requires --descriptor FILE")
-        with open(descriptor_path) as f:
-            descriptor = json.load(f)
+        try:
+            with open(descriptor_path) as f:
+                descriptor = json.load(f)
+        except OSError as e:
+            raise FxdnaError(INVALID_ARGS, "INVALID_MODEL",
+                             f"cannot read descriptor: {descriptor_path!r}"
+                             ) from e
+        except ValueError as e:
+            raise FxdnaError(INVALID_ARGS, "INVALID_MODEL",
+                             "descriptor is not valid JSON") from e
+        if not isinstance(descriptor, dict):
+            raise FxdnaError(INVALID_ARGS, "INVALID_MODEL",
+                             "descriptor must be a JSON object")
         for need in ("artifact_sha256", "target_profile", "serving"):
             if need not in descriptor:
                 raise FxdnaError(INVALID_ARGS, "INVALID_MODEL",
@@ -350,9 +363,16 @@ class Supervisor:
             return {"ref": ref, "source_sha256": digest,
                     "state": "DOWNLOADED", "note": "imported RAI recorded"}
         # Compile key over the pinned recipe identity. Geometry comes from
-        # the inspected graph (S3), never a hardcoded constant.
+        # the inspected graph and is mandatory: a missing shape must fail
+        # (UNSUPPORTED_CONTRACT), never fall back to a default that would
+        # fabricate a compile identity.
         inspected = extra.get("inspected", {})
-        geometry = inspected.get("input_shape", [1, 3, 320, 320])
+        geometry = inspected.get("input_shape")
+        if not (isinstance(geometry, list) and len(geometry) == 4 and
+                all(isinstance(v, int) for v in geometry)):
+            raise FxdnaError(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                             "inspected input geometry missing; refusing to"
+                             " key compilation on a default shape")
         ckey = _compile_key(
             digest, COMPILER_PAYLOAD_SHA256, RECIPE_ID,
             RECIPE_CONFIG_SHA256, TARGET_PROFILE, ARTIFACT_COMPAT_ID,
@@ -495,9 +515,14 @@ class Supervisor:
         parsed = parse_ref(ref)
         inh = self.registry.get_state("inhibition")
         if inh and inh.get("ref") == parsed["ref"]:
-            self.registry.set_state("inhibition",
-                                    {"cleared": True,
-                                     "ref": parsed["ref"]})
+            # Remove the inhibition; persist the evidence separately so a
+            # later recover no longer finds it.
+            self.registry.execute("DELETE FROM service_state WHERE key=?",
+                                  ("inhibition",))
+            self.registry.set_state("last_inhibition_cleared",
+                                    {"ref": parsed["ref"],
+                                     "previous": inh,
+                                     "at": time.time()})
             return {"ref": parsed["ref"], "cleared": True}
         return {"ref": parsed["ref"], "cleared": False,
                 "note": "no inhibition recorded for this ref"}

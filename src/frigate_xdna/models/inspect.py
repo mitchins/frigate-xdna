@@ -141,21 +141,39 @@ def classify_output(outputs: list[dict]) -> dict:
                      f"not a supported raw-YOLO contract"}
 
 
+def _strict_int_list(values, what: str) -> list[int]:
+    """Validate a four-element geometry: ints only (bool is not an int
+    here), no nulls, no floats/strings. Coercion is a correctness bug:
+    reject instead."""
+    if not isinstance(values, (list, tuple)) or len(values) != 4:
+        raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                    f"invalid {what} geometry: {values!r}")
+    out = []
+    for v in values:
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                        f"invalid {what} geometry value {v!r}: integers only")
+        out.append(v)
+    return out
+
+
 def compare_plus_metadata(info: dict, inspected: dict) -> None:
     """Fail on metadata-vs-graph conflicts (SPEC §5.3).
 
     Compares input geometry only where the Plus metadata actually provides
-    it (common keys width/height, input_shape, dimensions); absent fields
-    are recorded, never guessed. Raises UNSUPPORTED_CONTRACT on conflict.
+    it (common keys width/height, input_shape, ...); absent fields are
+    recorded, never guessed. Raises UNSUPPORTED_CONTRACT on conflict.
     """
     want = None
     for key in ("input_shape", "inputShape", "dimensions", "input_dims"):
         val = info.get(key)
-        if isinstance(val, (list, tuple)) and len(val) == 4:
-            want = [int(v) for v in val]
+        if val is not None:
+            want = _strict_int_list(val, f"metadata {key}")
             break
     if want is None and isinstance(info.get("width"), int) and isinstance(
-            info.get("height"), int):
+            info.get("height"), int) and not isinstance(
+            info.get("width"), bool) and not isinstance(
+            info.get("height"), bool):
         want = [1, 3, int(info["height"]), int(info["width"])]
     if want is None:
         return  # metadata carries no geometry claim; nothing to conflict

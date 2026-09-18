@@ -4,12 +4,16 @@
   "title": "frigate-xdna compiled artifact manifest",
   "description": "Immutable compiled artifact record. No secrets, signed URLs or user-supplied absolute output paths.",
   "type": "object",
-  "required": ["schema_version", "compile_key", "source_sha256", "artifact_sha256",
-               "recipe_id", "target_profile", "artifact_compatibility_id", "paths"],
+  "required": ["schema_version", "compile_key", "source_sha256",
+               "source_size_bytes", "artifact_sha256",
+               "recipe_id", "recipe_config_sha256",
+               "compiler_payload_sha256", "target_profile",
+               "artifact_compatibility_id", "compile_input", "paths"],
   "properties": {
     "schema_version": {"const": 1},
     "compile_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_size_bytes": {"type": "integer", "minimum": 1},
     "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "artifact_size_bytes": {"type": "integer", "minimum": 1},
     "recipe_id": {"type": "string"},
@@ -19,10 +23,17 @@
     "artifact_compatibility_id": {"type": "string"},
     "compile_input": {
       "type": "object",
+      "required": ["shape", "dtype"],
       "properties": {
         "shape": {"type": "array", "items": {"type": "integer"}},
         "dtype": {"type": "string"}
-      }
+      },
+      "additionalProperties": false
+    },
+    "serving_contracts": {
+      "type": "array",
+      "description": "serving digests bound to this artifact; empty until first validation binding (CACHE.md §2)",
+      "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
     },
     "compile_stats": {
       "type": "object",

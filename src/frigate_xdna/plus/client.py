@@ -198,7 +198,7 @@ class PlusClient:
                 delay = _retry_delay(attempt, r)
                 time.sleep(delay)
         if last_exc is not None:
-            raise _redacted_error(action, None)
+            raise _redacted_error(action, None) from None
         raise _redacted_error(action, r.status_code)
 
     def _refresh_token_if_needed(self) -> None:
@@ -215,7 +215,7 @@ class PlusClient:
             self._token = str(data["accessToken"])
             self._expires = float(data.get("expires", 0) or 0)
         except (ValueError, KeyError, TypeError):
-            raise _redacted_error("token refresh", r.status_code)
+            raise _redacted_error("token refresh", r.status_code) from None
 
     def _api_get(self, path: str) -> requests.Response:
         self._refresh_token_if_needed()
@@ -224,7 +224,7 @@ class PlusClient:
                 f"{self._host}/v1/{path}", f"GET {path}",
                 headers={"authorization": f"Bearer {self._token}"})
         except requests.RequestException:
-            raise _redacted_error(f"GET {path}", None)
+            raise _redacted_error(f"GET {path}", None) from None
 
     def get_model_info(self, model_id: str) -> dict:
         r = self._api_get(f"model/{model_id}")
@@ -233,7 +233,7 @@ class PlusClient:
         try:
             data = r.json()
         except ValueError:
-            raise _redacted_error("model metadata", r.status_code)
+            raise _redacted_error("model metadata", r.status_code) from None
         if not isinstance(data, dict):
             raise _redacted_error("model metadata", r.status_code)
         return data
@@ -247,7 +247,7 @@ class PlusClient:
         try:
             url = str(r.json().get("url"))
         except (ValueError, AttributeError):
-            raise _redacted_error("signed URL", r.status_code)
+            raise _redacted_error("signed URL", r.status_code) from None
         if not _url_target_ok(url, allow_private_hosts):
             raise FxdnaError(ACQUISITION_FAILED, "ACQUISITION_FAILED",
                              "Plus signed URL target rejected (not public https)")
@@ -317,4 +317,4 @@ class PlusClient:
                 raise FxdnaError(ACQUISITION_FAILED, "ACQUISITION_FAILED",
                                  "too many download redirects")
         except requests.RequestException:
-            raise _redacted_error("download", None)
+            raise _redacted_error("download", None) from None

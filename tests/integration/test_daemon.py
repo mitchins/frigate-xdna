@@ -6,6 +6,7 @@ private Unix socket; standalone commands refuse a daemon-owned directory.
 import json
 import os
 import tempfile
+import time as _time
 import unittest
 
 from frigate_xdna.admin import admin_call
@@ -29,7 +30,6 @@ class TestDaemon(unittest.TestCase):
         self.sup.start_admin()
         self.addCleanup(self.sup.stop)
         # the server thread binds asynchronously; wait for the socket
-        import time as _time
         from frigate_xdna.admin import socket_path as _sp
         deadline = _time.monotonic() + 5.0
         while not os.path.exists(_sp(self.cfg.data_dir)):
@@ -45,11 +45,25 @@ class TestDaemon(unittest.TestCase):
         self.assertTrue(resp["ok"])
         job = resp["job"]
         self.assertIn("job_uuid", job)
-        # pump through the daemon's supervisor, wait via socket semantics
-        for _ in range(200):
-            done = self.sup.wait_job(job["job_uuid"], 0.05)
+        # Drive progress like the serve loop would; a WAIT_TIMEOUT here
+        # means "not yet", never a failure — keep pumping.
+        from frigate_xdna.errors import FxdnaError as _FxdnaError
+        deadline = _time.monotonic() + 10.0
+        while True:
+            self.sup.pump(0.2)
+            try:
+                done = self.sup.wait_job(job["job_uuid"], 0.05,
+                                         pump=False)
+            except _FxdnaError as e:
+                if e.error_code != "WAIT_TIMEOUT":
+                    raise
+                if _time.monotonic() > deadline:
+                    raise RuntimeError("job never reached PREPARED")
+                continue
             if done["stage"] == "PREPARED":
                 break
+            if _time.monotonic() > deadline:
+                raise RuntimeError("job never reached PREPARED")
         resp = admin_call(self.cfg.data_dir, {"command": "status"})
         by_ref = {m["ref"]: m["state"] for m in resp["status"]["models"]}
         self.assertEqual(by_ref[path], "PREPARED")

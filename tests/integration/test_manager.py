@@ -218,6 +218,11 @@ class TestJobsAndWait(ManagerBase):
         self.addCleanup(sup2.stop)
         self.assertTrue(os.path.isfile(
             os.path.join(self.cfg.data_dir, "quarantine", "ab" * 32 + ".json")))
+        # directory moved out of artifacts/ so the key is recompilable
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.cfg.data_dir, "quarantine", "ab" * 32)))
+        self.assertFalse(os.path.isdir(
+            os.path.join(self.cfg.data_dir, "artifacts", "ab" * 32)))
 
 
 class TestLocksPinsPrune(ManagerBase):
@@ -252,6 +257,11 @@ class TestLocksPinsPrune(ManagerBase):
         self.assertIn(rb["source_sha256"], done["removed"])
         self.assertTrue(os.path.isdir(os.path.join(
             self.cfg.data_dir, "sources", ra["source_sha256"])))
+        # registry follow-through: sources row gone, dangling ref cleared
+        self.assertIsNone(
+            self.sup.registry.get_source(rb["source_sha256"]))
+        brec = self.sup.registry.get_ref(pb)
+        self.assertIsNone(brec["source_sha256"])
 
     def test_disk_preflight(self):
         class FakeStat:

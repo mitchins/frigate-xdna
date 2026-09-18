@@ -34,5 +34,5 @@
     "frigate/util/builtin.py",
     "frigate/detectors/detection_api.py"
   ],
-  "note": "Shims are test-harness originals, never upstream code. Only the two pinned-verbatim files may be asserted byte-identical."
+  "note": "Shims are test-harness originals, never upstream code. The three pinned-verbatim files (zmq_ipc.py, detector_config.py, LICENSE) may be asserted byte-identical."
 }

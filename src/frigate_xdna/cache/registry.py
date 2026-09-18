@@ -51,32 +51,48 @@ CREATE TABLE IF NOT EXISTS service_state (
 
 
 class Registry:
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, read_only: bool = False):
+        """Open the registry.
+
+        read_only=True is for status/cache-list style commands: opens with
+        SQLite mode=ro and skips WAL setup, schema creation and version
+        writes. Newer schemas are still refused. Write methods raise
+        sqlite3.OperationalError in this mode by the engine itself.
+        """
         self.db_path = db_path
+        self.read_only = read_only
         # The daemon pumps jobs on its main thread while the admin socket
         # serves requests on another; serialize all access. The daemon
         # remains the only writer by discipline; the lock is correctness,
         # not a second-writer licence.
         self._lock = threading.RLock()
-        self.cx = sqlite3.connect(db_path, timeout=30.0,
-                                  isolation_level=None,
-                                  check_same_thread=False)
-        self._execute("PRAGMA journal_mode=WAL")
-        self._execute("PRAGMA synchronous=FULL")
-        with self._lock:
-            self.cx.executescript(_SCHEMA_V1)
-        row = self._execute(
-            "SELECT version FROM schema_version").fetchone()
-        if row is None:
+        if read_only:
+            uri = f"file:{db_path}?mode=ro"
+            self.cx = sqlite3.connect(uri, timeout=30.0, uri=True,
+                                      check_same_thread=False)
+        else:
+            self.cx = sqlite3.connect(db_path, timeout=30.0,
+                                      isolation_level=None,
+                                      check_same_thread=False)
+            self._execute("PRAGMA journal_mode=WAL")
+            self._execute("PRAGMA synchronous=FULL")
+            with self._lock:
+                self.cx.executescript(_SCHEMA_V1)
+        row = self.query("SELECT version FROM schema_version")
+        if not row:
+            if read_only:
+                raise RuntimeError(
+                    f"registry at {db_path} has no schema version;"
+                    " refusing read-only open of an uninitialized store")
             self._execute("INSERT INTO schema_version VALUES (?)",
                             (SCHEMA_VERSION,))
-        elif row[0] > SCHEMA_VERSION:
+        elif row[0][0] > SCHEMA_VERSION:
             raise RuntimeError(
-                f"registry schema v{row[0]} is newer than supported "
+                f"registry schema v{row[0][0]} is newer than supported "
                 f"v{SCHEMA_VERSION}; refusing to open")
-        elif row[0] < SCHEMA_VERSION:
+        elif row[0][0] < SCHEMA_VERSION:
             raise RuntimeError(
-                f"registry schema v{row[0]} needs migration "
+                f"registry schema v{row[0][0]} needs migration "
                 f"(no migrations shipped in v0.1)")
 
 
@@ -93,6 +109,28 @@ class Registry:
         """Locked write (safe from any thread). Autocommit mode."""
         with self._lock:
             return self.cx.execute(sql, params)
+
+    def transaction(self):
+        """Exclusive write transaction spanning multiple statements.
+
+        Takes the registry RLock and issues BEGIN IMMEDIATE so concurrent
+        submitters serialize: check-then-insert sequences inside the block
+        cannot interleave into duplicate live jobs.
+        """
+        import contextlib as _cl
+
+        @_cl.contextmanager
+        def _tx():
+            with self._lock:
+                self.cx.execute("BEGIN IMMEDIATE")
+                try:
+                    yield
+                except BaseException:
+                    self.cx.execute("ROLLBACK")
+                    raise
+                else:
+                    self.cx.execute("COMMIT")
+        return _tx()
 
     def close(self):
         self.cx.close()

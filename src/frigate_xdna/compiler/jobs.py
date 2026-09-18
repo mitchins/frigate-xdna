@@ -33,30 +33,47 @@ class JobManager:
                duration_s: float = 0.0, succeed: bool = True,
                fail_state: str = "COMPILE_FAILED",
                device_required: bool = False) -> dict:
-        """Submit or join a preparation job. Returns the job record."""
-        existing = self.registry.find_job(ref, compile_key)
-        if existing and existing["stage"] not in TERMINAL_STATES:
-            # Join the live job; record this ref as an alias so status
-            # advances for every alias sharing the compile key (S9).
-            self.registry.add_alias(existing["uuid"], ref)
-            return existing
-        if existing and existing["stage"] in TERMINAL_ERROR_STATES:
-            # No automatic retry of a deterministically failed job: report it.
-            return existing
-        if compile_key:
-            # Cross-ref dedup: different aliases sharing bytes share the
-            # compile key; join the live job instead of starting a duplicate.
-            rows = self.registry.query(
-                "SELECT uuid, ref, compile_key, stage, attempt, error_code,"
-                " progress FROM jobs WHERE compile_key=? AND stage IN"
-                f" ({','.join('?' * len(_NON_TERMINAL))})"
-                " ORDER BY created_at LIMIT 1",
-                (compile_key, *_NON_TERMINAL))
-            if rows:
-                self.registry.add_alias(rows[0][0], ref)
-                return dict(zip(("uuid", "ref", "compile_key", "stage",
-                                 "attempt", "error_code", "progress"),
-                                rows[0]))
+        """Submit or join a preparation job. Returns the job record.
+
+        Lookup and insert run inside one exclusive transaction so
+        concurrent submitters cannot create duplicate live jobs for the
+        same ref/compile key.
+        """
+        with self.registry.transaction():
+            existing = self.registry.find_job(ref, compile_key)
+            if existing and existing["stage"] not in TERMINAL_STATES:
+                # Join the live job; record this ref as an alias so status
+                # advances for every alias sharing the compile key (S9).
+                self.registry.add_alias(existing["uuid"], ref)
+                return existing
+            if existing and existing["stage"] in TERMINAL_ERROR_STATES:
+                # No automatic retry of a deterministically failed job.
+                return existing
+            if existing and existing["stage"] == "PREPARED":
+                # Reusable only with a committed artifact behind it;
+                # otherwise the key genuinely needs work (recovery path).
+                if compile_key and self.registry.get_artifact(compile_key):
+                    return existing
+            if compile_key:
+                # Cross-ref dedup: different aliases sharing bytes share
+                # the compile key; join the live job, never duplicate it.
+                rows = self.registry.query(
+                    "SELECT uuid, ref, compile_key, stage, attempt,"
+                    " error_code, progress FROM jobs WHERE compile_key=?"
+                    f" AND stage IN ({','.join('?' * len(_NON_TERMINAL))})"
+                    " ORDER BY created_at LIMIT 1",
+                    (compile_key, *_NON_TERMINAL))
+                if rows:
+                    self.registry.add_alias(rows[0][0], ref)
+                    return dict(zip(("uuid", "ref", "compile_key", "stage",
+                                     "attempt", "error_code", "progress"),
+                                    rows[0]))
+            return self._create(ref, compile_key, duration_s, succeed,
+                                fail_state, device_required)
+
+    def _create(self, ref: str, compile_key: str | None,
+                duration_s: float, succeed: bool, fail_state: str,
+                device_required: bool) -> dict:
         job_uuid = uuid.uuid4().hex
         self.registry.create_job(job_uuid, ref, compile_key, self.boot_token)
         self._backends[job_uuid] = self.backend_factory(

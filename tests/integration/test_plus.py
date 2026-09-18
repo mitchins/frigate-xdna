@@ -141,13 +141,13 @@ class TestModelFetch(PlusTestBase):
 
     def test_http_redirect_rejected(self):
         self.dl_state.download_modes["/m.onnx"] = "redirect-http"
-        self.dl_state.redirect_target = (
-            f"http://127.0.0.1:{self.dl.server_address[1]}/m.onnx")
+        self.dl_state.redirect_target = "http://example.com/m.onnx"
         c = self.client()
         url = c.get_model_download_url("MODEL_A", allow_private_hosts=LOOP)
-        # http hop is not allowlisted -> reject
+        # the loopback initial URL is allowed; rejection must happen at
+        # the non-allowlisted http redirect hop
         with self.assertRaises(FxdnaError):
-            c.download_model(url)
+            c.download_model(url, allow_private_hosts=LOOP)
 
     def test_private_ip_redirect_rejected(self):
         self.dl_state.download_modes["/m.onnx"] = "redirect-private"

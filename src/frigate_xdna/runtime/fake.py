@@ -63,11 +63,17 @@ class FakeNativeWorker:
             return bytes(ZERO_FRAME_BYTES)
         import numpy as np
 
-        canned = np.load(request.artifact_path)["expected"] \
-            if request.artifact_path.endswith(".npz") else None
-        if canned is None:
+        try:
+            if not request.artifact_path.endswith(".npz"):
+                return bytes(ZERO_FRAME_BYTES)
+            with np.load(request.artifact_path) as archive:
+                canned = archive["expected"]
+            out = np.ascontiguousarray(canned, dtype="<f4")
+        except (OSError, ValueError, KeyError):
             return bytes(ZERO_FRAME_BYTES)
-        return bytes(canned.astype("<f4", copy=False).tobytes())
+        if out.nbytes != ZERO_FRAME_BYTES:
+            return bytes(ZERO_FRAME_BYTES)
+        return bytes(out.tobytes())
 
     def retire(self) -> None:
         self.retired = True

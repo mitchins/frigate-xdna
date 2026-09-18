@@ -13,13 +13,14 @@ macOS can run suitable pure-Python/unit tests, but is not an XDNA execution plat
 Task 01 should provide a small task runner or Makefile implementing:
 
 ```
-make test-unit
-make test-contract
-make build-native
-make image
-make test-image-offline
-make test-hardware             # explicit opt-in/ownership guard
-make test-frigate-e2e          # isolated pinned Frigate, not CT110
+make test-unit                # available (Task 01)
+make test-contract            # available (Task 01)
+make test-integration         # available (Task 02)
+make build-native             # planned (Task 04)
+make image                    # planned (Task 03/05)
+make test-image-offline       # planned (Task 03)
+make test-hardware            # explicit opt-in/ownership guard (Task 04+)
+make test-frigate-e2e         # planned (Task 05)
 ```
 
 The code is not included in this spec kit; implement these commands before documenting them as available. Pin manager and compiler dependencies separately. CI must not download mutable `latest` dependencies or run tests from Frigate `dev` and describe them as rc2 compatibility.

@@ -2,6 +2,11 @@
 
 This spec kit contains documentation/examples/tasks, not an implemented service. Task 01 creates the code structure below.
 
+Implementation status (Tasks 01–02 landed): manager, CLI, cache, daemon,
+contract/integration/unit tests and fixtures exist. Compiler, native
+worker, Docker image and hardware gates remain future work (see
+docs/WORKQUEUE.md).
+
 ```
 frigate-xdna/
   README.md
@@ -77,7 +82,7 @@ frigate-xdna/
     hardware/                    # opt-in, serialized, safe named fixtures
     acceptance/                  # full Frigate synthetic-camera tests
     fixtures/                    # no private model/credentials
-    upstream.lock.json
+    upstream/upstream.lock.json
   tools/
     import_proofs.py
     prepare_test_stream.py

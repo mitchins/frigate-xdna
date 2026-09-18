@@ -68,14 +68,20 @@ def main() -> int:
             "path": path, "present": os.path.isdir(path)}
     failed = False
     for name, path in REQUIRED_FILES.items():
-        if os.path.isfile(path):
+        if not os.path.isfile(path):
+            manifest["missing"].append({"name": name, "path": path,
+                                        "reason": "not found"})
+            failed = True
+            continue
+        try:
             manifest["files"][name] = {
                 "path": path,
                 "sha256": sha256_file(path),
                 "size_bytes": os.path.getsize(path),
             }
-        else:
-            manifest["missing"].append({"name": name, "path": path})
+        except OSError as e:
+            manifest["missing"].append({"name": name, "path": path,
+                                        "reason": f"{type(e).__name__}: {e}"})
             failed = True
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     with open(out, "w") as f:

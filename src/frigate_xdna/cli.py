@@ -88,8 +88,22 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _daemon_alive(data_dir: str) -> bool:
-    return os.path.exists(socket_path(data_dir))
+def _daemon_alive(data_dir: str, timeout_s: float = 2.0) -> bool:
+    """Liveness is a bounded connection probe, not a socket-file check.
+
+    A stale control.sock after a crash must not read as a live daemon.
+    """
+    import socket as _socket
+    path = socket_path(data_dir)
+    s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    s.settimeout(timeout_s)
+    try:
+        s.connect(path)
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
 
 
 def _read_status(config, ref=None) -> dict:
@@ -106,7 +120,7 @@ def _read_status(config, ref=None) -> dict:
     # SERVING is reported only when a live manager owns the directory;
     # otherwise STARTING (or INHIBITED) — never inference readiness (B2).
     daemon = _daemon_alive(config.data_dir)
-    reg = Registry(db)
+    reg = Registry(db, read_only=True)
     try:
         if ref:
             from .models.refs import parse_ref
@@ -121,8 +135,7 @@ def _read_status(config, ref=None) -> dict:
                 " metadata_sha256, state FROM model_refs")]
         inhibition = reg.get_state("inhibition")
         state = "SERVING" if daemon else (
-            "INHIBITED" if inhibition and not inhibition.get("cleared")
-            else "STARTING")
+            "INHIBITED" if inhibition else "STARTING")
         return {"schema_version": 1, "service": "frigate-xdna",
                 "version": __version__, "state": state,
                 "active": reg.get_state("active"), "models": models,
@@ -207,9 +220,19 @@ def cmd_prepare(config, args) -> int:
                 config.data_dir,
                 {"command": "prepare", "ref": ref,
                  "refresh": args.refresh,
+                 "maintenance": args.maintenance,
                  "descriptor": args.descriptor,
                  "wire_name": args.wire_name})
-            results.append(resp["job"])
+            job = resp["job"]
+            if args.wait:
+                # Poll ref state (same loop as `wait`); the daemon pumps.
+                rc = _wait_for_state(config, ref, "PREPARED", 1800.0)
+                if rc != SUCCESS:
+                    return rc
+                job = _admin_or_raise(
+                    config.data_dir,
+                    {"command": "status", "ref": ref})["status"]
+            results.append(job)
     else:
         sup = Supervisor(config)  # takes exclusive lock or raises
         try:
@@ -228,19 +251,16 @@ def cmd_prepare(config, args) -> int:
     return SUCCESS
 
 
-def cmd_wait(config, args) -> int:
-    want = args.state.upper()
-    deadline = time.monotonic() + args.timeout
+def _wait_for_state(config, ref: str, want: str, timeout: float) -> int:
     daemon = _daemon_alive(config.data_dir)
+    deadline = time.monotonic() + timeout
     while True:
-        # INTERFACES.md: wait goes through the private admin socket when a
-        # daemon owns the data dir; standalone polls the local registry.
         if daemon:
             doc = _admin_or_raise(
                 config.data_dir,
-                {"command": "status", "ref": args.ref})["status"]
+                {"command": "status", "ref": ref})["status"]
         else:
-            doc = _read_status(config, args.ref)
+            doc = _read_status(config, ref)
         states = [m["state"] for m in doc.get("models", [])]
         if states and states[0] == want:
             print(json.dumps(doc, indent=2, sort_keys=True))
@@ -249,10 +269,15 @@ def cmd_wait(config, args) -> int:
             print(json.dumps(doc, indent=2, sort_keys=True))
             return _terminal_exit(states[0])
         if time.monotonic() >= deadline:
-            print(f"fxdna: timed out waiting for {args.ref}={want}",
+            print(f"fxdna: timed out waiting for {ref}={want}",
                   file=sys.stderr)
             return NOT_READY
         time.sleep(0.5)
+
+
+def cmd_wait(config, args) -> int:
+    return _wait_for_state(config, args.ref, args.state.upper(),
+                           args.timeout)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -308,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
                 db = os.path.join(config.data_dir, "registry.sqlite3")
                 entries, sources, pins = [], [], []
                 if os.path.isfile(db):
-                    reg = Registry(db)
+                    reg = Registry(db, read_only=True)
                     try:
                         entries = [
                             dict(zip(("compile_key", "source_sha256",
@@ -328,11 +353,13 @@ def main(argv: list[str] | None = None) -> int:
                                   "sources": sources, "pins": pins},
                                  indent=2, sort_keys=True))
                 return SUCCESS
-            if _daemon_alive(config.data_dir) and not args.apply:
-                # Dry-run prune is read-only: answer without the writer lock.
+            if _daemon_alive(config.data_dir):
+                # Both dry-run and applied prune go through the daemon's
+                # own locking; standalone owns the lock only when no
+                # daemon runs.
                 resp = _admin_or_raise(
                     config.data_dir,
-                    {"command": "prune", "apply": False,
+                    {"command": "prune", "apply": args.apply,
                      "max_bytes": args.max_bytes})
                 print(json.dumps(resp, indent=2, sort_keys=True))
                 return SUCCESS
