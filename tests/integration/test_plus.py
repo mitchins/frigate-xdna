@@ -95,6 +95,14 @@ class TestTokenFlow(PlusTestBase):
         with self.assertRaises(FxdnaError):
             self.client().get_model_info("MODEL_A")
 
+    def test_api_302_rejected_not_parsed(self):
+        # A 3xx API response has r.ok == True in requests: it must be
+        # rejected explicitly, never parsed as API data.
+        self.plus_state.model_status["MODEL_A"] = 302
+        with self.assertRaises(FxdnaError) as ctx:
+            self.client().get_model_info("MODEL_A")
+        self.assertEqual(ctx.exception.error_code, "ACQUISITION_FAILED")
+
     def test_token_redirect_rejected_not_followed(self):
         self.plus_state.token_mode = "redirect"
         self.plus_state.redirect_target = (

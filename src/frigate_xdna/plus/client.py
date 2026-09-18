@@ -181,7 +181,7 @@ class PlusClient:
     def _get_with_retry(self, url: str, action: str,
                         headers: dict | None = None,
                         auth=None) -> requests.Response:
-        last_exc = None
+        r = None
         for attempt in range(MAX_ATTEMPTS):
             try:
                 # Redirects are never followed on authenticated API calls:
@@ -193,19 +193,27 @@ class PlusClient:
                     url, headers=headers, auth=auth,
                     allow_redirects=False,
                     timeout=(CONNECT_TIMEOUT_S, READ_TIMEOUT_S))
-            except requests.RequestException as e:
-                last_exc = e
+            except requests.RequestException:
                 delay = BACKOFF_S[min(attempt, len(BACKOFF_S) - 1)]
                 time.sleep(delay)
                 continue
-            if r.ok or _retry_delay(attempt, r) is None:
+            if 200 <= r.status_code < 300:
+                return r
+            if 300 <= r.status_code < 400:
+                # Authenticated API calls never follow redirects
+                # (allow_redirects=False above): a 3xx is a terminal
+                # failure, not a success — requests' r.ok is True for
+                # 3xx, so it must be rejected explicitly before any
+                # caller can parse the body as API data.
+                raise _redacted_error(action, r.status_code) from None
+            if _retry_delay(attempt, r) is None:
                 return r
             if attempt < MAX_ATTEMPTS - 1:
                 delay = _retry_delay(attempt, r)
                 time.sleep(delay)
-        if last_exc is not None:
+        if r is None:
             raise _redacted_error(action, None) from None
-        raise _redacted_error(action, r.status_code)
+        raise _redacted_error(action, r.status_code) from None
 
     def _refresh_token_if_needed(self) -> None:
         if (self._token is not None and self._expires is not None

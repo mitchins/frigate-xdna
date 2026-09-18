@@ -196,10 +196,12 @@ class TestJobsAndWait(ManagerBase):
             **{**kw, "succeed": False, "fail_state": "COMPILE_FAILED"})
         self.sup.prepare(pa)
         self.sup.pump(1.0)
-        out = self.sup.prepare(pa)
-        self.assertEqual(out["state"], "COMPILE_FAILED")
+        # the pump loop itself maps the terminal stage onto every ref
+        # of the job (primary + aliases), not just the job row
         rec = self.sup.registry.get_ref(pa)
         self.assertEqual(rec["state"], "COMPILE_FAILED")
+        out = self.sup.prepare(pa)
+        self.assertEqual(out["state"], "COMPILE_FAILED")
 
     def test_geometry_required_for_compile_key(self):
         pa, _ = self.local_onnx("a.onnx", seed=3)

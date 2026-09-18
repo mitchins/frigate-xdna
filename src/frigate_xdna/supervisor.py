@@ -421,6 +421,12 @@ class Supervisor:
             except FxdnaError as e:
                 self.registry.set_job(row[0], "COMPILE_FAILED",
                                       error_code=e.error_code)
+                for ref in self.registry.refs_for_job(row[0]):
+                    self.registry.set_ref_state(ref, "COMPILE_FAILED")
+                continue
+            if job["stage"] in TERMINAL_ERROR_STATES:
+                for ref in self.registry.refs_for_job(row[0]):
+                    self.registry.set_ref_state(ref, job["stage"])
                 continue
             if job["stage"] == "PREPARED":
                 if job.get("compile_key"):
