@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mitchins/frigate-xdna/schemas/artifact.schema.json",
+  "title": "frigate-xdna compiled artifact manifest",
+  "description": "Immutable compiled artifact record. No secrets, signed URLs or user-supplied absolute output paths.",
+  "type": "object",
+  "required": ["schema_version", "compile_key", "source_sha256", "artifact_sha256",
+               "recipe_id", "target_profile", "artifact_compatibility_id", "paths"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "compile_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact_size_bytes": {"type": "integer", "minimum": 1},
+    "recipe_id": {"type": "string"},
+    "recipe_config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "compiler_payload_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "target_profile": {"type": "string"},
+    "artifact_compatibility_id": {"type": "string"},
+    "compile_input": {
+      "type": "object",
+      "properties": {
+        "shape": {"type": "array", "items": {"type": "integer"}},
+        "dtype": {"type": "string"}
+      }
+    },
+    "compile_stats": {
+      "type": "object",
+      "properties": {
+        "wall_s": {"type": "number"},
+        "peak_rss_kb": {"type": "integer"},
+        "scratch_bytes": {"type": "integer"}
+      }
+    },
+    "paths": {
+      "type": "object",
+      "description": "paths relative to artifacts/<compile_key>/ only; no absolute paths, no parent escapes",
+      "required": ["rai", "descriptor"],
+      "properties": {
+        "rai": {"type": "string", "pattern": "^(?!/)(?!.*\\.\\./)[^\\0]+$"},
+        "descriptor": {"type": "string", "pattern": "^(?!/)(?!.*\\.\\./)[^\\0]+$"}
+      }
+    },
+    "licence_manifest": {"type": "string"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+evidence/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+.DS_Store
+secrets/
+PLUS_API_KEY
+.env

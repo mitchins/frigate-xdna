@@ -1,0 +1,29 @@
+# requirements.lock — manager runtime (Task 01: stdlib only)
+#
+# The v0.1 foundation manager uses the Python 3.12 standard library only
+# (argparse, json, logging, os, sqlite3, unittest). No third-party runtime
+# dependencies are declared yet; later tasks add pinned entries here with
+# hashes when the manager genuinely needs them (pyzmq, HTTP client, ...).
+#
+# Development/test-only packages (installed in the dev venv, NOT shipped).
+# Regenerated from the actual venv (python 3.12.3, 2026-09-18). Contract
+# tests require pydantic+requests for the pinned Frigate import chain,
+# pyzmq+numpy for the wire protocol, jsonschema for schema validation.
+#
+#   annotated-types==0.8.0
+#   attrs==26.1.0
+#   certifi==2026.7.22
+#   charset-normalizer==3.5.1
+#   idna==3.20
+#   jsonschema==4.26.0
+#   jsonschema-specifications==2025.9.1
+#   numpy==2.5.3
+#   pydantic==2.13.5
+#   pydantic_core==2.46.5
+#   pyzmq==27.2.0
+#   referencing==0.37.0
+#   requests==2.34.2
+#   rpds-py==2026.6.3
+#   typing-inspection==0.4.4
+#   typing_extensions==4.16.0
+#   urllib3==2.8.0

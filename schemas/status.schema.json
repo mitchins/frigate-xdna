@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mitchins/frigate-xdna/schemas/status.schema.json",
+  "title": "frigate-xdna service status",
+  "type": "object",
+  "required": ["schema_version", "service", "version", "state"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "service": {"const": "frigate-xdna"},
+    "version": {"type": "string"},
+    "state": {
+      "type": "string",
+      "enum": ["STARTING", "SERVING", "DEGRADED", "INHIBITED",
+               "STOPPING", "NOT_IMPLEMENTED"]
+    },
+    "active": {
+      "type": ["object", "null"],
+      "properties": {
+        "ref": {"type": "string"},
+        "compile_key": {"type": "string"},
+        "serving_digest": {"type": "string"},
+        "generation": {"type": "integer", "minimum": 0},
+        "worker_pid": {"type": "integer"},
+        "uptime_s": {"type": "number", "minimum": 0},
+        "worker_rss_kb": {"type": "integer", "minimum": 0}
+      },
+      "required": ["ref", "compile_key", "serving_digest", "generation"]
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref", "source_sha256", "state"],
+        "properties": {
+          "ref": {"type": "string"},
+          "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "state": {
+            "type": "string",
+            "enum": ["NEW", "FETCHING", "DOWNLOADED", "INSPECTED", "QUEUED",
+                     "WAITING_FOR_DEVICE", "COMPILING", "PREPARED",
+                     "ACTIVATING", "VERIFIED", "ACTIVE", "DRAINING",
+                     "INACTIVE_VERIFIED", "AUTH_FAILED", "DOWNLOAD_FAILED",
+                     "UNSUPPORTED_CONTRACT", "COMPILE_FAILED",
+                     "RESOURCE_EXCEEDED", "VALIDATION_FAILED",
+                     "SOURCE_CHANGED", "CACHE_CORRUPT", "QUARANTINED",
+                     "INTERRUPTED", "DEVICE_BUSY", "DEVICE_FAULT",
+                     "SAFETY_INHIBITED"]
+          }
+        }
+      }
+    },
+    "jobs": {"type": "array", "description": "Task 02: job records per CACHE.md §3"},
+    "inhibition": {"type": ["object", "null"],
+                   "description": "Task 02/04: safety inhibition record or null"},
+    "counters": {"type": "object",
+                 "description": "Task 02/04: request/latency/cache counters"}
+  }
+}

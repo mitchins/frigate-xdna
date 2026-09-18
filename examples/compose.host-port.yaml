@@ -1,0 +1,7 @@
+# Optional override when Frigate uses host networking or lives outside this Docker network.
+# Default is host loopback. Set FXDNA_BIND_IP to a trusted reachable host/LXC address
+# only when necessary, and firewall access to the Frigate client. Do not publish publicly.
+services:
+  xdna:
+    ports:
+      - "${FXDNA_BIND_IP:-127.0.0.1}:5555:5555"
