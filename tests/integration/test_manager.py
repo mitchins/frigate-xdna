@@ -203,6 +203,22 @@ class TestJobsAndWait(ManagerBase):
         out = self.sup.prepare(pa)
         self.assertEqual(out["state"], "COMPILE_FAILED")
 
+    def test_terminal_failure_reaches_all_aliases(self):
+        # Shared job, two aliases: pump maps the terminal stage onto both.
+        pa, data = self.local_onnx("a.onnx", seed=3)
+        pb = os.path.join(self.cfg.data_dir, "b.onnx")
+        with open(pb, "wb") as f:
+            f.write(data)
+        orig = self.sup.jobs.backend_factory
+        self.sup.jobs.backend_factory = lambda **kw: orig(
+            **{**kw, "succeed": False, "fail_state": "COMPILE_FAILED"})
+        self.sup.prepare(pa)
+        self.sup.prepare(pb)
+        self.sup.pump(1.0)
+        for ref in (pa, pb):
+            rec = self.sup.registry.get_ref(ref)
+            self.assertEqual(rec["state"], "COMPILE_FAILED", ref)
+
     def test_geometry_required_for_compile_key(self):
         pa, _ = self.local_onnx("a.onnx", seed=3)
         with open(pa, "rb") as f:

@@ -436,6 +436,8 @@ class Supervisor:
                         self.registry.set_job(
                             row[0], "COMPILE_FAILED",
                             error_code=e.error_code)
+                        for ref in self.registry.refs_for_job(row[0]):
+                            self.registry.set_ref_state(ref, "COMPILE_FAILED")
                         continue
                     self._mark_prepared_refs(job["compile_key"])
                 else:
@@ -467,7 +469,8 @@ class Supervisor:
                     self.registry.set_ref_state(job["ref"], "PREPARED")
                 return job
             if job["stage"] in TERMINAL_ERROR_STATES:
-                self.registry.set_ref_state(job["ref"], job["stage"])
+                for ref in self.registry.refs_for_job(job_uuid):
+                    self.registry.set_ref_state(ref, job["stage"])
                 return job
             if _time.monotonic() >= deadline:
                 raise FxdnaError(NOT_READY, "WAIT_TIMEOUT",
