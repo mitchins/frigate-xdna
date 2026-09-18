@@ -1,6 +1,8 @@
 """Unit tests: CLI surface, exit codes, offline status schema."""
 import io
 import json
+import os
+import tempfile
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
 
@@ -8,13 +10,22 @@ from frigate_xdna import cli
 from frigate_xdna.errors import NOT_READY, SUCCESS
 
 
-def run_cli(argv):
+def run_cli(argv, env_extra=None):
     out, err = io.StringIO(), io.StringIO()
-    with redirect_stdout(out), redirect_stderr(err):
-        try:
-            rc = cli.main(argv)
-        except SystemExit as e:
-            rc = e.code
+    old = dict(os.environ)
+    try:
+        os.environ.update({"FXDNA_DATA_DIR": os.environ.get(
+            "FXDNA_TEST_DATA_DIR", tempfile.mkdtemp())})
+        if env_extra:
+            os.environ.update(env_extra)
+        with redirect_stdout(out), redirect_stderr(err):
+            try:
+                rc = cli.main(argv)
+            except SystemExit as e:
+                rc = e.code
+    finally:
+        os.environ.clear()
+        os.environ.update(old)
     return rc, out.getvalue(), err.getvalue()
 
 
@@ -36,25 +47,38 @@ class TestCli(unittest.TestCase):
         doc = json.loads(out)
         self.assertEqual(doc["schema_version"], 1)
         self.assertEqual(doc["service"], "frigate-xdna")
-        # foundation honesty: never claim readiness
-        self.assertNotEqual(doc["state"], "SERVING")
-        self.assertIsNone(doc["active"])
+        self.assertIn(doc["state"], ("STARTING", "SERVING"))
 
-    def test_unimplemented_commands_refuse_without_faking(self):
-        for argv in (["serve"], ["prepare", "plus://X"], ["wait", "plus://X"],
-                     ["activate", "plus://X"], ["cache", "list"],
-                     ["recover", "plus://X", "--acknowledge"]):
-            rc, _, err = run_cli(argv)
-            self.assertEqual(rc, NOT_READY, argv)
-            self.assertIn("not implemented", err, argv)
+    def test_cache_list_json_on_empty_store(self):
+        rc, out, _ = run_cli(["cache", "list", "--json"])
+        self.assertEqual(rc, SUCCESS)
+        self.assertEqual(json.loads(out)["entries"], [])
 
-    def test_health_not_ready_without_daemon(self):
+    def test_health_reports_liveness_honestly(self):
         rc, out, _ = run_cli(["health"])
-        self.assertEqual(rc, NOT_READY)
+        self.assertEqual(rc, SUCCESS)
         self.assertFalse(json.loads(out)["alive"])
+        # --ready needs an ACTIVE worker: never claimed in this build
+        rc, out, _ = run_cli(["health", "--ready"])
+        self.assertEqual(rc, NOT_READY)
+        self.assertFalse(json.loads(out)["ready"])
+
+    def test_doctor_hardware_refused_without_lease(self):
+        rc, _, err = run_cli(["doctor", "--hardware"])
+        self.assertEqual(rc, 8)
+        self.assertIn("DEVICE_UNAVAILABLE", err)
+
+    def test_doctor_passive_ok(self):
+        rc, out, _ = run_cli(["doctor"])
+        self.assertEqual(rc, SUCCESS)
+        self.assertIn("checks", json.loads(out))
+
+    def test_prepare_plus_without_key_fails_visibly(self):
+        rc, _, err = run_cli(["prepare", "plus://SOMEID"])
+        self.assertEqual(rc, 4)
+        self.assertIn("ACQUISITION_FAILED", err)
 
     def test_config_error_exit_code(self):
-        import os
         old = os.environ.get("PLUS_API_KEY"), os.environ.get("PLUS_API_KEY_FILE")
         os.environ["PLUS_API_KEY"] = "a"
         os.environ["PLUS_API_KEY_FILE"] = "b"

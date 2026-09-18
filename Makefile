@@ -11,7 +11,10 @@ test-unit:
 test-contract:
 	PYTHONPATH=$(SRC):$(UPSTREAM) $(PY) -m unittest discover -s tests/contract -t . -v
 
-test: test-unit test-contract
+test-integration:
+	PYTHONPATH=$(SRC):$(CURDIR) $(PY) -m unittest discover -s tests/integration -t . -v
+
+test: test-unit test-contract test-integration
 
 build-native:
 	@echo "not yet implemented (Task 04: native IPC worker)" >&2; exit 3

@@ -9,10 +9,11 @@ description = "Self-contained Linux XDNA detector sidecar for unmodified Frigate
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-# Manager runtime stays stdlib-only in v0.1 foundation; pinned operational
-# dependencies (pyzmq, requests, ...) are added by later tasks with lockfile
-# entries. No dependencies declared yet on purpose.
-dependencies = []
+# Manager runtime (Task 02): narrow, pinned operational dependencies only.
+dependencies = [
+    "requests==2.34.2",
+    "onnx==1.23.0",
+]
 
 [project.scripts]
 fxdna = "frigate_xdna.cli:main"
