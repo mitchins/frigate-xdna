@@ -22,7 +22,8 @@ class FakePlusState:
     def __init__(self):
         self.token_calls = 0
         self.token_expires_in_s = 3600
-        self.token_mode = "ok"  # ok | 401 | malformed
+        self.token_mode = "ok"  # ok | 401 | malformed | redirect
+        self.redirect_target = ""
         self.models: dict[str, dict] = {}
         self.signed_urls: dict[str, str] = {}
         self.model_status: dict[str, int] = {}
@@ -59,6 +60,12 @@ class FakePlusHandler(BaseHTTPRequestHandler):
                 return self._send_json(401, {"error": "bad credentials"})
             if st.token_mode == "malformed":
                 return self._send_json(200, {"nope": True})
+            if st.token_mode == "redirect":
+                self.send_response(302)
+                self.send_header("Location", st.redirect_target)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             return self._send_json(200, {
                 "accessToken": "test-token-1",
                 "expires": time.time() + st.token_expires_in_s})

@@ -1,4 +1,5 @@
 """Unit tests: fake compiler/worker lifecycle interfaces."""
+import os
 import unittest
 
 import numpy as np
@@ -73,6 +74,19 @@ class TestFakeWorker(unittest.TestCase):
         self.assertEqual(arr.shape, (20, 6))
         self.assertEqual(int(arr[0, 0]), 5)  # bus on top
         self.assertEqual(w.requests_seen, 1)
+
+    def test_corrupt_npz_returns_zeros(self):
+        import tempfile as _tf
+        with _tf.NamedTemporaryFile(suffix=".npz", delete=False) as f:
+            f.write(b"not a zip at all" * 64)
+            path = f.name
+        w = FakeNativeWorker()
+        w.load(3, "d")
+        req = self._req()
+        req.artifact_path = path
+        out = w.infer(req, b"\x00" * 1228800)
+        self.assertEqual(out, bytes(480))
+        os.unlink(path)
 
 
 if __name__ == "__main__":

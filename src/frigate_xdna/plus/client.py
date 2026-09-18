@@ -184,8 +184,14 @@ class PlusClient:
         last_exc = None
         for attempt in range(MAX_ATTEMPTS):
             try:
+                # Redirects are never followed on authenticated API calls:
+                # the Plus API does not legitimately redirect, and a 3xx
+                # to an attacker host must be rejected, not followed (a
+                # cross-host redirect would also strip the bearer and
+                # return attacker JSON to the token parser).
                 r = self._session.get(
                     url, headers=headers, auth=auth,
+                    allow_redirects=False,
                     timeout=(CONNECT_TIMEOUT_S, READ_TIMEOUT_S))
             except requests.RequestException as e:
                 last_exc = e

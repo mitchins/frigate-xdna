@@ -95,6 +95,16 @@ class TestTokenFlow(PlusTestBase):
         with self.assertRaises(FxdnaError):
             self.client().get_model_info("MODEL_A")
 
+    def test_token_redirect_rejected_not_followed(self):
+        self.plus_state.token_mode = "redirect"
+        self.plus_state.redirect_target = (
+            f"http://127.0.0.1:{self.dl.server_address[1]}/evil-follow")
+        with self.assertRaises(FxdnaError) as ctx:
+            self.client().get_model_info("MODEL_A")
+        self.assertEqual(ctx.exception.error_code, "ACQUISITION_FAILED")
+        # the redirect target was never fetched (no bearer, no follow)
+        self.assertEqual(self.dl_state.download_auth_headers, [])
+
 
 class TestModelFetch(PlusTestBase):
     def test_metadata_and_bytes(self):

@@ -226,7 +226,9 @@ def cmd_prepare(config, args) -> int:
             job = resp["job"]
             if args.wait:
                 # Poll ref state (same loop as `wait`); the daemon pumps.
-                rc = _wait_for_state(config, ref, "PREPARED", 1800.0)
+                # No status print here: prepare emits one results document.
+                rc = _wait_for_state(config, ref, "PREPARED", 1800.0,
+                                     print_success=False)
                 if rc != SUCCESS:
                     return rc
                 job = _admin_or_raise(
@@ -251,7 +253,8 @@ def cmd_prepare(config, args) -> int:
     return SUCCESS
 
 
-def _wait_for_state(config, ref: str, want: str, timeout: float) -> int:
+def _wait_for_state(config, ref: str, want: str, timeout: float,
+                    print_success: bool = True) -> int:
     daemon = _daemon_alive(config.data_dir)
     deadline = time.monotonic() + timeout
     while True:
@@ -263,7 +266,8 @@ def _wait_for_state(config, ref: str, want: str, timeout: float) -> int:
             doc = _read_status(config, ref)
         states = [m["state"] for m in doc.get("models", [])]
         if states and states[0] == want:
-            print(json.dumps(doc, indent=2, sort_keys=True))
+            if print_success:
+                print(json.dumps(doc, indent=2, sort_keys=True))
             return SUCCESS
         if states and states[0] in _TERMINAL_EXIT:
             print(json.dumps(doc, indent=2, sort_keys=True))

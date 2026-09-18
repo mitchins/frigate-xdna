@@ -166,15 +166,19 @@ def compare_plus_metadata(info: dict, inspected: dict) -> None:
     """
     want = None
     for key in ("input_shape", "inputShape", "dimensions", "input_dims"):
-        val = info.get(key)
-        if val is not None:
-            want = _strict_int_list(val, f"metadata {key}")
+        if key in info:
+            want = _strict_int_list(info[key], f"metadata {key}")
             break
-    if want is None and isinstance(info.get("width"), int) and isinstance(
-            info.get("height"), int) and not isinstance(
-            info.get("width"), bool) and not isinstance(
-            info.get("height"), bool):
-        want = [1, 3, int(info["height"]), int(info["width"])]
+    if want is None and ("width" in info or "height" in info):
+        # Present-but-invalid geometry is malformed metadata, not an
+        # absent claim: fail instead of silently skipping the comparison.
+        w, h = info.get("width"), info.get("height")
+        for v in (w, h):
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                            f"invalid metadata geometry value {v!r}:"
+                            " integers only")
+        want = [1, 3, h, w]
     if want is None:
         return  # metadata carries no geometry claim; nothing to conflict
     got = inspected["input_shape"]

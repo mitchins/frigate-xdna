@@ -187,6 +187,30 @@ class TestJobsAndWait(ManagerBase):
             self.sup.wait_job(out["job_uuid"], 0.0)
         self.assertEqual(ctx.exception.error_code, "WAIT_TIMEOUT")
 
+    def test_terminal_failure_visible_on_ref(self):
+        # A sticky terminal failure must surface on the ref, not hide
+        # behind QUEUED for a job that will never run.
+        pa, _ = self.local_onnx("a.onnx", seed=3)
+        orig = self.sup.jobs.backend_factory
+        self.sup.jobs.backend_factory = lambda **kw: orig(
+            **{**kw, "succeed": False, "fail_state": "COMPILE_FAILED"})
+        self.sup.prepare(pa)
+        self.sup.pump(1.0)
+        out = self.sup.prepare(pa)
+        self.assertEqual(out["state"], "COMPILE_FAILED")
+        rec = self.sup.registry.get_ref(pa)
+        self.assertEqual(rec["state"], "COMPILE_FAILED")
+
+    def test_geometry_required_for_compile_key(self):
+        pa, _ = self.local_onnx("a.onnx", seed=3)
+        with open(pa, "rb") as f:
+            data = f.read()
+        from frigate_xdna.errors import FxdnaError as _E
+        with self.assertRaises(_E) as ctx:
+            self.sup._ingest_source(pa, "a.onnx", data, "local", {},
+                                    False)
+        self.assertEqual(ctx.exception.error_code, "UNSUPPORTED_CONTRACT")
+
     def test_waiting_for_device(self):
         from frigate_xdna.compiler.fake import FakeCompileJob
         jm = self.sup.jobs
@@ -287,6 +311,12 @@ class TestLocksPinsPrune(ManagerBase):
                                                    "reason": "t"})
         out = self.sup.recover_ref("plus://X")
         self.assertTrue(out["cleared"])
+        # second recover finds nothing: evidence moved to a separate key
+        again = self.sup.recover_ref("plus://X")
+        self.assertFalse(again["cleared"])
+        self.assertIsNone(self.sup.registry.get_state("inhibition"))
+        kept = self.sup.registry.get_state("last_inhibition_cleared")
+        self.assertEqual(kept["ref"], "plus://X")
         out = self.sup.recover_ref("plus://Y")
         self.assertFalse(out["cleared"])
 

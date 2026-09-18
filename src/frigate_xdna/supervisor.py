@@ -256,8 +256,7 @@ class Supervisor:
             if need not in descriptor:
                 raise FxdnaError(INVALID_ARGS, "INVALID_MODEL",
                                  f"RAI descriptor lacks {need!r}")
-        with open(path, "rb") as f:
-            data = f.read(256 * 1024 * 1024 + 1)
+        data = _read_bounded(path, "local RAI")
         if sha256_bytes(data) != descriptor["artifact_sha256"]:
             raise FxdnaError(CACHE_CORRUPT, "CACHE_CORRUPT",
                              "RAI bytes do not match descriptor hash")
@@ -395,7 +394,12 @@ class Supervisor:
                              f"{pre['reserve_bytes']}, free "
                              f"{pre['free_bytes']}")
         job = self.jobs.submit(ref, ckey, **self.fake_compile)
-        self.registry.set_ref_state(ref, "QUEUED")
+        if job["stage"] in TERMINAL_ERROR_STATES:
+            # A sticky terminal failure must be visible on the ref, not
+            # masked as QUEUED by a job that will never run.
+            self.registry.set_ref_state(ref, job["stage"])
+        else:
+            self.registry.set_ref_state(ref, "QUEUED")
         out = {"ref": ref, "source_sha256": digest, "compile_key": ckey,
                "job_uuid": job["uuid"], "state": job["stage"],
                "cache_hit": False}
@@ -513,10 +517,15 @@ class Supervisor:
 
     def recover_ref(self, ref: str) -> dict:
         parsed = parse_ref(ref)
-        inh = self.registry.get_state("inhibition")
-        if inh and inh.get("ref") == parsed["ref"]:
+        with self.registry.transaction():
+            inh = self.registry.get_state("inhibition")
+            if not (inh and inh.get("ref") == parsed["ref"]):
+                return {"ref": parsed["ref"], "cleared": False,
+                        "note": "no inhibition recorded for this ref"}
             # Remove the inhibition; persist the evidence separately so a
-            # later recover no longer finds it.
+            # later recover no longer finds it. One transaction: concurrent
+            # recoveries cannot clear the same inhibition twice, and a
+            # crash rolls back both halves together.
             self.registry.execute("DELETE FROM service_state WHERE key=?",
                                   ("inhibition",))
             self.registry.set_state("last_inhibition_cleared",
@@ -524,8 +533,6 @@ class Supervisor:
                                      "previous": inh,
                                      "at": time.time()})
             return {"ref": parsed["ref"], "cleared": True}
-        return {"ref": parsed["ref"], "cleared": False,
-                "note": "no inhibition recorded for this ref"}
 
     def prune(self, apply: bool = False,
               max_bytes: int | None = None) -> dict:

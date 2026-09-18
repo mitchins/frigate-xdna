@@ -62,6 +62,7 @@ class FakeNativeWorker:
         ):
             return bytes(ZERO_FRAME_BYTES)
         import numpy as np
+        import zipfile as _zipfile
 
         try:
             if not request.artifact_path.endswith(".npz"):
@@ -69,7 +70,7 @@ class FakeNativeWorker:
             with np.load(request.artifact_path) as archive:
                 canned = archive["expected"]
             out = np.ascontiguousarray(canned, dtype="<f4")
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError, _zipfile.BadZipFile):
             return bytes(ZERO_FRAME_BYTES)
         if out.nbytes != ZERO_FRAME_BYTES:
             return bytes(ZERO_FRAME_BYTES)
