@@ -166,9 +166,24 @@ def compare_plus_metadata(info: dict, inspected: dict) -> None:
     """
     want = None
     for key in ("input_shape", "inputShape", "dimensions", "input_dims"):
-        if key in info:
-            want = _strict_int_list(info[key], f"metadata {key}")
-            break
+        if key not in info:
+            continue
+        claimed = info[key]
+        if isinstance(claimed, str):
+            # Real Frigate+ metadata carries a layout tag here
+            # (e.g. inputShape "nchw"); numeric geometry comes
+            # from width/height. Accept NCHW (our only serving
+            # layout), reject anything else explicitly. Every
+            # present key is checked: a contradicting pair cannot
+            # hide behind key order.
+            if claimed.lower() != "nchw":
+                raise _fail(
+                    UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                    f"unsupported metadata {key} layout {claimed!r}:"
+                    " only NCHW is served")
+            continue
+        if want is None:
+            want = _strict_int_list(claimed, f"metadata {key}")
     if want is None and ("width" in info or "height" in info):
         # Present-but-invalid geometry is malformed metadata, not an
         # absent claim: fail instead of silently skipping the comparison.

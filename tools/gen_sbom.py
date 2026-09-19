@@ -58,6 +58,7 @@ def main() -> int:
                     help="Local image ID (config hash unknown until push)")
     args = ap.parse_args()
 
+    out = os.path.realpath(os.path.abspath(args.out))
     vendor = load_json("packaging/vendor.lock.json")
     # Existence-checked AND bound: the file-level licence map digest
     # pins exactly which mapping this SBOM was generated against.
@@ -112,12 +113,12 @@ def main() -> int:
         },
         "components": sorted(components, key=lambda c: c["bom-ref"]),
     }
-    with open(args.out, "w", encoding="utf-8") as f:
+    with open(out, "w", encoding="utf-8") as f:
         json.dump(sbom, f, indent=2, sort_keys=True)
         f.write("\n")
     digest = hashlib.sha256(
-        open(args.out, "rb").read()).hexdigest()
-    print(f"components={len(components)} sha256={digest} -> {args.out}")
+        open(out, "rb").read()).hexdigest()
+    print(f"components={len(components)} sha256={digest} -> {out}")
     return 0
 
 

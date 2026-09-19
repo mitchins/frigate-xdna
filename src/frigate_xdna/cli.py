@@ -134,21 +134,9 @@ def _read_status(config, ref=None, show_identifiers: bool = False) -> dict:
                 "version": __version__, "state": "STARTING",
                 "active": None, "models": [],
                 "note": "no registry yet; daemon not started"}
-    from .observability.redact import (
-        abbreviate_digest,
-        load_or_create_key,
-        sanitize_ref,
-    )
+    from .observability.redact import load_or_create_key
     key = None if show_identifiers else load_or_create_key(config.data_dir)
-
-    def _view(raw_ref: str, source_sha: str, state: str) -> dict:
-        if show_identifiers:
-            return {"ref": raw_ref, "source_sha256": source_sha or "",
-                    "state": state}
-        assert key is not None
-        return {"ref": sanitize_ref(raw_ref, key),
-                "source_sha256": abbreviate_digest(source_sha or ""),
-                "state": state}
+    view = _StatusView(show_identifiers, key)
     # SERVING is reported only when a live manager owns the directory;
     # otherwise STARTING (or INHIBITED) — never inference readiness (B2).
     daemon = _daemon_alive(config.data_dir)
@@ -157,25 +145,54 @@ def _read_status(config, ref=None, show_identifiers: bool = False) -> dict:
         if ref:
             from .models.refs import parse_ref
             rec = reg.get_ref(parse_ref(ref)["ref"])
-            models = [_view(rec["ref"], rec.get("source_sha256"),
-                            rec.get("state") or "NEW")] if rec else []
+            models = [view.model(rec)] if rec else []
         else:
-            models = [_view(r[0], r[3] or "", r[5]) for r in reg.query(
+            models = [view.row(r) for r in reg.query(
                 "SELECT ref, kind, model_id, source_sha256,"
                 " metadata_sha256, state FROM model_refs")]
         inhibition = reg.get_state("inhibition")
         state = "SERVING" if daemon else (
             "INHIBITED" if inhibition else "STARTING")
-        active = reg.get_state("active")
-        if active and not show_identifiers:
-            assert key is not None
-            active = sanitize_ref(active, key)
+        active = view.active(reg.get_state("active"))
         return {"schema_version": 1, "service": "frigate-xdna",
                 "version": __version__, "state": state,
                 "active": active, "models": models,
                 "inhibition": inhibition}
     finally:
         reg.close()
+
+
+class _StatusView:
+    """Raw-or-redacted projection for status output (one policy object)."""
+
+    def __init__(self, show_identifiers: bool, key: bytes | None):
+        self.show = show_identifiers
+        self.key = key
+
+    def model(self, rec: dict) -> dict:
+        return self.triple(rec["ref"], rec.get("source_sha256"),
+                           rec.get("state") or "NEW")
+
+    def row(self, r: tuple) -> dict:
+        return self.triple(r[0], r[3] or "", r[5])
+
+    def triple(self, raw_ref: str, source_sha: str | None, state: str,
+               ) -> dict:
+        from .observability.redact import abbreviate_digest, sanitize_ref
+        if self.show:
+            return {"ref": raw_ref, "source_sha256": source_sha or "",
+                    "state": state}
+        assert self.key is not None
+        return {"ref": sanitize_ref(raw_ref, self.key),
+                "source_sha256": abbreviate_digest(source_sha or ""),
+                "state": state}
+
+    def active(self, value: str | None) -> str | None:
+        from .observability.redact import sanitize_ref
+        if value and not self.show:
+            assert self.key is not None
+            return sanitize_ref(value, self.key)
+        return value
 
 
 def cmd_diagnose(config, args) -> int:
@@ -186,90 +203,111 @@ def cmd_diagnose(config, args) -> int:
     bytes (.rai/.onnx), key/secret material, bearer tokens, signed URLs.
     Raw Plus IDs appear only with --show-identifiers (owning machine).
     """
-    from .observability.redact import (
-        abbreviate_digest,
-        load_or_create_key,
-        sanitize_obj,
-        sanitize_ref,
-        sanitize_text,
-    )
-    out = os.path.abspath(args.out)
+    from .observability.redact import load_or_create_key, sanitize_obj
+    # Canonicalize the operator-chosen directory (no symlink surprises);
+    # writing where the local operator points is the command's purpose.
+    out = os.path.realpath(os.path.abspath(args.out))
     os.makedirs(out, exist_ok=True)
     show = args.show_identifiers
     key = None if show else load_or_create_key(config.data_dir)
-    files: list[str] = []
+    writer = _BundleWriter(out)
 
-    def _write(name: str, payload) -> None:
-        path = os.path.join(out, name)
+    doc = _read_status(config, show_identifiers=show)
+    writer.write("status.json", doc if show else sanitize_obj(doc, key))
+    writer.write("config.json", sanitize_obj(config.redacted(), key) if key
+                 else config.redacted())
+    writer.write("journal-current.json",
+                 _diagnose_current(config, show, key))
+    writer.write("journal-history.tail.jsonl",
+                 _diagnose_history(config, args.history_lines, key))
+    refs_out, arts_out = _diagnose_inventory(config, show, key)
+    writer.write("registry-refs.json", refs_out)
+    writer.write("cache-inventory.json", arts_out)
+    writer.write("manifest.json", {
+        "schema_version": 1,
+        "generator": f"fxdna {__version__} diagnose",
+        "identifiers": "raw" if show else "pseudonymized",
+        "note": "Redacted bundle: no keys/tokens/signed URLs/model "
+                "bytes/raw registry. redaction.key never exported.",
+        "files": sorted(writer.files),
+    })
+    print(json.dumps({"schema_version": 1, "out": out,
+                      "identifiers": "raw" if show else "pseudonymized",
+                      "files": sorted(
+                          writer.files + ["manifest.json"])},
+                     indent=2, sort_keys=True))
+    return SUCCESS
+
+
+class _BundleWriter:
+    """One JSON/text file writer for the diagnose bundle directory."""
+
+    def __init__(self, out: str):
+        self.out = out
+        self.files: list[str] = []
+
+    def write(self, name: str, payload) -> None:
+        path = os.path.join(self.out, name)
         if isinstance(payload, (dict, list)):
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, sort_keys=True)
         else:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(payload)
-        files.append(name)
+        self.files.append(name)
 
-    doc = _read_status(config, show_identifiers=show)
-    _write("status.json", doc if show else sanitize_obj(doc, key))
-    _write("config.json", sanitize_obj(config.redacted(), key) if key
-           else config.redacted())
-    # Journal: current doc + bounded history tail, sanitized line-wise.
-    ops = os.path.join(config.data_dir, "operations")
-    cur_path = os.path.join(ops, "current.json")
-    if os.path.isfile(cur_path):
-        with open(cur_path, encoding="utf-8") as f:
-            cur = json.load(f)
-        _write("journal-current.json",
-               cur if show else sanitize_obj(cur, key))
-    hist_path = os.path.join(ops, "history.jsonl")
-    tail: list[str] = []
-    if os.path.isfile(hist_path):
-        with open(hist_path, encoding="utf-8") as f:
-            lines = f.read().splitlines()
-        tail = lines[-max(args.history_lines, 0):]
-        if key:
-            tail = [sanitize_text(line, key) for line in tail]
-    _write("journal-history.tail.jsonl", "\n".join(tail) + "\n"
-           if tail else "")
-    # Registry inventory: refs aliased, source digests abbreviated,
-    # compile keys (content hashes, non-sensitive) kept full.
-    db = os.path.join(config.data_dir, "registry.sqlite3")
+
+def _diagnose_current(config, show: bool, key: bytes | None):
+    """Sanitized journal current.json ({} when absent)."""
+    from .observability.redact import sanitize_obj
+    cur_path = os.path.join(config.data_dir, "operations", "current.json")
+    if not os.path.isfile(cur_path):
+        return {}
+    with open(cur_path, encoding="utf-8") as f:
+        cur = json.load(f)
+    return cur if show else sanitize_obj(cur, key)
+
+
+def _diagnose_history(config, history_lines: int, key: bytes | None) -> str:
+    """Bounded, line-sanitized journal history tail."""
+    from .observability.redact import sanitize_text
+    hist_path = os.path.join(config.data_dir, "operations", "history.jsonl")
+    if not os.path.isfile(hist_path):
+        return ""
+    with open(hist_path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    tail = lines[-max(history_lines, 0):]
+    if key:
+        tail = [sanitize_text(line, key) for line in tail]
+    return "\n".join(tail) + "\n" if tail else ""
+
+
+def _diagnose_inventory(config, show: bool, key: bytes | None):
+    """Sanitized (refs, artifacts) inventory: refs aliased, source
+    digests abbreviated, compile keys (content hashes) kept full."""
+    from .observability.redact import abbreviate_digest, sanitize_ref
     refs_out: list[dict] = []
     arts_out: list[dict] = []
-    if os.path.isfile(db):
-        reg = Registry(db, read_only=True)
-        try:
-            for r in reg.query(
-                    "SELECT ref, kind, state FROM model_refs"):
-                raw_ref = r[0]
-                refs_out.append({
-                    "ref": raw_ref if show else sanitize_ref(raw_ref, key),
-                    "kind": r[1], "state": r[2]})
-            for r in reg.query(
-                    "SELECT compile_key, source_sha256, artifact_size,"
-                    " recipe_id FROM artifacts"):
-                arts_out.append({
-                    "compile_key": r[0],
-                    "source_sha256": r[1] if show else
-                    abbreviate_digest(r[1] or ""),
-                    "bytes": r[2], "recipe": r[3]})
-        finally:
-            reg.close()
-    _write("registry-refs.json", refs_out)
-    _write("cache-inventory.json", arts_out)
-    _write("manifest.json", {
-        "schema_version": 1,
-        "generator": f"fxdna {__version__} diagnose",
-        "identifiers": "raw" if show else "pseudonymized",
-        "note": "Redacted bundle: no keys/tokens/signed URLs/model "
-                "bytes/raw registry. redaction.key never exported.",
-        "files": sorted(files),
-    })
-    print(json.dumps({"schema_version": 1, "out": out,
-                      "identifiers": "raw" if show else "pseudonymized",
-                      "files": sorted(files + ["manifest.json"])},
-                     indent=2, sort_keys=True))
-    return SUCCESS
+    db = os.path.join(config.data_dir, "registry.sqlite3")
+    if not os.path.isfile(db):
+        return refs_out, arts_out
+    reg = Registry(db, read_only=True)
+    try:
+        for r in reg.query("SELECT ref, kind, state FROM model_refs"):
+            refs_out.append({
+                "ref": r[0] if show else sanitize_ref(r[0], key),
+                "kind": r[1], "state": r[2]})
+        for r in reg.query(
+                "SELECT compile_key, source_sha256, artifact_size,"
+                " recipe_id FROM artifacts"):
+            arts_out.append({
+                "compile_key": r[0],
+                "source_sha256": r[1] if show else
+                abbreviate_digest(r[1] or ""),
+                "bytes": r[2], "recipe": r[3]})
+    finally:
+        reg.close()
+    return refs_out, arts_out
 
 
 # Admin error_code -> CLI exit mapping (mirrors _TERMINAL_EXIT for the
