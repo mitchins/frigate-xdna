@@ -12,6 +12,12 @@ import uuid
 from ..errors import FxdnaError, NOT_READY
 from .fake import TERMINAL_STATES, FakeCompileJob
 
+# FakeCompileJob constructor params; anything else in a submit's extra
+# mapping belongs to real backends and is filtered out here.
+_FAKE_PARAMS = frozenset({
+    "source_sha256", "compile_key", "duration_s", "succeed", "fail_state",
+    "device_required", "device_held_by_worker", "job_uuid"})
+
 _NON_TERMINAL = ("QUEUED", "WAITING_FOR_DEVICE", "COMPILING",
                  "FETCHING", "DOWNLOADED", "INSPECTED")
 
@@ -25,14 +31,17 @@ class JobManager:
     def __init__(self, registry, backend_factory=None,
                  boot_token: str | None = None):
         self.registry = registry
-        self.backend_factory = backend_factory or (lambda **kw: FakeCompileJob(**kw))
+        self.backend_factory = backend_factory or (
+            lambda **kw: FakeCompileJob(
+                **{k: v for k, v in kw.items() if k in _FAKE_PARAMS}))
         self.boot_token = boot_token
         self._backends: dict[str, FakeCompileJob] = {}
 
     def submit(self, ref: str, compile_key: str | None,
                duration_s: float = 0.0, succeed: bool = True,
                fail_state: str = "COMPILE_FAILED",
-               device_required: bool = False) -> dict:
+               device_required: bool = False,
+               extra: dict | None = None) -> dict:
         """Submit or join a preparation job. Returns the job record.
 
         Lookup and insert run inside one exclusive transaction so
@@ -69,18 +78,25 @@ class JobManager:
                                      "attempt", "error_code", "progress"),
                                     rows[0]))
             return self._create(ref, compile_key, duration_s, succeed,
-                                fail_state, device_required)
+                                fail_state, device_required,
+                                **(extra or {}))
+
+    def backend_for(self, job_uuid: str):
+        """Backend job object (for result retrieval); None if unknown."""
+        return self._backends.get(job_uuid)
 
     def _create(self, ref: str, compile_key: str | None,
                 duration_s: float, succeed: bool, fail_state: str,
-                device_required: bool) -> dict:
+                device_required: bool, **extra) -> dict:
         job_uuid = uuid.uuid4().hex
         self.registry.create_job(job_uuid, ref, compile_key, self.boot_token)
-        self._backends[job_uuid] = self.backend_factory(
-            source_sha256="", compile_key=compile_key or "",
-            duration_s=duration_s, succeed=succeed, fail_state=fail_state,
-            device_required=device_required,
-            device_held_by_worker=device_required)
+        kwargs = dict(source_sha256="", compile_key=compile_key or "",
+                      duration_s=duration_s, succeed=succeed,
+                      fail_state=fail_state, device_required=device_required,
+                      device_held_by_worker=device_required,
+                      job_uuid=job_uuid)
+        kwargs.update(extra or {})
+        self._backends[job_uuid] = self.backend_factory(**kwargs)
         return self.registry.get_job(job_uuid)
 
     def pump(self, job_uuid: str, dt_s: float) -> dict:

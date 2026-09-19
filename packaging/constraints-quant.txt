@@ -1,0 +1,11 @@
+# Quant environment pins (proven in the Phase-7.7 clean room; public PyPI).
+# torch CPU wheels come from the PyTorch CPU index (see Dockerfile).
+amd-quark==0.12.post1
+numpy==2.5.3
+onnx==1.22.0
+onnx-ir==1.0.0
+onnxruntime==1.30.0
+onnxscript==0.7.2
+onnxslim==0.1.96
+pillow==12.3.0
+torch==2.14.0+cpu

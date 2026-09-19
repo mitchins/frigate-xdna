@@ -225,16 +225,16 @@ class TestJobsAndWait(ManagerBase):
         from frigate_xdna.errors import FxdnaError as _E
         pa, _ = self.local_onnx("a.onnx", seed=3)
         out = self.sup.prepare(pa)
-        orig = self.sup._publish_fake_artifact
+        orig = self.sup._publish_result
 
         def boom(job):
             raise _E(6, "COMPILE_FAILED", "simulated publish failure")
 
-        self.sup._publish_fake_artifact = boom
+        self.sup._publish_result = boom
         try:
             done = self.sup.wait_job(out["job_uuid"], 5.0)
         finally:
-            self.sup._publish_fake_artifact = orig
+            self.sup._publish_result = orig
         self.assertEqual(done["stage"], "COMPILE_FAILED")
         rec = self.sup.registry.get_ref(pa)
         self.assertEqual(rec["state"], "COMPILE_FAILED")
@@ -252,8 +252,12 @@ class TestJobsAndWait(ManagerBase):
     def test_waiting_for_device(self):
         from frigate_xdna.compiler.fake import FakeCompileJob
         jm = self.sup.jobs
+        from frigate_xdna.compiler import jobs as _jobs_mod
         jm.backend_factory = lambda **kw: FakeCompileJob(
-            **{**kw, "device_required": True, "device_held_by_worker": True})
+            **{k: v for k, v in
+               {**kw, "device_required": True,
+                "device_held_by_worker": True}.items()
+               if k in _jobs_mod._FAKE_PARAMS})
         pa, _ = self.local_onnx("a.onnx", seed=3)
         out = self.sup.prepare(pa)
         job = jm.pump(out["job_uuid"], 1.0)

@@ -1,0 +1,11 @@
+# Manager runtime pins (Task 02; == pins, transitive closure below).
+certifi==2026.7.22
+charset-normalizer==3.5.1
+idna==3.20
+ml_dtypes==0.6.0
+numpy==2.5.3
+onnx==1.23.0
+protobuf==7.36.2
+requests==2.34.2
+typing_extensions==4.16.0
+urllib3==2.8.0
