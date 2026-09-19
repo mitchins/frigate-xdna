@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 
 # path prefix -> (source package, version, licence id, role)
 ORIGINS = [
