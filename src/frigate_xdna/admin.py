@@ -40,7 +40,7 @@ class AdminServer(threading.Thread):
             while not self._stop_event.is_set():
                 try:
                     conn, _ = srv.accept()
-                except socket.timeout:
+                except TimeoutError:
                     continue
                 # One thread per connection: a long `wait` must not wedge
                 # other admin commands behind it (SF2).
@@ -94,7 +94,7 @@ class AdminServer(threading.Thread):
 
 def admin_call(data_dir: str, request: dict, timeout_s: float = 10.0) -> dict:
     """Single admin request; raises on transport failure."""
-    from .errors import FxdnaError, NOT_READY
+    from .errors import NOT_READY, FxdnaError
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout_s)
     try:

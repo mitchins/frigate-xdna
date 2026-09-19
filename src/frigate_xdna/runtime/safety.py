@@ -73,7 +73,8 @@ def begin_operation(
 def complete_operation(
     data_dir: str, registry: Registry | None = None, clean: bool = True, error: str = ""
 ) -> None:
-    # Backward compat: old callers used complete_operation(data_dir, clean, error) positionally
+    # Backward compat: old callers used
+    # complete_operation(data_dir, clean, error) positionally
     if isinstance(registry, bool):
         clean = registry
         registry = None
@@ -84,7 +85,8 @@ def complete_operation(
             rec = json.load(f)
     except (OSError, ValueError):
         return
-    # Persist inhibition before removing journal if unclean; if this fails, preserve current.json
+    # Persist inhibition before removing journal if unclean; if this
+    # fails, preserve current.json
     if not clean and registry is not None:
         try:
             registry.set_state(

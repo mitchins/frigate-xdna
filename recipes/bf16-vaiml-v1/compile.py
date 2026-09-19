@@ -12,10 +12,9 @@ Prints: COMPILE_OK <seconds> <rai_sha256> <rai_bytes> as the last line.
 import argparse
 import hashlib
 import os
+import resource
 import sys
 import time
-
-import resource
 
 import numpy as np
 import onnx

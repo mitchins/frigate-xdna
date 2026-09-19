@@ -18,11 +18,11 @@ from .admin import admin_call, socket_path
 from .cache.registry import Registry
 from .config import load_config
 from .errors import (
-    FxdnaError,
     INVALID_ARGS,
     NOT_IMPLEMENTED,
     NOT_READY,
     SUCCESS,
+    FxdnaError,
 )
 from .supervisor import Supervisor
 
@@ -198,9 +198,10 @@ def cmd_serve(config) -> int:
     zthread = None
     zloop = None
     if config.endpoint:
-        from .transport.frigate_zmq import FrigateZmqFrontend
         import asyncio as _asyncio
         import threading as _thr
+
+        from .transport.frigate_zmq import FrigateZmqFrontend
 
         zfrontend = FrigateZmqFrontend(sup, config.endpoint)
         zloop = _asyncio.new_event_loop()
@@ -221,7 +222,8 @@ def cmd_serve(config) -> int:
         zthread.start()
         ok = ready.wait(timeout=5.0)
         if not ok or exc:
-            # Startup did not signal readiness: close frontend, wait for thread, clean up supervisor before propagating
+            # Startup did not signal readiness: close frontend, wait for
+            # thread, clean up supervisor before propagating
             try:
                 if zfrontend.sock:
                     zfrontend.sock.close(linger=0)

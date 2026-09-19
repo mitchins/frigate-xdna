@@ -6,7 +6,7 @@ Operates on the golden raw-tensor fixtures; never touches hardware.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 PROTOCOL_VERSION = 1
 
@@ -61,8 +61,9 @@ class FakeNativeWorker:
             or len(frame) != request.tensor_nbytes
         ):
             return bytes(ZERO_FRAME_BYTES)
-        import numpy as np
         import zipfile as _zipfile
+
+        import numpy as np
 
         try:
             if not request.artifact_path.endswith(".npz"):

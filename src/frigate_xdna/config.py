@@ -5,9 +5,9 @@ Stdlib only. No hardware, network, or vendor side effects on import.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from .errors import FxdnaError, INVALID_ARGS
+from .errors import INVALID_ARGS, FxdnaError
 
 DEFAULT_DATA_DIR_IMAGE = "/data"
 DEFAULT_ENDPOINT_IMAGE = "tcp://0.0.0.0:5555"

@@ -6,12 +6,10 @@ no-bearer-to-download-host guarantee. Loopback only; no real credentials.
 """
 import os
 import threading
-import time
 import unittest
 
 from frigate_xdna.errors import FxdnaError
 from frigate_xdna.plus.client import (
-    MAX_DOWNLOAD_BYTES,
     PlusClient,
     _url_target_ok,
     check_key_format,
@@ -19,7 +17,6 @@ from frigate_xdna.plus.client import (
 from tests.integration.fake_plus import (
     TEST_KEY,
     TEST_KEY_ID,
-    TEST_KEY_SECRET,
     FakeDownloadHandler,
     FakeDownloadState,
     FakePlusHandler,
@@ -190,8 +187,9 @@ class TestModelFetch(PlusTestBase):
         self.assertEqual(self.plus_state.flaky_counts["MODEL_A"], 2)
 
     def test_pinned_adapter_targets_validated_ip(self):
-        from frigate_xdna.plus.client import _PinnedHTTPSAdapter
         import requests as _rq
+
+        from frigate_xdna.plus.client import _PinnedHTTPSAdapter
         s = _rq.Session()
         s.mount("https://cdn.example.com",
                 _PinnedHTTPSAdapter("cdn.example.com", "93.184.216.34"))
@@ -242,8 +240,8 @@ class TestModelFetch(PlusTestBase):
                     tls = ctx.wrap_socket(conn, server_side=True)
                     data = tls.recv(4096)
                     seen["host_header"] = [
-                        l for l in data.decode().split("\r\n")
-                        if l.lower().startswith("host:")]
+                        line for line in data.decode().split("\r\n")
+                        if line.lower().startswith("host:")]
                     body = b"pinned-ok"
                     tls.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n"
                                 b"Connection: close\r\n\r\n" + body)
@@ -260,8 +258,9 @@ class TestModelFetch(PlusTestBase):
         t = _threading.Thread(target=serve_once, daemon=True)
         t.start()
         self.assertTrue(ready.wait(timeout=10))
-        from frigate_xdna.plus.client import _PinnedHTTPSAdapter
         import requests as _rq
+
+        from frigate_xdna.plus.client import _PinnedHTTPSAdapter
         s = _rq.Session()
         s.mount("https://test.local",
                 _PinnedHTTPSAdapter("test.local", "127.0.0.1"))
@@ -280,6 +279,7 @@ class TestModelFetch(PlusTestBase):
 
     def test_stalled_download_times_out(self):
         from unittest import mock
+
         import frigate_xdna.plus.client as pc
         self.dl_state.download_modes["/m.onnx"] = "slow"
         c = self.client()

@@ -22,7 +22,7 @@ import signal
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 COMPILE_TIMEOUT_S = 2700.0  # SPEC §9: 45-minute compiler timeout
 COMPILER_THREADS = 4  # SPEC §9: four compiler threads
@@ -137,7 +137,7 @@ def spawn(argv: list[str], env: dict[str, str], cwd: str,
                 argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
                 stdout=out, stderr=err, close_fds=True,
                 start_new_session=True)
-        except OSError as e:
+        except OSError:
             return 127, time.monotonic() - t0
         try:
             proc.wait(timeout=timeout_s)

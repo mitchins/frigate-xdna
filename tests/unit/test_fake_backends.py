@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from frigate_xdna.compiler.fake import FakeCompileJob, SLOW_COMPILE_S
+from frigate_xdna.compiler.fake import SLOW_COMPILE_S, FakeCompileJob
 from frigate_xdna.runtime.fake import FakeNativeWorker, WorkerRequest
 
 

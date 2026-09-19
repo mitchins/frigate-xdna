@@ -65,7 +65,8 @@ class SessionTable:
             del self._by_identity[k]
 
     def is_quiescent(self, generation: int) -> bool:
-        """Old generation quiescent = no binding of that generation used within QUIESCENCE_S."""
+        """Old generation quiescent: no binding of that generation used
+        within QUIESCENCE_S."""
         now = time.monotonic()
         for b in self._by_identity.values():
             if b.generation == generation and (now - b.last_used_at) < QUIESCENCE_S:
@@ -85,7 +86,13 @@ class SessionTable:
     def clear_superseded(self, compile_key: str) -> None:
         self.superseded.discard(compile_key)
 
-    def set_active(self, compile_key: str, source_sha256: str, serving_digest: str, generation: int) -> None:
+    def set_active(
+        self,
+        compile_key: str,
+        source_sha256: str,
+        serving_digest: str,
+        generation: int,
+    ) -> None:
         self.active_compile_key = compile_key
         self.active_source_sha256 = source_sha256
         self.active_serving_digest = serving_digest

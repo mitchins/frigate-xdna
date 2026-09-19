@@ -183,6 +183,7 @@ class TestStockPlugin(unittest.TestCase):
 
     def test_model_operation_timeout_is_30s(self):
         import inspect
+
         import frigate.detectors.plugins.zmq_ipc as plugin_mod
         src = inspect.getsource(plugin_mod)
         # both model paths raise the socket RCVTIMEO to 30000 ms

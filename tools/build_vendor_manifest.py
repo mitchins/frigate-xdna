@@ -230,7 +230,9 @@ def main() -> int:
     vendor_lock = {
         "schema_version": 1,
         "status": "pinned: exact audited Phase-7.7 payload (B1/B2 evidence)",
-        "payload_manifest_sha256": "8a8d28b751974205ffc4e2b87b34cd3e93584b70d8f4f3de557965aee975f4bd",
+        "payload_manifest_sha256": (
+            "8a8d28b751974205ffc4e2b87b34cd3e93584b70d8f4f3de557965aee975f4bd"
+        ),
         "components": sorted(components.values(),
                              key=lambda c: c["package"]),
     }

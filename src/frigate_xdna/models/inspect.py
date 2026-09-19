@@ -19,7 +19,7 @@ import os
 import onnx
 from onnx import TensorProto
 
-from ..errors import FxdnaError, INVALID_ARGS, UNSUPPORTED_CONTRACT
+from ..errors import INVALID_ARGS, UNSUPPORTED_CONTRACT, FxdnaError
 
 MAX_ONNX_BYTES = 256 * 1024 * 1024
 ONNX_MAGIC = b"\x08"  # protobuf field 1 (varint) — first byte of ModelProto

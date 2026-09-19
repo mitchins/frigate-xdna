@@ -34,6 +34,23 @@ ALLOWLISTED_SYMLINKS = {
     "lib/libxrt_driver_xdna.so.2": "libxrt_driver_xdna.so.2.25.260102.56.release",
 }
 
+
+def safe_join(base: str, rel: str) -> str | None:
+    """Join a manifest-relative path under base.
+
+    Returns None when the manifest entry is absolute or escapes base via
+    ``..``. The manifest is machine-generated, but this verifier is
+    supply-chain code: never let a manifest entry redirect reads outside
+    the payload root it claims to describe.
+    """
+    if os.path.isabs(rel):
+        return None
+    norm_base = os.path.normpath(base)
+    full = os.path.normpath(os.path.join(norm_base, rel))
+    if full != norm_base and not full.startswith(norm_base + os.sep):
+        return None
+    return full
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", required=True)
@@ -43,7 +60,8 @@ def main() -> int:
     ap.add_argument("--calib", required=False)
     ap.add_argument("--legal", required=False)
     args = ap.parse_args()
-    manifest = json.load(open(args.manifest))
+    with open(args.manifest) as mf:
+        manifest = json.load(mf)
     errors = 0
     seen = set()
     # Map manifest prefix -> (cli arg, strip)
@@ -65,7 +83,11 @@ def main() -> int:
             print(f"MISSING {rel} (no base dir supplied)")
             errors += 1
             continue
-        full = os.path.join(base, local)
+        full = safe_join(base, local)
+        if full is None:
+            print(f"TRAVERSAL {rel}")
+            errors += 1
+            continue
         seen.add(os.path.normpath(full))
         if not os.path.isfile(full) or os.path.islink(full):
             print(f"MISSING {rel}")

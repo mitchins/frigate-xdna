@@ -34,7 +34,8 @@ def nms(boxes_xyxy, scores, iou_thr, top_k=20):
         xx2 = np.minimum(boxes_xyxy[i, 2], boxes_xyxy[order[1:], 2])
         yy2 = np.minimum(boxes_xyxy[i, 3], boxes_xyxy[order[1:], 3])
         inter = np.maximum(0.0, xx2 - xx1) * np.maximum(0.0, yy2 - yy1)
-        area_i = (boxes_xyxy[i, 2] - boxes_xyxy[i, 0]) * (boxes_xyxy[i, 3] - boxes_xyxy[i, 1])
+        area_i = ((boxes_xyxy[i, 2] - boxes_xyxy[i, 0])
+                  * (boxes_xyxy[i, 3] - boxes_xyxy[i, 1]))
         area_j = ((boxes_xyxy[order[1:], 2] - boxes_xyxy[order[1:], 0])
                   * (boxes_xyxy[order[1:], 3] - boxes_xyxy[order[1:], 1]))
         union = area_i + area_j - inter + 1e-9
@@ -46,11 +47,14 @@ def build(n, res, seed=7):
     rng = np.random.default_rng(seed)
     raw = np.zeros((1, 4 + CLASSES, n), dtype=np.float32)
     # background: low uniform noise
-    raw[0, 4:, :] = (rng.random((CLASSES, n), dtype=np.float32) * 0.05).astype(np.float32)
+    raw[0, 4:, :] = (
+        rng.random((CLASSES, n), dtype=np.float32) * 0.05
+    ).astype(np.float32)
     # planted detections: (class, score, cx, cy, w, h) in pixels
     plants = [
         (5, 0.93, res * 0.50, res * 0.45, res * 0.95, res * 0.46),
-        (5, 0.88, res * 0.51, res * 0.46, res * 0.93, res * 0.44),  # dup of above (NMS kills)
+        # dup of above (NMS kills)
+        (5, 0.88, res * 0.51, res * 0.46, res * 0.93, res * 0.44),
         (0, 0.81, res * 0.18, res * 0.60, res * 0.24, res * 0.44),
         (0, 0.62, res * 0.83, res * 0.58, res * 0.17, res * 0.44),
         (2, 0.41, res * 0.35, res * 0.70, res * 0.12, res * 0.10),
