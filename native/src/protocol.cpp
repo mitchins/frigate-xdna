@@ -32,11 +32,18 @@ std::string to_string(MessageType t) {
 static std::string json_escape(const std::string& s) {
     std::string o;
     o.reserve(s.size()+2);
-    for (char c : s) {
-        if (c == '"' || c == '\\') { o.push_back('\\'); o.push_back(c); }
+    for (unsigned char c : s) {
+        if (c == '"' || c == '\\') { o.push_back('\\'); o.push_back((char)c); }
         else if (c == '\n') o += "\\n";
         else if (c == '\r') o += "\\r";
-        else o.push_back(c);
+        else if (c == '\b') o += "\\b";
+        else if (c == '\f') o += "\\f";
+        else if (c == '\t') o += "\\t";
+        else if (c < 0x20) {
+            char buf[7];
+            std::snprintf(buf, sizeof(buf), "\\u%04X", c);
+            o += buf;
+        } else o.push_back((char)c);
     }
     return o;
 }
@@ -159,10 +166,9 @@ bool validate_header(const Header& h, std::string& err) {
     if (h.message_type==MessageType::UNKNOWN) { err="unknown message_type"; return false; }
     if (h.request_id < 0) { err="negative request_id"; return false; }
     if (h.worker_generation < 0) { err="negative worker_generation"; return false; }
-    if (h.payload_length > MAX_TENSOR_BYTES && h.payload_length != RESULT_BYTES) {
-        // RESULT is 480 bytes, INFER up to 16 MiB
-        if (h.payload_length > MAX_TENSOR_BYTES) { err="payload_length exceeds 16 MiB"; return false; }
-    }
+    size_t limit = (h.message_type==MessageType::LOAD) ? MAX_MODEL_BYTES : MAX_TENSOR_BYTES;
+    if (h.message_type==MessageType::RESULT) limit = RESULT_BYTES;
+    if (h.payload_length > limit) { err="payload_length exceeds bound"; return false; }
     if (h.error_message.size() > 1024) { err="error_message too long"; return false; }
     // No pointers cross boundary – artifact_path must be supervisor-controlled absolute path, no traversal
     if (h.message_type==MessageType::LOAD && h.artifact_path.empty()) { err="LOAD requires artifact_path"; return false; }
@@ -240,7 +246,9 @@ bool recv_message(int fd, Header& hdr, std::vector<uint8_t>& payload, std::strin
     if (!validate_header(hdr,err)) return false;
     payload.clear();
     if (hdr.payload_length){
-        if (hdr.payload_length > MAX_TENSOR_BYTES) { err="payload_length exceeds bound"; return false; }
+        size_t limit = (hdr.message_type==MessageType::LOAD) ? MAX_MODEL_BYTES : MAX_TENSOR_BYTES;
+        if (hdr.message_type==MessageType::RESULT) limit = RESULT_BYTES;
+        if (hdr.payload_length > limit) { err="payload_length exceeds bound"; return false; }
         payload.resize(hdr.payload_length);
         if (!read_n(fd,payload.data(),hdr.payload_length)) { err="read payload failed"; return false; }
     }

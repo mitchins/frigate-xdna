@@ -48,9 +48,22 @@ if(NOT FLEXMLRT_LIB)
     set(FLEXMLRT_LIB flexmlrt)
 endif()
 
-# XRT (XDNA userspace) – ordinary system libs
-find_library(XRT_CORE_LIB xrt_core)
-find_library(XRT_COREUTIL_LIB xrt_coreutil)
+# XRT (XDNA userspace) – vendored runtime via explicit XRT root, fail if missing
+set(XRT_ROOT "/tmp/xrt" CACHE PATH "Vendored XRT root (from packaging/vendor-input/xrt)")
+find_library(XRT_CORE_LIB xrt_core
+    PATHS ${XRT_ROOT}/lib /tmp/xrt/lib ${CMAKE_SOURCE_DIR}/../packaging/vendor-input/xrt/lib
+    NO_DEFAULT_PATH
+)
+find_library(XRT_COREUTIL_LIB xrt_coreutil
+    PATHS ${XRT_ROOT}/lib /tmp/xrt/lib ${CMAKE_SOURCE_DIR}/../packaging/vendor-input/xrt/lib
+    NO_DEFAULT_PATH
+)
+if(NOT XRT_CORE_LIB)
+    message(FATAL_ERROR "XRT_CORE_LIB not found in vendored ${XRT_ROOT}/lib; pass -DXRT_ROOT=/path/to/xrt")
+endif()
+if(NOT XRT_COREUTIL_LIB)
+    message(FATAL_ERROR "XRT_COREUTIL_LIB not found in vendored ${XRT_ROOT}/lib; pass -DXRT_ROOT=/path/to/xrt")
+endif()
 
 add_executable(fxdna-worker
     src/main.cpp

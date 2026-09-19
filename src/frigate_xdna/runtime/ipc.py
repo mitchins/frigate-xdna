@@ -36,8 +36,6 @@ def _recv_exact(sock: socket.socket, n: int) -> bytes:
         if not chunk:
             raise ConnectionError("ipc peer closed")
         buf.extend(chunk)
-        if len(buf) > MAX_HEADER_BYTES + MAX_TENSOR_BYTES + 1024:
-            raise ValueError("ipc message too large")
     return bytes(buf)
 
 

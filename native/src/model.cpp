@@ -113,6 +113,11 @@ size_t Model::input_elements() const {
     return n;
 }
 
+std::vector<uint32_t> Model::input_shape() const {
+    if (inputs_.empty()) return {};
+    return inputs_[0].getMetadata().shape;
+}
+
 size_t Model::output_elements() const {
     if (outputs_.empty()) return 0;
     size_t n = 1;
@@ -122,11 +127,30 @@ size_t Model::output_elements() const {
 
 size_t Model::output_cols() const {
     if (outputs_.empty()) return 0;
-    size_t bytes = outputs_[0].getMetadata().size;
-    if (bytes < 84 * sizeof(float)) return 0;
+    auto meta = outputs_[0].getMetadata();
+    auto shape = meta.shape;
+    // Accept only row-major [84,N] or [1,84,N] (batch dimension documented)
+    size_t cols = 0;
+    if (shape.size()==2 && shape[0]==84) cols = shape[1];
+    else if (shape.size()==3 && shape[0]==1 && shape[1]==84) cols = shape[2];
+    else if (shape.size()==1) {
+        // Fallback: derive from byte count but validate
+        size_t bytes = meta.size;
+        if (bytes < 84 * sizeof(float)) return 0;
+        size_t elems = bytes / sizeof(float);
+        if (elems % 84 != 0) return 0;
+        cols = elems / 84;
+    } else {
+        return 0; // incompatible or transposed shape
+    }
+    // Validate byte count matches shape product
+    size_t bytes = meta.size;
     size_t elems = bytes / sizeof(float);
-    if (elems % 84 != 0) return 0;
-    return elems / 84; // 2100 @320, 8400 @640
+    if (cols==0 || elems != 84 * cols) return 0;
+    if (cols != 2100 && cols != 8400) {
+        // Allow other N but log via return 0 for unsupported? Keep 2100/8400 as proven, but accept others if validated
+    }
+    return cols; // 2100 @320, 8400 @640
 }
 
 } // namespace fxdna

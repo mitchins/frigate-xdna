@@ -71,8 +71,12 @@ def begin_operation(
 
 
 def complete_operation(
-    data_dir: str, clean: bool = True, error: str = ""
+    data_dir: str, registry: Registry | None = None, clean: bool = True, error: str = ""
 ) -> None:
+    # Backward compat: old callers used complete_operation(data_dir, clean, error) positionally
+    if isinstance(registry, bool):
+        clean = registry
+        registry = None
     cur = os.path.join(data_dir, JOURNAL_CURRENT)
     hist = os.path.join(data_dir, JOURNAL_HISTORY)
     try:
@@ -80,6 +84,22 @@ def complete_operation(
             rec = json.load(f)
     except (OSError, ValueError):
         return
+    # Persist inhibition before removing journal if unclean
+    if not clean and registry is not None:
+        try:
+            registry.set_state(
+                "inhibition",
+                {
+                    "reason": "unclean_operation",
+                    "operation": rec.get("operation"),
+                    "artifact": rec.get("artifact"),
+                    "error": error,
+                    "at": time.time(),
+                    "boot_token": _boot_token(),
+                },
+            )
+        except Exception:
+            pass
     rec["completed"] = True
     rec["clean"] = clean
     rec["error"] = error
@@ -107,13 +127,6 @@ def complete_operation(
         os.unlink(cur)
     except OSError:
         pass
-    # if unclean, set inhibition
-    if not clean:
-        try:
-            # registry may be None in some contexts
-            from ..supervisor import Supervisor as _Sup  # avoid cycle
-        except ImportError:
-            pass
 
 
 def check_inhibited(data_dir: str, registry: Registry) -> dict | None:
@@ -124,23 +137,23 @@ def check_inhibited(data_dir: str, registry: Registry) -> dict | None:
             return inh
     except Exception:
         pass
-    # also check journal for unclean completion
+    # also check journal for unclean completion (after exclusive ownership)
     cur = os.path.join(data_dir, JOURNAL_CURRENT)
     if os.path.exists(cur):
         try:
             with open(cur) as f:
                 rec = json.load(f)
-            # if not completed and boot token changed, it's interrupted
             if not rec.get("completed"):
+                # Any unfinished journal from a previous operation is interrupted,
+                # even on same boot after a process restart (exclusive lock held)
                 current_boot = _boot_token()
-                if rec.get("boot_token") != current_boot:
-                    return {
-                        "reason": "interrupted_unsafe_operation",
-                        "operation": rec.get("operation"),
-                        "artifact": rec.get("artifact"),
-                        "previous_boot": rec.get("boot_token"),
-                        "current_boot": current_boot,
-                    }
+                return {
+                    "reason": "interrupted_unsafe_operation",
+                    "operation": rec.get("operation"),
+                    "artifact": rec.get("artifact"),
+                    "previous_boot": rec.get("boot_token"),
+                    "current_boot": current_boot,
+                }
         except (OSError, ValueError):
             pass
     return None

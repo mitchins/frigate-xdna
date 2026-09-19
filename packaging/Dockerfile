@@ -88,11 +88,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends cmake g++ pkg-c
     && cmake -S /tmp/native -B /tmp/native/build \
         -DFLEXMLRT_INCLUDE_DIR=/tmp/flexmlrt/include \
         -DFLEXMLRT_LIB=/tmp/flexmlrt/lib/libflexmlrt.so \
-        -DXRT_INCLUDE_DIR=/tmp/xrt/include \
+        -DXRT_ROOT=/tmp/xrt \
         -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /tmp/native/build -j4 \
     && mkdir -p /opt/fxdna/native \
-    && cp /tmp/native/build/fxdna-worker /opt/fxdna/native/ 2>/dev/null || echo "native stub: FlexMLRT headers not in vendor-input, using reference build path" \
+    && cp /tmp/native/build/fxdna-worker /opt/fxdna/native/ \
     && rm -rf /var/lib/apt/lists/* /tmp/native/build
 
 FROM base AS final

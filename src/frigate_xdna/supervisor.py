@@ -638,8 +638,10 @@ class Supervisor:
         inspected. This is the content-bound path; basename is only an alias.
         """
         # Reuse _ingest_source logic but with pre-inspected contract
-        # Use alias as ref for registry (local file-like)
-        ref = alias
+        # Ref must be content-bound (source_sha256), not alias, so same
+        # model_name with different bytes gets distinct refs and never
+        # triggers SOURCE_CHANGED on alias collision.
+        ref = f"zmq-upload:{source_sha256}"
         # Ensure ref is registered as a local file ref for tracking
         # (we use a synthetic ref that looks like a local path)
         parsed = {"ref": ref, "kind": "onnx", "id": None, "path": ref}

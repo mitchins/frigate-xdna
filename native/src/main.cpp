@@ -148,10 +148,11 @@ int main(int argc, char** argv){
                 uint8_t zeros[RESULT_BYTES]={}; std::string se; send_message(fd,rep,zeros,RESULT_BYTES,se);
                 continue;
             }
-            // Finite check before forward (independent validation)
+            // Finite check before forward (independent validation) – copy to aligned storage
             size_t elems = payload.size()/4;
-            float* fptr = reinterpret_cast<float*>(payload.data());
-            if(!validate_finite(fptr, elems)){
+            std::vector<float> aligned(elems);
+            std::memcpy(aligned.data(), payload.data(), payload.size());
+            if(!validate_finite(aligned.data(), elems)){
                 Header rep; rep.protocol_version=PROTOCOL_VERSION; rep.message_type=MessageType::RESULT;
                 rep.request_id=hdr.request_id; rep.worker_generation=worker_generation;
                 rep.error_code="INVALID_ARGS"; rep.error_message="non-finite input"; rep.payload_length=RESULT_BYTES;
@@ -159,16 +160,31 @@ int main(int argc, char** argv){
                 continue;
             }
             // Bind user buffers via getIOTensors handles (preserved)
-            // Validate byte count matches model input
-            size_t model_in = model.input_elements();
-            if(model_in && model_in != elems){
-                Header rep; rep.protocol_version=PROTOCOL_VERSION; rep.message_type=MessageType::RESULT;
-                rep.request_id=hdr.request_id; rep.worker_generation=worker_generation;
-                rep.error_code="INVALID_ARGS"; rep.error_message="tensor byte count mismatch model"; rep.payload_length=RESULT_BYTES;
-                uint8_t zeros[RESULT_BYTES]={}; std::string se; send_message(fd,rep,zeros,RESULT_BYTES,se);
-                continue;
+            // Validate complete shape matches model input, not just element count
+            {
+                auto model_shape = model.input_shape();
+                bool shape_ok = false;
+                if(!model_shape.empty() && model_shape.size()==hdr.tensor_spec.shape.size()){
+                    shape_ok = true;
+                    for(size_t i=0;i<model_shape.size();++i) if((int)model_shape[i]!=hdr.tensor_spec.shape[i]) shape_ok=false;
+                }
+                if(!model_shape.empty() && !shape_ok){
+                    Header rep; rep.protocol_version=PROTOCOL_VERSION; rep.message_type=MessageType::RESULT;
+                    rep.request_id=hdr.request_id; rep.worker_generation=worker_generation;
+                    rep.error_code="INVALID_ARGS"; rep.error_message="tensor shape mismatch model"; rep.payload_length=RESULT_BYTES;
+                    uint8_t zeros[RESULT_BYTES]={}; std::string se; send_message(fd,rep,zeros,RESULT_BYTES,se);
+                    continue;
+                }
+                size_t model_in = model.input_elements();
+                if(model_in && model_in != elems){
+                    Header rep; rep.protocol_version=PROTOCOL_VERSION; rep.message_type=MessageType::RESULT;
+                    rep.request_id=hdr.request_id; rep.worker_generation=worker_generation;
+                    rep.error_code="INVALID_ARGS"; rep.error_message="tensor byte count mismatch model"; rep.payload_length=RESULT_BYTES;
+                    uint8_t zeros[RESULT_BYTES]={}; std::string se; send_message(fd,rep,zeros,RESULT_BYTES,se);
+                    continue;
+                }
             }
-            model.inputs()[0].data = fptr;
+            model.inputs()[0].data = aligned.data();
             if(outbuf.empty()) outbuf.assign(model.output_elements(), 0.0f);
             model.outputs()[0].data = outbuf.data();
             std::string fwd_err;

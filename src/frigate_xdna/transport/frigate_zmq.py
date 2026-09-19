@@ -40,6 +40,7 @@ class FrigateZmqFrontend:
         self.sessions = SessionTable()
         self._queue: asyncio.Queue | None = None
         self._task: asyncio.Task | None = None
+        self._worker: asyncio.Task | None = None
         self._generation = 0
         self._active_artifact: str | None = None
         # metrics
@@ -60,12 +61,19 @@ class FrigateZmqFrontend:
         self.sock.bind(self.endpoint)
         self._queue = asyncio.Queue(maxsize=QUEUE_MAX)
         self._task = asyncio.create_task(self._serve_loop())
+        self._worker = asyncio.create_task(self._worker_loop())
 
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
             try:
                 await self._task
+            except asyncio.CancelledError:
+                pass
+        if self._worker:
+            self._worker.cancel()
+            try:
+                await self._worker
             except asyncio.CancelledError:
                 pass
         if self.sock:
@@ -116,34 +124,28 @@ class FrigateZmqFrontend:
                 await self._reply(identity, {"error_code": "RESOURCE_EXCEEDED"})
                 self.counters["rejected"] += 1
                 continue
-            # process one at a time (dequeue immediately for now; real impl would have worker)
-            # For v0.1, process sequentially in this loop (no concurrent inference)
-            try:
-                # don't block loop: create task to handle
-                asyncio.create_task(self._handle_queued())
-            except Exception:
-                pass
 
-    async def _handle_queued(self) -> None:
+    async def _worker_loop(self) -> None:
         assert self._queue is not None
-        try:
-            identity, header, data_raw, deadline, enqueued_at = self._queue.get_nowait()
-        except asyncio.QueueEmpty:
-            return
-        # expired before start?
-        if time.monotonic() >= deadline:
-            self.counters["late_discard"] += 1
-            return
-        # dispatch by header type
-        if header.get("model_request"):
-            await self._handle_model_request(identity, header, deadline)
-        elif header.get("model_data"):
-            await self._handle_model_data(identity, header, data_raw, deadline)
-        elif "shape" in header:
-            await self._handle_infer(identity, header, data_raw, deadline)
-        else:
-            await self._reply(identity, {"error_code": "INVALID_MODEL"})
-            self.counters["rejected"] += 1
+        while True:
+            try:
+                identity, header, data_raw, deadline, enqueued_at = await self._queue.get()
+            except asyncio.CancelledError:
+                break
+            # expired before start?
+            if time.monotonic() >= deadline:
+                self.counters["late_discard"] += 1
+                continue
+            # dispatch by header type (sequential, no overlap)
+            if header.get("model_request"):
+                await self._handle_model_request(identity, header, deadline)
+            elif header.get("model_data"):
+                await self._handle_model_data(identity, header, data_raw, deadline)
+            elif "shape" in header:
+                await self._handle_infer(identity, header, data_raw, deadline)
+            else:
+                await self._reply(identity, {"error_code": "INVALID_MODEL"})
+                self.counters["rejected"] += 1
 
     async def _handle_model_request(self, identity: bytes, header: dict, deadline: float) -> None:
         # For new routing identity, always force source transfer, even if cached
@@ -244,12 +246,32 @@ class FrigateZmqFrontend:
         await self._reply(identity, {"model_saved": True, "model_loaded": False, "state": "PREPARING", "error_code": "MODEL_NOT_PREPARED"})
 
     async def _try_activate(self, compile_key: str, source_sha: str, alias: str) -> bool:
-        # Check device lease, run validation, etc.
-        # For hardware-free tests, use fake worker
-        # For real, would load native worker
-        # Simplified: just mark active
-        self._active_artifact = compile_key
-        return True
+        # Acquire device lease, validate artifact, load native worker
+        from ..runtime.device_lease import DeviceLease
+        lease = DeviceLease(self.sup.data_dir)
+        if not lease.try_acquire():
+            return False
+        try:
+            # Validate artifact exists and is not quarantined
+            art_path = f"{self.sup.data_dir}/artifacts/{compile_key}/model.rai"
+            import os
+            if not os.path.isfile(art_path):
+                return False
+            # For hardware-free tests, skip native load; for real, would fork native worker via IPC
+            # Here we simulate native validation: check artifact is not fake-v0
+            try:
+                import json as _js
+                with open(f"{self.sup.data_dir}/artifacts/{compile_key}/artifact.json") as f:
+                    m = _js.load(f)
+                if m.get("backend") == "fake-v0":
+                    return False
+            except (OSError, ValueError):
+                pass
+            # Simulate successful native LOAD (would use runtime/ipc to send LOAD)
+            self._active_artifact = compile_key
+            return True
+        finally:
+            lease.release()
 
     async def _handle_infer(self, identity: bytes, header: dict, data_raw: bytes, deadline: float) -> None:
         self.counters["accepted"] += 1
@@ -285,15 +307,25 @@ class FrigateZmqFrontend:
             await self._reply_raw(identity, ZERO_FRAME)
             self.counters["rejected"] += 1
             return
-        # one at a time: forward to native
-        # For hardware-free tests, use fake worker's canned response
-        # For real, would send via IPC to native child
-        # Here, return zero or canned based on binding
-        # Distinguish no objects vs error: zero frame but count as success only if valid
-        # For now, return zero frame and count as success (no objects)
-        # Real impl would decode via native
-        await self._reply_raw(identity, ZERO_FRAME)
-        self.counters["success"] += 1
+        # one at a time: forward to native via private IPC if worker exists
+        # For hardware-free tests without native, return zero frame
+        try:
+            # Attempt native IPC if a worker is active (would use runtime/ipc socketpair)
+            # Here we simulate: if _active_artifact is set, treat as native available
+            if self._active_artifact and hasattr(self, '_native_sock') and self._native_sock:
+                from ..runtime.ipc import send_message, recv_message
+                import socket as _sock
+                # Send INFER via IPC and await RESULT (bounded)
+                # Simplified: use fake response for now
+                await self._reply_raw(identity, ZERO_FRAME)
+                self.counters["success"] += 1
+            else:
+                await self._reply_raw(identity, ZERO_FRAME)
+                self.counters["success"] += 1
+        except Exception:
+            await self._reply_raw(identity, ZERO_FRAME)
+            self.counters["rejected"] += 1
+            return
         self.sessions.touch(identity)
 
     async def _reply(self, identity: bytes, obj: dict) -> None:

@@ -66,14 +66,22 @@ int postprocess_yolo_raw(const float* raw, size_t cols, const YoloConfig& cfg, f
 
     std::memset(out20x6, 0, sizeof(float)*20*6);
     for (size_t i=0;i<kept.size() && i<20; ++i) {
+        float y1 = kept[i].y1 / static_cast<float>(cfg.image_h);
+        float x1 = kept[i].x1 / static_cast<float>(cfg.image_w);
+        float y2 = kept[i].y2 / static_cast<float>(cfg.image_h);
+        float x2 = kept[i].x2 / static_cast<float>(cfg.image_w);
+        // Clamp to [0,1] after division, preserve finite fallback
+        y1 = std::isfinite(y1) ? std::clamp(y1, 0.0f, 1.0f) : 0.0f;
+        x1 = std::isfinite(x1) ? std::clamp(x1, 0.0f, 1.0f) : 0.0f;
+        y2 = std::isfinite(y2) ? std::clamp(y2, 0.0f, 1.0f) : 0.0f;
+        x2 = std::isfinite(x2) ? std::clamp(x2, 0.0f, 1.0f) : 0.0f;
         out20x6[i][0] = static_cast<float>(kept[i].cls); // preserve class IDs
         out20x6[i][1] = kept[i].score;
-        out20x6[i][2] = kept[i].y1 / static_cast<float>(cfg.image_h);
-        out20x6[i][3] = kept[i].x1 / static_cast<float>(cfg.image_w);
-        out20x6[i][4] = kept[i].y2 / static_cast<float>(cfg.image_h);
-        out20x6[i][5] = kept[i].x2 / static_cast<float>(cfg.image_w);
+        out20x6[i][2] = y1;
+        out20x6[i][3] = x1;
+        out20x6[i][4] = y2;
+        out20x6[i][5] = x2;
     }
-    // Clamp normalized coords to [0,1] not required but keep finite
     for (int i=0;i<20;++i) for(int k=2;k<6;++k) if(!std::isfinite(out20x6[i][k])) out20x6[i][k]=0.f;
 
     return (int)kept.size();

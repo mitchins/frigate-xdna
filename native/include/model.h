@@ -33,6 +33,7 @@ public:
 
     // Metadata derived from model
     size_t input_elements() const;
+    std::vector<uint32_t> input_shape() const;
     size_t output_elements() const;
     size_t output_cols() const; // N for (84,N) raw layout
 

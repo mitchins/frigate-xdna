@@ -195,23 +195,35 @@ def cmd_serve(config) -> int:
     sup.start_admin()
     # Start ROUTER frontend (Task 04) if endpoint is configured
     zfrontend = None
+    zthread = None
+    zloop = None
     if config.endpoint:
-        try:
-            from .transport.frigate_zmq import FrigateZmqFrontend
-            import asyncio as _asyncio
-            zfrontend = FrigateZmqFrontend(sup, config.endpoint)
-            # run in background thread with its own loop
-            import threading as _thr
+        from .transport.frigate_zmq import FrigateZmqFrontend
+        import asyncio as _asyncio
+        import threading as _thr
 
-            def _run_zmq():
-                loop = _asyncio.new_event_loop()
-                _asyncio.set_event_loop(loop)
-                loop.run_until_complete(zfrontend.start())
-                loop.run_forever()
+        zfrontend = FrigateZmqFrontend(sup, config.endpoint)
+        zloop = _asyncio.new_event_loop()
+        ready = _thr.Event()
+        exc: list[Exception] = []
 
-            _thr.Thread(target=_run_zmq, daemon=True).start()
-        except Exception as e:
-            print(f"fxdna: ZMQ frontend failed to start: {e}", file=sys.stderr)
+        def _run_zmq():
+            _asyncio.set_event_loop(zloop)
+            try:
+                zloop.run_until_complete(zfrontend.start())
+                ready.set()
+                zloop.run_forever()
+            except Exception as e:
+                exc.append(e)
+                ready.set()
+
+        zthread = _thr.Thread(target=_run_zmq, daemon=True)
+        zthread.start()
+        ready.wait(timeout=5.0)
+        if exc:
+            raise exc[0]
+        if not zfrontend.sock:
+            raise RuntimeError("ZMQ frontend failed to bind")
     for ref in config.models:
         try:
             sup.prepare(ref)
@@ -227,10 +239,13 @@ def cmd_serve(config) -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        if zfrontend is not None:
+        if zfrontend is not None and zloop is not None and zthread is not None:
             try:
                 import asyncio as _asyncio
-                _asyncio.run(zfrontend.stop())
+                fut = _asyncio.run_coroutine_threadsafe(zfrontend.stop(), zloop)
+                fut.result(timeout=5.0)
+                zloop.call_soon_threadsafe(zloop.stop)
+                zthread.join(timeout=5.0)
             except Exception:
                 pass
         sup.stop()

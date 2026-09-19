@@ -64,6 +64,8 @@ class DeviceLease:
 
     def is_locked_by_other(self) -> bool:
         """Check if another process holds the lock (non-blocking probe)."""
+        if self._fd is not None:
+            return False
         try:
             fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
         except OSError:
