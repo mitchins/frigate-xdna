@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "status": "skeleton: full per-file map is built by the Task 03 packaging step from the audited payload manifest",
+  "governing_terms": [
+    {
+      "id": "amd-eula",
+      "name": "AMD End-User License Agreement",
+      "local_pdf_sha256": "64ab400f2a84c081a19837c604eaeccbfbca14fcb88e046a922685b2c03e2f2f",
+      "key_conditions": [
+        "Object-Code use with AMD products (§2.1-2.2)",
+        "Derivative-Works-to-customers distribution with at-least-as-restrictive flow-down (§2.3)",
+        "No standalone distribution of the Software (§3.2)",
+        "No Free-Software-License subjection (§3.6)",
+        "Acceptance by installing/copying/using; no technical activation"
+      ]
+    },
+    {
+      "id": "ryzen-ai-tpn-1.7.1",
+      "name": "Ryzen AI 1.7.1 Linux Third-Party Notices (referenced by 1.8 wheel LICENSE.txt)",
+      "local_pdf_sha256": "96414698e912629a2daf5a2d28c62a793a90b0a2341cfef9b54dcd8b3dc32de8"
+    },
+    {
+      "id": "ryzen-ai-tpn-1.8.0",
+      "name": "Ryzen AI 1.8.0 Linux Third-Party Notices",
+      "local_pdf_sha256": "3ec2902922d5ecd2beb72d308ac27de0ca067a861535ff04acee5ceb0ce41990"
+    },
+    {
+      "id": "frigate-mit",
+      "name": "Frigate MIT licence (contract-test sources only)",
+      "upstream_blob": "924cb4148cda90ee9d7f7953dcbd9fea31a05874"
+    }
+  ],
+  "components": [],
+  "rules": [
+    "Every incorporated vendor binary gets: path, sha256, size, source package/version, governing terms id, purpose.",
+    "Binaries are never patched/stripped when relying on the unmodified-binary grant.",
+    "No vendor tarball, licence PDF, private model or secret is committed or published standalone."
+  ]
+}

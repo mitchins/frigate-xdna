@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mitchins/frigate-xdna/schemas/model-descriptor.schema.json",
+  "title": "frigate-xdna model descriptor",
+  "description": "Source identity, input/output semantics and serving contract inputs. Unknown semantic fields fail validation.",
+  "type": "object",
+  "required": ["schema_version", "ref", "source", "input", "output", "serving"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "ref": {"type": "string", "description": "plus://ID or local alias; never a compile key"},
+    "source": {
+      "type": "object",
+      "required": ["kind", "sha256"],
+      "properties": {
+        "kind": {"enum": ["onnx", "onnx-bundle", "imported-rai"]},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "bundle_manifest": {"type": "object"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "imported-rai"}}},
+          "then": {"required": ["kind", "sha256", "artifact_sha256"]},
+          "description": "RAI imports live in a separate namespace: an artifact digest is mandatory and no ONNX source digest may be invented."
+        },
+        {
+          "if": {"properties": {"kind": {"const": "onnx-bundle"}}},
+          "then": {
+            "required": ["kind", "sha256", "bundle_manifest"],
+            "properties": {
+              "bundle_manifest": {
+                "type": "object",
+                "required": ["members"],
+                "properties": {
+                  "members": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": ["path", "sha256", "size_bytes"],
+                      "properties": {
+                        "path": {"type": "string",
+                                 "pattern": "^(?!/)(?!.*\\.\\./)[^\\0]+$"},
+                        "sha256": {"type": "string",
+                                   "pattern": "^[0-9a-f]{64}$"},
+                        "size_bytes": {"type": "integer", "minimum": 1}
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "description": "Bundles must enumerate every external-data member with canonical relative path and digest; omitted, duplicate, or escaping members fail."
+        }
+      ],
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "required": ["tensor_name", "shape", "dtype", "layout", "pixel_format", "normalization"],
+      "allOf": [
+        {
+          "if": {"properties": {"layout": {"const": "nchw"}}},
+          "then": {"properties": {"shape": {"prefixItems": [
+            {"const": 1},
+            {"type": "integer", "minimum": 1, "maximum": 4},
+            {"type": "integer", "minimum": 1, "maximum": 4096},
+            {"type": "integer", "minimum": 1, "maximum": 4096}]}}},
+          "description": "nchw layout: [batch=1, channels<=4, height, width]"
+        },
+        {
+          "if": {"properties": {"layout": {"const": "nhwc"}}},
+          "then": {"properties": {"shape": {"prefixItems": [
+            {"const": 1},
+            {"type": "integer", "minimum": 1, "maximum": 4096},
+            {"type": "integer", "minimum": 1, "maximum": 4096},
+            {"type": "integer", "minimum": 1, "maximum": 4}]}}},
+          "description": "nhwc layout: [batch=1, height, width, channels<=4]"
+        }
+      ],
+      "properties": {
+        "tensor_name": {"type": "string"},
+        "shape": {
+          "type": "array", "minItems": 4, "maxItems": 4,
+          "prefixItems": [
+            {"const": 1},
+            {"type": "integer", "minimum": 1, "maximum": 4096},
+            {"type": "integer", "minimum": 1, "maximum": 4096},
+            {"type": "integer", "minimum": 1, "maximum": 4096}
+          ],
+          "items": {"type": "integer", "minimum": 1, "maximum": 4096}
+        },
+        "dtype": {"enum": ["float32"]},
+        "layout": {"enum": ["nchw", "nhwc"]},
+        "pixel_format": {"enum": ["rgb", "bgr"]},
+        "normalization": {
+          "type": "object",
+          "required": ["scale", "mean", "std"],
+          "properties": {
+            "scale": {"type": "number"},
+            "mean": {"type": "array", "items": {"type": "number"}},
+            "std": {"type": "array", "items": {"type": "number"}}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "required": ["profile", "tensors"],
+      "allOf": [
+        {
+          "if": {"properties": {"profile": {"pattern": "^yolo-raw"}}},
+          "then": {
+            "required": ["profile", "layout", "coordinate_units",
+                         "class_count", "objectness", "tensors"],
+            "properties": {
+              "tensors": {
+                "type": "array", "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["name", "shape", "dtype"],
+                  "properties": {
+                    "name": {"type": "string"},
+                    "shape": {"type": "array",
+                              "items": {"type": "integer", "minimum": 1}},
+                    "dtype": {"type": "string"}
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "description": "raw YOLO outputs must declare coordinate layout and units, class count, objectness semantics, and fully-defined tensors"
+        }
+      ],
+      "properties": {
+        "profile": {"enum": ["yolo-raw", "yolo-raw-objectness", "nms-free"]},
+        "layout": {"enum": ["cxcywh", "xyxy"]},
+        "coordinate_units": {"enum": ["pixels", "normalized"]},
+        "class_count": {"type": "integer", "minimum": 1},
+        "objectness": {"type": "boolean"},
+        "tensors": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    },
+    "serving": {
+      "type": "object",
+      "required": ["label_map", "decoder", "score_threshold", "nms_iou"],
+      "properties": {
+        "label_map": {
+          "type": "object",
+          "patternProperties": {"^[0-9]+$": {"type": "string"}},
+          "minProperties": 1
+        },
+        "attributes_map": {"type": "object"},
+        "decoder": {"type": "string"},
+        "decoder_version": {"type": "string"},
+        "score_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "nms_iou": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "profile": {"type": "string"},
+        "runtime_abi": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "provenance": {"type": "object"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,53 @@
+# Target configuration for the implementation; this spec kit does not contain a built image.
+# NPU_GID is the numeric group owning /dev/accel/accel0 on the Docker host.
+services:
+  xdna:
+    image: ${FXDNA_IMAGE:-frigate-xdna:0.1-dev}
+    init: true
+    restart: unless-stopped
+    user: "10001:10001"
+    group_add:
+      - "${NPU_GID:?Set NPU_GID to the accelerator device group ID}"
+    devices:
+      - /dev/accel/accel0:/dev/accel/accel0
+    environment:
+      FXDNA_MODELS: "${FXDNA_MODELS:?Set selected model references}"
+      FXDNA_DATA_DIR: /data
+      FXDNA_ENDPOINT: tcp://0.0.0.0:5555
+      FXDNA_LOG_LEVEL: info
+    volumes:
+      - xdna-data:/data
+      # Add a read-only /models bind for local ONNX/RAI imports when required.
+    networks:
+      - xdna-net
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run:rw,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=0700
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+    cpus: "4.0"
+    mem_limit: 8g
+    memswap_limit: 8g
+    pids_limit: 512
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "fxdna", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # No host port publication by default. Join stock Frigate to this network.
+    # Local-only deployments need no Plus secret. For Frigate+ models, add
+    # the Plus overlay: docker compose -f compose.yaml -f compose.plus.yaml up
+    # (this network is not `internal: true` so the overlay can reach HTTPS).
+
+volumes:
+  xdna-data:
+    name: frigate-xdna-data
+
+networks:
+  xdna-net:
+    name: frigate-xdna-net

@@ -1,0 +1,17 @@
+# Merge into stock Frigate 0.18.0-rc2. Example only for a matching YOLO raw contract.
+# Other models must use their actual metadata/label map.
+detectors:
+  xdna:
+    type: zmq
+    endpoint: tcp://xdna:5555
+    request_timeout_ms: 200
+    linger_ms: 0
+model:
+  path: /config/models/yolov9s-320.onnx
+  model_type: yolo-generic
+  width: 320
+  height: 320
+  input_tensor: nchw
+  input_pixel_format: rgb
+  input_dtype: float
+  labelmap_path: /config/models/labels.txt

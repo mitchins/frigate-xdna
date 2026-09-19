@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "recipe_id": "bf16-vaiml-v1",
+  "status": "audited-reference-only",
+  "audit_report": "Phase-7.7 COMPILER-AUDIT.md (local evidence, not committed)",
+  "steps": [
+    {
+      "name": "bf16-prepare",
+      "tool": "quark.onnx.ModelQuantizer",
+      "tool_version": "amd-quark 0.12.post1",
+      "config": "get_default_config(\"BF16\") + BF16QDQToCast=true",
+      "calibration": "32 COCO128 images, PIL RGB bilinear resized to the model geometry (320x320 for 320 models, 640x640 for 640 models), /255, CHW"
+    },
+    {
+      "name": "vaiml-compile",
+      "tool": "onnxruntime-vitisai 1.27.0 VitisAIExecutionProvider",
+      "provider_options": {
+        "config_file": "<vaiml_config.json sha256:4d17acd4393356ff447ba6a91939ef3f0b4fb675bc97a2c4457ed74d894f5782>",
+        "cache_key": "<job>",
+        "enable_cache_file_io_in_mem": "0"
+      },
+      "no_reusable_cache": true,
+      "environment": {
+        "LD_LIBRARY_PATH_order": ["/opt/xilinx-xrt/lib", "flexml_extras/lib", "onnxruntime/capi", "voe/lib", "peano/lib", "system lib dirs"],
+        "note": "XRT lib dir must precede voe's bundled libxrt_coreutil 2.19.184",
+        "RYZEN_AI_INSTALLATION_PATH": "<compile prefix>",
+        "XILINX_VITIS": "<site-packages>",
+        "XILINX_VITIS_AIETOOLS": "<site-packages>",
+        "XILINX_XRT": "<xrt prefix> (required: without it the EP compiles binaries but refuses inference runs)",
+        "xrt_version": "2.25.37 + libxrt_driver_xdna 2.25.260102.56",
+        "PYTHONPATH": "unset"
+      }
+    }
+  ],
+  "target_profile": "xc10AIE2P_ML-die-0x-e-S-es1 (Strix Halo XDNA2/AIE2P, verbatim from audited compile log)",
+  "native_abi_closure": [
+    "voe/lib: libxcompiler-mlir-e2e.so, libxcompiler-xcompiler-core.so.1, libxcompiler-core-without-symbol.so, libaiecompiler_client.so, libdyn_dispatch_core.so, libflexmlrt.so, libaie_codegen.so.3, libxrt_coreutil.so",
+    "flexml_extras/lib: libvaiml.so (compile VFS), libvaiml2.so",
+    "lnx64.o/tools/peano/lib: libpeano-lib.so.21.0git",
+    "include/: aie_api + adf headers; vitis_mllib/ tree; data/*.json schemas",
+    "onnxruntime/capi: 4 vendored .so + 7 opened .py modules",
+    "/opt/xilinx-xrt: libxrt_core, libxrt_coreutil, libxrt_driver_xdna + version.json"
+  ],
+  "payload_manifest_sha256": "8a8d28b751974205ffc4e2b87b34cd3e93584b70d8f4f3de557965aee975f4bd",
+  "payload_note": "Digest of the B1 actually-used file manifest (local evidence). The full file-level binary manifest is built by the Task 03 packaging step; this digest pins the audited set.",
+  "measured_reference": {
+    "model": "yolov8n-320",
+    "bf16_prepare_s": 2.7,
+    "compile_s": 322.0,
+    "peak_rss_kb": 1688580,
+    "artifact_bytes": 7719772
+  }
+}

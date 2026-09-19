@@ -1,0 +1,38 @@
+{
+  "frigate_tag": "v0.18.0-rc2",
+  "repo": "blakeblackshear/frigate",
+  "files": {
+    "frigate/detectors/plugins/zmq_ipc.py": {
+      "git_blob": "cc9a538c81160562184901395dafd3988559c4f1",
+      "local": "frigate/detectors/plugins/zmq_ipc.py",
+      "role": "pinned-verbatim: stock plugin under contract test"
+    },
+    "frigate/detectors/detector_config.py": {
+      "git_blob": "52d75ff8f728f205e76cb556223e6efb8803c3e2",
+      "local": "frigate/detectors/detector_config.py",
+      "role": "pinned-verbatim: stock config models under contract test"
+    },
+    "frigate/object_detection/base.py": {
+      "git_blob": "bc7910e4d09a13c66fe07e67f20ff87774da1a41",
+      "local": "base.py.src",
+      "role": "reference-only: input-transform/normalization source assertions; not imported"
+    },
+    "frigate/plus.py": {
+      "git_blob": "d528aa1757f26bfdd4c285fdd0da8b3d6fe9ec84",
+      "local": "plus.py.src",
+      "role": "reference-only: Task 02 Plus client study; not imported"
+    },
+    "LICENSE": {
+      "git_blob": "924cb4148cda90ee9d7f7953dcbd9fea31a05874",
+      "local": "LICENSE",
+      "role": "pinned-verbatim: upstream MIT licence text shipped with copies"
+    }
+  },
+  "shims": [
+    "frigate/const.py",
+    "frigate/plus.py",
+    "frigate/util/builtin.py",
+    "frigate/detectors/detection_api.py"
+  ],
+  "note": "Shims are test-harness originals, never upstream code. The three pinned-verbatim files (zmq_ipc.py, detector_config.py, LICENSE) may be asserted byte-identical."
+}
