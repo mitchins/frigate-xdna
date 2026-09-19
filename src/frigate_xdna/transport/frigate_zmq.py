@@ -132,9 +132,17 @@ class FrigateZmqFrontend:
                 identity, header, data_raw, deadline, enqueued_at = await self._queue.get()
             except asyncio.CancelledError:
                 break
-            # expired before start?
+            # expired before start? Must reply before discarding to avoid REQ hang
             if time.monotonic() >= deadline:
                 self.counters["late_discard"] += 1
+                if "shape" in header:
+                    await self._reply_raw(identity, ZERO_FRAME)
+                elif header.get("model_request"):
+                    await self._reply(identity, {"error_code": "TIMEOUT", "message": "request expired"})
+                elif header.get("model_data"):
+                    await self._reply(identity, {"model_saved": False, "model_loaded": False, "error_code": "TIMEOUT"})
+                else:
+                    await self._reply(identity, {"error_code": "TIMEOUT"})
                 continue
             # dispatch by header type (sequential, no overlap)
             if header.get("model_request"):
@@ -266,7 +274,7 @@ class FrigateZmqFrontend:
                 if m.get("backend") == "fake-v0":
                     return False
             except (OSError, ValueError):
-                pass
+                return False
             # Simulate successful native LOAD (would use runtime/ipc to send LOAD)
             self._active_artifact = compile_key
             return True

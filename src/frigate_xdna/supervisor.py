@@ -642,6 +642,9 @@ class Supervisor:
         # model_name with different bytes gets distinct refs and never
         # triggers SOURCE_CHANGED on alias collision.
         ref = f"zmq-upload:{source_sha256}"
+        # Register synthetic content-bound ref immediately so later
+        # _ingest_source / _publish_result find the record
+        self.registry.upsert_ref(ref, "onnx", None)
         # Ensure ref is registered as a local file ref for tracking
         # (we use a synthetic ref that looks like a local path)
         parsed = {"ref": ref, "kind": "onnx", "id": None, "path": ref}

@@ -84,7 +84,7 @@ def complete_operation(
             rec = json.load(f)
     except (OSError, ValueError):
         return
-    # Persist inhibition before removing journal if unclean
+    # Persist inhibition before removing journal if unclean; if this fails, preserve current.json
     if not clean and registry is not None:
         try:
             registry.set_state(
@@ -99,7 +99,8 @@ def complete_operation(
                 },
             )
         except Exception:
-            pass
+            # Do not mark complete or remove journal; check_inhibited must see it
+            return
     rec["completed"] = True
     rec["clean"] = clean
     rec["error"] = error

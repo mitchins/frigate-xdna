@@ -219,9 +219,19 @@ def cmd_serve(config) -> int:
 
         zthread = _thr.Thread(target=_run_zmq, daemon=True)
         zthread.start()
-        ready.wait(timeout=5.0)
-        if exc:
-            raise exc[0]
+        ok = ready.wait(timeout=5.0)
+        if not ok or exc:
+            # Startup did not signal readiness: close frontend, wait for thread to exit, then fail
+            try:
+                if zfrontend.sock:
+                    zfrontend.sock.close(linger=0)
+            except Exception:
+                pass
+            # Ensure synchronous startup/bind has completed; wait for thread
+            zthread.join(timeout=5.0)
+            if exc:
+                raise exc[0]
+            raise RuntimeError("ZMQ frontend startup timeout or failed to bind")
         if not zfrontend.sock:
             raise RuntimeError("ZMQ frontend failed to bind")
     for ref in config.models:
