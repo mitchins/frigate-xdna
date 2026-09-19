@@ -10,6 +10,7 @@ import json
 import os
 import socket
 import threading
+import time
 
 SOCKET_NAME = "control.sock"
 MAX_MESSAGE_BYTES = 64 * 1024
@@ -99,7 +100,18 @@ def admin_call(data_dir: str, request: dict, timeout_s: float = 10.0) -> dict:
     s.settimeout(timeout_s)
     try:
         try:
-            s.connect(socket_path(data_dir))
+            deadline = time.monotonic() + 2.0
+            while True:
+                try:
+                    s.connect(socket_path(data_dir))
+                    break
+                except ConnectionRefusedError:
+                    # Server bound the path but is not listening yet
+                    # (bind->listen window at thread startup); retry
+                    # briefly, then report unreachable as before.
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.05)
         except OSError as e:
             raise FxdnaError(NOT_READY, "DAEMON_UNREACHABLE",
                              f"admin socket unreachable: {e.strerror or e}")

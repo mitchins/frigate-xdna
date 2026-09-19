@@ -29,12 +29,18 @@ class TestDaemon(unittest.TestCase):
         self.sup = Supervisor(self.cfg)
         self.sup.start_admin()
         self.addCleanup(self.sup.stop)
-        # the server thread binds asynchronously; wait for the socket
-        from frigate_xdna.admin import socket_path as _sp
-        deadline = _time.monotonic() + 5.0
-        while not os.path.exists(_sp(self.cfg.data_dir)):
+        # The server thread binds asynchronously (and listen() follows
+        # bind()); wait for a real answer, not just the socket file.
+        from frigate_xdna.admin import admin_call as _call
+        deadline = _time.monotonic() + 10.0
+        while True:
+            try:
+                _call(self.cfg.data_dir, {"command": "status"})
+                break
+            except Exception:
+                pass
             if _time.monotonic() > deadline:
-                raise RuntimeError("admin socket never appeared")
+                raise RuntimeError("admin socket never answered")
             _time.sleep(0.05)
 
     def test_online_prepare_status_wait_via_socket(self):
