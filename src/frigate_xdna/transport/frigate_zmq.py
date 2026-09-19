@@ -241,8 +241,7 @@ class FrigateZmqFrontend:
         serving_digest = result.get("serving_digest", "")
         if result.get("cache_hit") and result.get("state") == "PREPARED":
             if await self._handle_prepared(
-                    identity, compile_key, serving_digest,
-                    source_sha, alias):
+                    identity, compile_key, serving_digest, source_sha):
                 return
         # cold miss or not yet prepared
         await self._reply(identity, {
@@ -251,7 +250,7 @@ class FrigateZmqFrontend:
 
     async def _handle_prepared(
         self, identity: bytes, compile_key: str, serving_digest: str,
-        source_sha: str, alias: str,
+        source_sha: str,
     ) -> bool:
         """Activation decision for a prepared artifact. True if replied."""
         # Auto-activation is allowed only when quiescent.
@@ -282,11 +281,15 @@ class FrigateZmqFrontend:
             return True
         # quiescent: switch generation, drain old, start new
         if self.sessions.is_quiescent(self._generation):
+            old_artifact = self._active_artifact
             if await self._try_activate(compile_key):
                 old_gen = self._generation
                 self._generation += 1
                 self.sessions.invalidate_generation(old_gen)
-                self.sessions.mark_superseded(self._active_artifact)
+                # Supersede the REPLACED artifact (activation already
+                # pointed _active_artifact at the new one).
+                if old_artifact is not None:
+                    self.sessions.mark_superseded(old_artifact)
                 self.sessions.bind(
                     identity, source_sha, serving_digest,
                     compile_key, self._generation)

@@ -98,6 +98,10 @@ class DispatchCase(unittest.IsolatedAsyncioTestCase):
         self.fe = FrigateZmqFrontend(_sup(self.tmp.name),
                                      "tcp://127.0.0.1:*")
         await self.fe.start()
+        self.ingest_result: dict | None = None
+        sup = self.fe.sup
+        sup.ingest_zmq_bytes = (  # type: ignore[method-assign]
+            lambda alias, data, contract, cls, sha: self.ingest_result)
 
     async def asyncTearDown(self):
         await self.fe.stop()
@@ -170,6 +174,122 @@ class DispatchCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.fe._task.done())
         self.assertTrue(self.fe._worker.done())
         self.assertIsNone(self.fe.sock)
+
+
+class ActivationMatrixCase(unittest.IsolatedAsyncioTestCase):
+    """_handle_model_data activation matrix with a stub supervisor.
+
+    Replies go to unknown ROUTER peers (dropped), so binding state,
+    generation and the active artifact are asserted instead.
+    """
+
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fe = FrigateZmqFrontend(_sup(self.tmp.name),
+                                     "tcp://127.0.0.1:*")
+        await self.fe.start()
+        self.ingest_result: dict = {}
+        sup = self.fe.sup
+        sup.ingest_zmq_bytes = (  # type: ignore[method-assign]
+            lambda alias, data, contract, cls, sha: dict(
+                self.ingest_result))
+        from tests.integration.onnx_builders import make_raw_yolo
+        with tempfile.NamedTemporaryFile(suffix=".onnx") as f:
+            self.onnx = make_raw_yolo(f.name, res=320, seed=11)
+        self.art = os.path.join(self.tmp.name, "artifacts")
+        os.makedirs(self.art, exist_ok=True)
+
+    async def asyncTearDown(self):
+        await self.fe.stop()
+        self.tmp.cleanup()
+
+    def _real_artifact(self, ck):
+        os.makedirs(os.path.join(self.art, ck), exist_ok=True)
+        with open(os.path.join(self.art, ck, "model.rai"), "wb") as f:
+            f.write(b"REAL")
+        with open(os.path.join(self.art, ck, "artifact.json"), "w") as f:
+            json.dump({"backend": "bf16-vaiml-v1"}, f)
+
+    def _prepared(self, ck):
+        self.ingest_result = {"compile_key": ck, "cache_hit": True,
+                              "state": "PREPARED",
+                              "serving_digest": "srv-" + ck}
+
+    async def test_first_model_activates(self):
+        self._real_artifact("ck-a")
+        self._prepared("ck-a")
+        await self.fe._handle_model_data(
+            b"id-a", {"model_name": "a.onnx"}, self.onnx)
+        self.assertEqual(self.fe._active_artifact, "ck-a")
+        bound = self.fe.sessions.get(b"id-a")
+        self.assertIsNotNone(bound)
+        self.assertEqual(bound.compile_key, "ck-a")
+        self.assertEqual(bound.generation, 0)
+
+    async def test_same_artifact_binds(self):
+        self._real_artifact("ck-a")
+        self._prepared("ck-a")
+        await self.fe._handle_model_data(
+            b"id-a", {"model_name": "a.onnx"}, self.onnx)
+        await self.fe._handle_model_data(
+            b"id-b", {"model_name": "a.onnx"}, self.onnx)
+        self.assertEqual(self.fe.sessions.get(b"id-b").generation, 0)
+
+    async def test_cold_miss_binds_nothing(self):
+        self.ingest_result = {"compile_key": "ck-x", "cache_hit": False,
+                              "state": "QUEUED", "serving_digest": ""}
+        await self.fe._handle_model_data(
+            b"id-x", {"model_name": "x.onnx"}, self.onnx)
+        self.assertIsNone(self.fe._active_artifact)
+        self.assertIsNone(self.fe.sessions.get(b"id-x"))
+
+    async def test_fake_artifact_falls_through(self):
+        os.makedirs(os.path.join(self.art, "ck-f"), exist_ok=True)
+        with open(os.path.join(self.art, "ck-f", "model.rai"),
+                  "wb") as f:
+            f.write(b"FAKE")
+        with open(os.path.join(self.art, "ck-f", "artifact.json"),
+                  "w") as f:
+            json.dump({"backend": "fake-v0"}, f)
+        self._prepared("ck-f")
+        await self.fe._handle_model_data(
+            b"id-f", {"model_name": "f.onnx"}, self.onnx)
+        self.assertIsNone(self.fe._active_artifact)
+        self.assertIsNone(self.fe.sessions.get(b"id-f"))
+
+    async def test_busy_model_gets_model_in_use(self):
+        self._real_artifact("ck-a")
+        self._real_artifact("ck-b")
+        self._prepared("ck-a")
+        await self.fe._handle_model_data(
+            b"id-a", {"model_name": "a.onnx"}, self.onnx)
+        self._prepared("ck-b")
+        await self.fe._handle_model_data(
+            b"id-b", {"model_name": "b.onnx"}, self.onnx)
+        # traffic on generation 0: no switch, old stays active
+        self.assertEqual(self.fe._active_artifact, "ck-a")
+        self.assertEqual(self.fe._generation, 0)
+        self.assertIsNone(self.fe.sessions.get(b"id-b"))
+
+    async def test_quiescent_switches_generation(self):
+        import time as _t
+        self._real_artifact("ck-a")
+        self._real_artifact("ck-b")
+        self._prepared("ck-a")
+        await self.fe._handle_model_data(
+            b"id-a", {"model_name": "a.onnx"}, self.onnx)
+        # drain: backdate past the quiescence window
+        old = self.fe.sessions.get(b"id-a")
+        old.last_used_at = _t.monotonic() - 60.0
+        self._prepared("ck-b")
+        await self.fe._handle_model_data(
+            b"id-b", {"model_name": "b.onnx"}, self.onnx)
+        self.assertEqual(self.fe._active_artifact, "ck-b")
+        self.assertEqual(self.fe._generation, 1)
+        self.assertIsNone(self.fe.sessions.get(b"id-a"))
+        self.assertTrue(self.fe.sessions.is_superseded("ck-a"))
+        self.assertEqual(
+            self.fe.sessions.get(b"id-b").generation, 1)
 
 
 if __name__ == "__main__":

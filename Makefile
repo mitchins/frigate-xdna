@@ -6,7 +6,7 @@ UPSTREAM := $(CURDIR)/tests/upstream
 .PHONY: test-unit test-contract test-integration test coverage build-native image test-image-offline test-hardware test-frigate-e2e
 
 test-unit:
-	PYTHONPATH=$(SRC) $(PY) -m unittest discover -s tests/unit -t . -v
+	PYTHONPATH=$(SRC):$(CURDIR) $(PY) -m unittest discover -s tests/unit -t . -v
 
 test-contract:
 	PYTHONPATH=$(SRC):$(UPSTREAM) $(PY) -m unittest discover -s tests/contract -t . -v
@@ -20,7 +20,7 @@ test: test-unit test-contract test-integration
 # enforces the fail_under floor from pyproject.toml [tool.coverage.report].
 coverage:
 	rm -f .coverage coverage.xml
-	PYTHONPATH=$(SRC) $(PY) -m coverage run -m unittest discover -s tests/unit -t .
+	PYTHONPATH=$(SRC):$(CURDIR) $(PY) -m coverage run -m unittest discover -s tests/unit -t .
 	PYTHONPATH=$(SRC):$(UPSTREAM) $(PY) -m coverage run --append -m unittest discover -s tests/contract -t .
 	PYTHONPATH=$(SRC):$(CURDIR) $(PY) -m coverage run --append -m unittest discover -s tests/integration -t .
 	$(PY) -m coverage xml
