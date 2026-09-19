@@ -161,18 +161,16 @@ class FrigateZmqFrontend:
                 continue
             # dispatch by header type (sequential, no overlap)
             if header.get("model_request"):
-                await self._handle_model_request(identity, header, deadline)
+                await self._handle_model_request(identity)
             elif header.get("model_data"):
-                await self._handle_model_data(identity, header, data_raw, deadline)
+                await self._handle_model_data(identity, header, data_raw)
             elif "shape" in header:
                 await self._handle_infer(identity, header, data_raw, deadline)
             else:
                 await self._reply(identity, {"error_code": "INVALID_MODEL"})
                 self.counters["rejected"] += 1
 
-    async def _handle_model_request(
-        self, identity: bytes, header: dict, deadline: float
-    ) -> None:
+    async def _handle_model_request(self, identity: bytes) -> None:
         # For new routing identity, always force source transfer,
         # even if cached. Basenames are not identities.
         binding = self.sessions.get(identity)
@@ -187,8 +185,7 @@ class FrigateZmqFrontend:
             "model_available": False, "model_loaded": False})
 
     async def _handle_model_data(
-        self, identity: bytes, header: dict, data_raw: bytes,
-        deadline: float,
+        self, identity: bytes, header: dict, data_raw: bytes
     ) -> None:
         # bounded model size
         try:
@@ -243,59 +240,62 @@ class FrigateZmqFrontend:
         compile_key = result.get("compile_key")
         serving_digest = result.get("serving_digest", "")
         if result.get("cache_hit") and result.get("state") == "PREPARED":
-            # Prepared: check activatable (validation, device lease).
-            # Auto-activation is allowed only when quiescent.
-            if self._active_artifact is None:
-                # activate immediately (first model)
-                activated = await self._try_activate(
-                    compile_key, source_sha, alias)
-                if activated:
-                    self.sessions.bind(
-                        identity, source_sha, serving_digest,
-                        compile_key, self._generation)
-                    await self._reply(identity, {
-                        "model_saved": True, "model_loaded": True})
-                    return
-            elif compile_key == self._active_artifact:
-                # same artifact as active: bind and reply loaded
-                self.sessions.bind(
-                    identity, source_sha, serving_digest,
-                    compile_key, self._generation)
-                await self._reply(identity, {
-                    "model_saved": True, "model_loaded": True})
+            if await self._handle_prepared(
+                    identity, compile_key, serving_digest,
+                    source_sha, alias):
                 return
-            else:
-                # different model, check MODEL_IN_USE
-                if self.sessions.has_active_traffic(self._generation):
-                    await self._reply(identity, {
-                        "model_saved": True, "model_loaded": False,
-                        "state": "PREPARING",
-                        "error_code": "MODEL_IN_USE"})
-                    return
-                # quiescent: switch generation, drain old, start new
-                if self.sessions.is_quiescent(self._generation):
-                    activated = await self._try_activate(
-                        compile_key, source_sha, alias)
-                    if activated:
-                        old_gen = self._generation
-                        self._generation += 1
-                        self.sessions.invalidate_generation(old_gen)
-                        self.sessions.mark_superseded(
-                            self._active_artifact)
-                        self.sessions.bind(
-                            identity, source_sha, serving_digest,
-                            compile_key, self._generation)
-                        await self._reply(identity, {
-                            "model_saved": True, "model_loaded": True})
-                        return
         # cold miss or not yet prepared
         await self._reply(identity, {
             "model_saved": True, "model_loaded": False,
             "state": "PREPARING", "error_code": "MODEL_NOT_PREPARED"})
 
-    async def _try_activate(
-        self, compile_key: str, source_sha: str, alias: str
+    async def _handle_prepared(
+        self, identity: bytes, compile_key: str, serving_digest: str,
+        source_sha: str, alias: str,
     ) -> bool:
+        """Activation decision for a prepared artifact. True if replied."""
+        # Auto-activation is allowed only when quiescent.
+        if self._active_artifact is None:
+            # activate immediately (first model)
+            if await self._try_activate(compile_key):
+                self.sessions.bind(
+                    identity, source_sha, serving_digest,
+                    compile_key, self._generation)
+                await self._reply(identity, {
+                    "model_saved": True, "model_loaded": True})
+                return True
+            return False
+        if compile_key == self._active_artifact:
+            # same artifact as active: bind and reply loaded
+            self.sessions.bind(
+                identity, source_sha, serving_digest,
+                compile_key, self._generation)
+            await self._reply(identity, {
+                "model_saved": True, "model_loaded": True})
+            return True
+        # different model, check MODEL_IN_USE
+        if self.sessions.has_active_traffic(self._generation):
+            await self._reply(identity, {
+                "model_saved": True, "model_loaded": False,
+                "state": "PREPARING",
+                "error_code": "MODEL_IN_USE"})
+            return True
+        # quiescent: switch generation, drain old, start new
+        if self.sessions.is_quiescent(self._generation):
+            if await self._try_activate(compile_key):
+                old_gen = self._generation
+                self._generation += 1
+                self.sessions.invalidate_generation(old_gen)
+                self.sessions.mark_superseded(self._active_artifact)
+                self.sessions.bind(
+                    identity, source_sha, serving_digest,
+                    compile_key, self._generation)
+                await self._reply(identity, {
+                    "model_saved": True, "model_loaded": True})
+                return True
+        return False
+
+    async def _try_activate(self, compile_key: str) -> bool:
         # Acquire device lease, validate artifact, load native worker
         from ..runtime.device_lease import DeviceLease
         lease = DeviceLease(self.sup.data_dir)
@@ -357,14 +357,9 @@ class FrigateZmqFrontend:
         try:
             # A worker would receive INFER via runtime/ipc socketpair and
             # return RESULT within the bounded budget; until the native
-            # worker lands, answer not-ready.
-            if (self._active_artifact and hasattr(self, "_native_sock")
-                    and self._native_sock):
-                await self._reply_raw(identity, ZERO_FRAME)
-                self.counters["success"] += 1
-            else:
-                await self._reply_raw(identity, ZERO_FRAME)
-                self.counters["success"] += 1
+            # worker lands, answer not-ready either way.
+            await self._reply_raw(identity, ZERO_FRAME)
+            self.counters["success"] += 1
         except Exception:
             await self._reply_raw(identity, ZERO_FRAME)
             self.counters["rejected"] += 1

@@ -143,7 +143,7 @@ class DispatchCase(unittest.IsolatedAsyncioTestCase):
         art = os.path.join(self.tmp.name, "artifacts")
         # missing artifact -> False
         self.assertFalse(
-            await self.fe._try_activate("ck-missing", "sha", "a"))
+            await self.fe._try_activate("ck-missing"))
         # fake backend -> False
         os.makedirs(os.path.join(art, "ck-fake"))
         with open(os.path.join(art, "ck-fake", "model.rai"), "wb") as f:
@@ -152,7 +152,7 @@ class DispatchCase(unittest.IsolatedAsyncioTestCase):
                   "w") as f:
             json.dump({"backend": "fake-v0"}, f)
         self.assertFalse(
-            await self.fe._try_activate("ck-fake", "sha", "a"))
+            await self.fe._try_activate("ck-fake"))
         self.assertIsNone(self.fe._active_artifact)
         # non-fake artifact -> True and recorded
         os.makedirs(os.path.join(art, "ck-real"))
@@ -162,7 +162,7 @@ class DispatchCase(unittest.IsolatedAsyncioTestCase):
                   "w") as f:
             json.dump({"backend": "bf16-vaiml-v1"}, f)
         self.assertTrue(
-            await self.fe._try_activate("ck-real", "sha", "a"))
+            await self.fe._try_activate("ck-real"))
         self.assertEqual(self.fe._active_artifact, "ck-real")
 
     async def test_stop_joins_tasks(self):

@@ -25,7 +25,7 @@ Exclusions live in `sonar-project.properties` (commented) and
 | # | Location | Rule | Verdict | Action |
 |---|---|---|---|---|
 | 1 | `packaging/verify_payload.py:25` | S2083 BLOCKER path traversal | **Confirmed** (manifest-driven join could escape root) | **Fixed**: `safe_join()` rejects absolute/`..`-escaping entries with `TRAVERSAL` error; unit-tested |
-| 2 | `packaging/verify_payload.py:46` | S8707 CLI path | Accepted risk | Operator's own dirs; tool purpose is checking them; manifest side now constrained |
+| 2 | `packaging/verify_payload.py:46,63` | S8707 CLI path | Accepted risk | Operator's own dirs + manifest file; tool purpose is checking them; manifest *entries* now constrained by `safe_join` |
 | 3-5 | `packaging/verify_payload.py:70,74` | S6549 filesystem oracle | By design (false positive) | Presence/size reporting IS the tool's job |
 | 6-7 | `recipes/*/compile.py:53,77` | S8707 CLI path | Accepted risk | Offline operator tools reading operator-named paths; no network, no privilege boundary |
 | 8 | `recipes/*/prepare.py:88` | S8707 CLI path | Accepted risk | Same as above |
@@ -41,6 +41,23 @@ Exclusions live in `sonar-project.properties` (commented) and
 Zero unresolved confirmed High/Critical defects. Nothing waived to
 improve the score: every accepted item names the missing privilege
 boundary or the tool's explicit purpose.
+
+PR #4 CI scan added 5 more finding types, all addressed:
+
+- `githubactions:S8541` → **fixed**: CI installs with
+  `pip install --only-binary :all:`, never executing sdists.
+- `githubactions:S8544` → **fixed**: all GitHub Actions pinned to
+  commit SHAs (checkout, setup-python, upload/download-artifact,
+  sonarqube-scan).
+- `python:S1172` ×5 (`frigate_zmq.py` dead `header`/`deadline` /
+  `source_sha`/`alias` params) → **fixed**: signatures trimmed,
+  call sites updated.
+- `python:S3776` (`_handle_model_data` complexity 27) → **fixed**:
+  activation decision extracted to `_handle_prepared`.
+- `python:S3923` (identical if/else) → **fixed**: collapsed to one
+  not-ready reply.
+- `python:S5778` ×3 (new unit tests) → residual, same test-style
+  category as §1; `S5958` fixed by narrowing to `OSError`.
 
 ## 3. Reliability + maintainability fixes
 

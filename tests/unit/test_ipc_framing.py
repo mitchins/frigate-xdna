@@ -126,7 +126,7 @@ class TestFraming(unittest.TestCase):
     def test_peer_close_raises(self):
         a, b = create_socketpair()
         a.close()
-        with self.assertRaises(Exception):
+        with self.assertRaises(OSError):
             recv_message(b, timeout=5.0)
         b.close()
 
