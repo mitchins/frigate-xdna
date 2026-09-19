@@ -12,13 +12,22 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Least privilege by default; jobs add only what they use.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Hardware-free tests + coverage + lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # pip cache + coverage artifact upload.
+    permissions:
+      actions: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -74,10 +83,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [test]
+    # Fork PRs get no SONAR_TOKEN: never run the scan for them.
+    if: github.event.pull_request.head.repo.fork != true
+    # Coverage artifact download.
+    permissions:
+      actions: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+          persist-credentials: false
 
       - name: Download coverage
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

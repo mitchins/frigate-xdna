@@ -101,6 +101,16 @@ class FrigateZmqFrontend:
                 # ROUTER recv: [identity, empty?, header, data?]
                 # stock REQ sends 1 or 2 frames; ROUTER prepends identity
                 parts = await self.sock.recv_multipart()
+            except zmq.Again:
+                # No message yet (non-blocking race); yield and retry.
+                await asyncio.sleep(0)
+                continue
+            except zmq.ZMQError as e:
+                # Terminal: socket closed/terminated under us (e.g. at
+                # stop()); anything else is a real transport bug.
+                if e.errno in (zmq.ENOTSOCK, zmq.ETERM):
+                    return
+                raise
             except Exception:
                 continue
             # parse envelope
@@ -357,13 +367,15 @@ class FrigateZmqFrontend:
             return
         # One at a time: forward to native via private IPC if a worker
         # exists. Without native, return the zero frame (explicit
-        # not-ready, never fabricated detections).
+        # not-ready, never fabricated detections). A not-ready zero
+        # frame is not successful inference (INTERFACES.md deadline
+        # rules), so it counts into `zero`, never `success`.
         try:
             # A worker would receive INFER via runtime/ipc socketpair and
             # return RESULT within the bounded budget; until the native
             # worker lands, answer not-ready either way.
             await self._reply_raw(identity, ZERO_FRAME)
-            self.counters["success"] += 1
+            self.counters["zero"] += 1
         except Exception:
             await self._reply_raw(identity, ZERO_FRAME)
             self.counters["rejected"] += 1

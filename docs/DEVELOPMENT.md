@@ -20,9 +20,9 @@ make test                     # all of the above, hardware-free
 make coverage                 # all suites with coverage + fail_under floor
 make build-native             # cmake build of fxdna-worker (needs XRT_ROOT)
 make test-hardware            # explicit opt-in/ownership guard (refuses by default)
-make image                    # appliance image (Task 05; needs staged vendor-input)
-make test-image-offline       # compiler appliance gate (Task 05)
-make test-frigate-e2e         # full Frigate gate (Task 05)
+
+Unavailable placeholders (exit 3 until Task 05 implements them):
+make image, make test-image-offline, make test-frigate-e2e
 ```
 
 Environment: `pip install -r requirements.lock` (pinned runtime + dev

@@ -116,13 +116,15 @@ class DispatchCase(unittest.IsolatedAsyncioTestCase):
         await self.fe._handle_infer(
             ident, {"shape": shape, "dtype": "float32"}, payload, dl)
         self.assertEqual(self.fe.counters["rejected"], 1)
-        # bound to current generation, active artifact unset -> success
-        # path still answers (zero frame) and touches the binding
+        # bound to current generation, active artifact unset -> the
+        # not-ready path still answers (zero frame) and touches the
+        # binding, counted as zero (not success, not rejected)
         self.fe.sessions.bind(ident, "sha", "srv", "ck", 0)
         before = self.fe.sessions.get(ident).last_used_at
         await self.fe._handle_infer(
             ident, {"shape": shape, "dtype": "float32"}, payload, dl)
-        self.assertEqual(self.fe.counters["success"], 1)
+        self.assertEqual(self.fe.counters["zero"], 1)
+        self.assertEqual(self.fe.counters["success"], 0)
         self.assertGreaterEqual(
             self.fe.sessions.get(ident).last_used_at, before)
         # stale generation -> rejected, no touch
