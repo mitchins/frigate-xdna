@@ -6,10 +6,8 @@ toolchain.
 """
 import os
 import tempfile
-import threading
 import unittest
 
-from frigate_xdna.compiler import launcher as L
 from frigate_xdna.compiler.launcher import (
     FORBIDDEN_ENV_KEYS,
     CompilerPrefixes,

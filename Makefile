@@ -1,9 +1,9 @@
 VENV ?= /mnt/downloads/frigate-xdna-venvs/dev
-PY := $(VENV)/bin/python
+PY ?= $(VENV)/bin/python
 SRC := $(CURDIR)/src
 UPSTREAM := $(CURDIR)/tests/upstream
 
-.PHONY: test-unit test-contract test build-native image test-image-offline test-hardware test-frigate-e2e
+.PHONY: test-unit test-contract test-integration test coverage build-native image test-image-offline test-hardware test-frigate-e2e
 
 test-unit:
 	PYTHONPATH=$(SRC) $(PY) -m unittest discover -s tests/unit -t . -v
@@ -15,6 +15,16 @@ test-integration:
 	PYTHONPATH=$(SRC):$(CURDIR) $(PY) -m unittest discover -s tests/integration -t . -v
 
 test: test-unit test-contract test-integration
+
+# Hardware-free coverage across all suites (CI gate). `coverage report`
+# enforces the fail_under floor from pyproject.toml [tool.coverage.report].
+coverage:
+	rm -f .coverage coverage.xml
+	PYTHONPATH=$(SRC) $(PY) -m coverage run -m unittest discover -s tests/unit -t .
+	PYTHONPATH=$(SRC):$(UPSTREAM) $(PY) -m coverage run --append -m unittest discover -s tests/contract -t .
+	PYTHONPATH=$(SRC):$(CURDIR) $(PY) -m coverage run --append -m unittest discover -s tests/integration -t .
+	$(PY) -m coverage xml
+	$(PY) -m coverage report
 
 build-native:
 	@echo "not yet implemented (Task 04: native IPC worker)" >&2; exit 3

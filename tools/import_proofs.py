@@ -39,7 +39,9 @@ REQUIRED_FILES = {
     "soak_rai": "/mnt/downloads/xdna-model-sweep/20260916/rai/yolov9s-320.rai",
     "compiler_audit": "/root/xdna/compiler-audit/COMPILER-AUDIT.md",
     "compiler_recipe": "/root/xdna/compiler-audit/A1_recipe.md",
-    "b1_manifest": "/mnt/downloads/xdna-compiler-audit/20260918/b1-trace/used_manifest.json",
+    "b1_manifest": (
+        "/mnt/downloads/xdna-compiler-audit/20260918/b1-trace/used_manifest.json"
+    ),
     "clean_rai": "/mnt/downloads/xdna-compiler-audit/20260918/clean_compile.rai",
     "vaiml_config": "/root/xdna/vaiml_config.json",
     "unwind": "/root/xdna/UNWIND.md",

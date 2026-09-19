@@ -13,7 +13,7 @@ stock `model_saved=false` + `INVALID_MODEL` reply (INTERFACES.md §3).
 """
 from __future__ import annotations
 
-from ..errors import FxdnaError, INVALID_ARGS
+from ..errors import INVALID_ARGS, FxdnaError
 
 MAX_MODEL_BYTES = 256 * 1024 * 1024
 MAX_HEADER_BYTES = 16 * 1024

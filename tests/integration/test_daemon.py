@@ -84,6 +84,7 @@ class TestDaemon(unittest.TestCase):
 
     def test_malformed_admin_frame_rejected(self):
         import socket as _socket
+
         from frigate_xdna.admin import socket_path
         s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
         s.settimeout(5)

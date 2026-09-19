@@ -1,0 +1,88 @@
+# CI gates — Frigate-XDNA (Task 8.3.5).
+#
+# Hardware-free only. NPU/XDNA tests never run here (no device on
+# GitHub-hosted runners; vendor payloads and Plus credentials must never
+# enter CI artifacts). Each job is bounded with timeout-minutes: 10 to
+# prevent runaway hours.
+name: Build
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  test:
+    name: Hardware-free tests + coverage + lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install pinned dependencies
+        run: pip install -r requirements.lock
+
+      - name: Unit + contract + integration tests with coverage
+        # Makefile runs unittest suites with coverage append; `coverage
+        # report` enforces the fail_under floor from pyproject.toml.
+        run: make coverage PY=python3
+
+      - name: Ruff lint (Python import hygiene)
+        run: python3 -m ruff check src recipes tools packaging tests schemas
+
+      - name: Syntax check
+        run: python3 -m compileall -q src recipes tools packaging
+
+      - name: Packaging sanity (public path only, no vendor payload)
+        run: |
+          python3 -m json.tool packaging/vendor-files.manifest.json > /dev/null
+          python3 -m json.tool packaging/legal/component-map.json > /dev/null
+          python3 tools/build_vendor_manifest.py --help > /dev/null
+          python3 packaging/verify_payload.py --help > /dev/null
+          # Native guard must refuse to configure without the vendored XRT
+          # root instead of silently linking a host XRT.
+          if cmake -S native -B /tmp/fxdna-native-check > /tmp/cmake.log 2>&1; then
+            echo "cmake unexpectedly configured without vendored XRT"; exit 1
+          fi
+          grep -q "XRT_CORE_LIB not found" /tmp/cmake.log
+
+      - name: No proprietary artifacts committed
+        # .rai weights, licence PDFs, SDK tarballs must never enter the repo.
+        run: |
+          if git ls-files | grep -iE '\.(rai|onnx|pdf|tgz|tar\.gz)$'; then
+            echo "proprietary/model artifact committed"; exit 1
+          fi
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 7
+
+  sonarqube:
+    name: SonarQube
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [test]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+
+      - name: Download coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-xml
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

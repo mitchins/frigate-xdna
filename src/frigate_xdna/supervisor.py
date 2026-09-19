@@ -5,13 +5,12 @@ FlexML imports here or anywhere in the manager process (Task 02 acceptance).
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import time
 
 from . import __version__
-from .admin import AdminServer, admin_call
+from .admin import AdminServer
 from .cache import gc as _gc
 from .cache.keys import compile_key as _compile_key
 from .cache.keys import serving_digest as _serving_digest
@@ -25,7 +24,6 @@ from .cache.store import (
     locked,
     publish_artifact,
     recover,
-    sha256_file,
     try_exclusive,
 )
 from .compiler.jobs import TERMINAL_ERROR_STATES, JobManager
@@ -33,13 +31,11 @@ from .compiler.real import BACKEND_ID as REAL_BACKEND_ID
 from .config import Config
 from .errors import (
     CACHE_CORRUPT,
-    DEVICE_UNAVAILABLE,
-    FxdnaError,
     INVALID_ARGS,
     NOT_READY,
     OWNERSHIP_CONFLICT,
-    SUCCESS,
     UNSUPPORTED_CONTRACT,
+    FxdnaError,
 )
 from .models import inspect as _inspect
 from .models.refs import parse_ref, wire_alias
@@ -645,11 +641,8 @@ class Supervisor:
         # Register synthetic content-bound ref immediately so later
         # _ingest_source / _publish_result find the record
         self.registry.upsert_ref(ref, "onnx", None)
-        # Ensure ref is registered as a local file ref for tracking
-        # (we use a synthetic ref that looks like a local path)
-        parsed = {"ref": ref, "kind": "onnx", "id": None, "path": ref}
         # Use the same ingestion as local ONNX but with data already
-        # We call _ingest_source with origin "local" and extra containing inspected
+        # fetched: _ingest_source with origin "local" and inspected extra.
         return self._ingest_source(
             ref,
             alias,

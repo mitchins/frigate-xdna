@@ -1,29 +1,35 @@
-# requirements.lock — manager runtime (Task 02)
+# requirements.lock — manager runtime + pinned dev/test tooling (Tasks 02, 8.3.5)
 #
-# Pinned operational dependencies (with transitive closure):
+# Install everything (CI / dev venv):
+#   pip install -r requirements.lock
+# The appliance image installs ONLY the runtime section (see
+# packaging/Dockerfile + packaging/constraints-manager.txt).
 #
-#   certifi==2026.7.22
-#   charset-normalizer==3.5.1
-#   idna==3.20
-#   ml_dtypes==0.6.0
-#   numpy==2.5.3
-#   onnx==1.23.0
-#   protobuf==7.36.2
-#   requests==2.34.2
-#   typing_extensions==4.16.0
-#   urllib3==2.8.0
+# Runtime: narrow, pinned operational dependencies (with transitive closure).
+certifi==2026.7.22
+charset-normalizer==3.5.1
+idna==3.20
+ml_dtypes==0.6.0
+numpy==2.5.3
+onnx==1.23.0
+protobuf==7.36.2
+requests==2.34.2
+typing_extensions==4.16.0
+urllib3==2.8.0
 #
-# Development/test-only packages (dev venv, NOT shipped):
-#   annotated-types==0.8.0
-#   attrs==26.1.0
-#   jsonschema==4.26.0
-#   jsonschema-specifications==2025.9.1
-#   pydantic==2.13.5
-#   pydantic_core==2.46.5
-#   pyzmq==27.2.0
-#   referencing==0.37.0
-#   rpds-py==2026.6.3
-#   typing-inspection==0.4.4
-# (python 3.12.3, 2026-09-18; contract tests require pydantic for the
-# pinned Frigate import chain, pyzmq+numpy for the wire protocol,
-# jsonschema for schema validation.)
+# Development/test-only packages (dev venv + CI, NOT shipped):
+annotated-types==0.8.0
+attrs==26.1.0
+coverage==7.16.1
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+pydantic==2.13.5
+pydantic_core==2.46.5
+pyzmq==27.2.0
+referencing==0.37.0
+rpds-py==2026.6.3
+ruff==0.16.8
+typing-inspection==0.4.4
+# (python 3.12.3, 2026-09-18 pins refreshed 2026-09-19 with coverage/ruff;
+# contract tests require pydantic for the pinned Frigate import chain,
+# pyzmq+numpy for the wire protocol, jsonschema for schema validation.)

@@ -122,8 +122,8 @@ class _PinnedHTTPSAdapter(requests.adapters.HTTPAdapter):
 
     def get_connection_with_tls_context(self, request, verify,
                                         proxies=None, cert=None):
-        from urllib3 import HTTPSConnectionPool
         from requests.certs import where as _ca_bundle
+        from urllib3 import HTTPSConnectionPool
         parsed = urllib.parse.urlparse(request.url)
         port = parsed.port or 443
         if isinstance(verify, str):

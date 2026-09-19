@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 import uuid
 
-from ..errors import FxdnaError, NOT_READY
+from ..errors import NOT_READY, FxdnaError
 from .fake import TERMINAL_STATES, FakeCompileJob
 
 # FakeCompileJob constructor params; anything else in a submit's extra
