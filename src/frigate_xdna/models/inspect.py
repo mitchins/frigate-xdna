@@ -157,6 +157,21 @@ def _strict_int_list(values, what: str) -> list[int]:
     return out
 
 
+def _check_layout_tag(key: str, claimed: str) -> None:
+    """Validate a string layout claim (real Frigate+ inputShape "nchw").
+
+    Numeric geometry comes from width/height in that case. Accept NCHW
+    (our only serving layout), reject anything else explicitly. Every
+    present key is checked: a contradicting pair cannot hide behind
+    key order.
+    """
+    if claimed.lower() != "nchw":
+        raise _fail(
+            UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+            f"unsupported metadata {key} layout {claimed!r}:"
+            " only NCHW is served")
+
+
 def compare_plus_metadata(info: dict, inspected: dict) -> None:
     """Fail on metadata-vs-graph conflicts (SPEC §5.3).
 
@@ -170,17 +185,7 @@ def compare_plus_metadata(info: dict, inspected: dict) -> None:
             continue
         claimed = info[key]
         if isinstance(claimed, str):
-            # Real Frigate+ metadata carries a layout tag here
-            # (e.g. inputShape "nchw"); numeric geometry comes
-            # from width/height. Accept NCHW (our only serving
-            # layout), reject anything else explicitly. Every
-            # present key is checked: a contradicting pair cannot
-            # hide behind key order.
-            if claimed.lower() != "nchw":
-                raise _fail(
-                    UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
-                    f"unsupported metadata {key} layout {claimed!r}:"
-                    " only NCHW is served")
+            _check_layout_tag(key, claimed)
             continue
         if want is None:
             want = _strict_int_list(claimed, f"metadata {key}")

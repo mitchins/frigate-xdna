@@ -90,7 +90,7 @@ def main() -> int:
         print(f"[{'PASS' if good else 'FAIL'}] {name} {detail}")
         return good
 
-    ok = check_config(base, args.camera, evidence, check)
+    ok = check_config(base, args.camera, check)
     ok = sample_stats(base, args, evidence, check) and ok
     ok = collect_events(base, args, evidence, check) and ok
     correlate_sidecar(args.data_dir, evidence)
@@ -102,7 +102,7 @@ def main() -> int:
     return 0 if ok else 1
 
 
-def check_config(base: str, camera: str, evidence: dict, check) -> bool:
+def check_config(base: str, camera: str, check) -> bool:
     """Detector config points at the sidecar for this camera."""
     st, config = get(base, "/api/config")
     det = (config.get("detectors", {}) if isinstance(config, dict) else {})
