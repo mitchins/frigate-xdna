@@ -104,6 +104,23 @@ class TestVerifyPayload(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertIn("TRAVERSAL", out)
 
+    def test_unsupplied_prefix_skipped_not_failed(self):
+        # Staged Dockerfile verification: calib/legal/flexmlrt entries
+        # are SKIPped (rc 0) when their base dir is not supplied; the
+        # later stage that supplies them still verifies each file.
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = os.path.join(tmp, "payload")
+            xrt = os.path.join(tmp, "xrt")
+            os.makedirs(payload)
+            os.makedirs(xrt)
+            entries = [_entry(payload, "a.py")]
+            entries.append({"path": "calib/000000000009.jpg",
+                            "size_bytes": 3,
+                            "sha256": "abc"})
+            rc, out = _run(entries, payload, xrt)
+            self.assertEqual(rc, 0)
+            self.assertIn("SKIP calib/000000000009.jpg", out)
+
     def test_hash_mismatch_fails(self):
         with tempfile.TemporaryDirectory() as payload, \
                 tempfile.TemporaryDirectory() as xrt:

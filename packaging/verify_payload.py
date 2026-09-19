@@ -80,8 +80,12 @@ def main() -> int:
         rel = entry["path"]
         base, local = base_for(rel)
         if base is None:
-            print(f"MISSING {rel} (no base dir supplied)")
-            errors += 1
+            # Staged verification: each Dockerfile stage checks the
+            # prefixes it was given; unsupplied prefixes are skipped
+            # here and verified by the later stage that supplies them
+            # (the final stage passes all prefixes). Skipping is not
+            # an error — a missing FILE under a supplied prefix is.
+            print(f"SKIP {rel} (no base dir supplied)")
             continue
         full = safe_join(base, local)
         if full is None:
