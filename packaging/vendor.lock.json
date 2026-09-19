@@ -1,12 +1,39 @@
 {
   "components": [
     {
+      "file_count": 8,
+      "files_sha256": "02a882a4a4341aa6ca0bf3f963bca44c0a8466fb692424193e7a9b98f449ed6e",
+      "licence": "amd-eula",
+      "package": "amd-legal",
+      "roles": "EULA/TPN flow-down notices",
+      "total_bytes": 19922204,
+      "version": "1.8"
+    },
+    {
+      "file_count": 32,
+      "files_sha256": "f195522eb7a61da590bc3f27276b003d024f82a721cd6d2b902b1679c53ac98f",
+      "licence": "cc-by-4.0",
+      "package": "coco-calib",
+      "roles": "BF16 calibration images (public COCO)",
+      "total_bytes": 1887250,
+      "version": "coco128"
+    },
+    {
       "file_count": 2,
       "files_sha256": "70844068312efc09e064a9e6637d0cef74173f2c78cd17454c47c2b2594e34c5",
       "licence": "amd-eula",
       "package": "flexml",
       "roles": "VAIML partitioner + compile VFS",
       "total_bytes": 446949912,
+      "version": "1.8.0"
+    },
+    {
+      "file_count": 1,
+      "files_sha256": "2d332c16ee16e28aa383f5b228dbbe64c170cef62355f792dadbc13bbe00fa54",
+      "licence": "amd-eula",
+      "package": "flexmlrt",
+      "roles": "standalone FlexMLRT runtime",
+      "total_bytes": 12623576,
       "version": "1.8.0"
     },
     {

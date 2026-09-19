@@ -82,9 +82,20 @@ COPY --from=manager /opt/fxdna/manager /opt/fxdna/manager
 COPY --from=compiler /opt/compile-venv /opt/compile-venv
 COPY --from=compiler /opt/xilinx-xrt /opt/xilinx-xrt
 COPY --from=quant /opt/quant-venv /opt/quant-venv
+# Vendor groups are copied and then verified byte-for-byte; build fails
+# if any shipped file is missing, extra, or hash-mismatched.
 COPY packaging/vendor-input/flexmlrt/ /opt/flexmlrt/lib/
 COPY packaging/vendor-input/calib/ /opt/fxdna/calib/
 COPY packaging/vendor-input/legal/ /opt/fxdna/legal/
+COPY packaging/vendor-files.manifest.json /tmp/vendor-files.manifest.json
+COPY packaging/verify_payload.py /tmp/verify_payload.py
+RUN python3 /tmp/verify_payload.py \
+      --manifest /tmp/vendor-files.manifest.json \
+      --payload /opt/compile-venv/lib/python3.12/site-packages \
+      --xrt /opt/xilinx-xrt \
+      --flexmlrt /opt/flexmlrt/lib \
+      --calib /opt/fxdna/calib \
+      --legal /opt/fxdna/legal
 COPY packaging/compile-env.sh /opt/fxdna/
 COPY recipes/bf16-vaiml-v1/recipe.json /opt/fxdna/recipes/bf16-vaiml-v1/
 COPY recipes/bf16-vaiml-v1/prepare.py recipes/bf16-vaiml-v1/compile.py recipes/bf16-vaiml-v1/validate.py /opt/fxdna/recipes/bf16-vaiml-v1/

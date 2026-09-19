@@ -1,12 +1,39 @@
 {
   "components": [
     {
+      "file_count": 8,
+      "files_sha256": "02a882a4a4341aa6ca0bf3f963bca44c0a8466fb692424193e7a9b98f449ed6e",
+      "licence": "amd-eula",
+      "package": "amd-legal",
+      "purpose": "EULA/TPN flow-down notices",
+      "total_bytes": 19922204,
+      "version": "1.8"
+    },
+    {
+      "file_count": 32,
+      "files_sha256": "f195522eb7a61da590bc3f27276b003d024f82a721cd6d2b902b1679c53ac98f",
+      "licence": "cc-by-4.0",
+      "package": "coco-calib",
+      "purpose": "BF16 calibration images (public COCO)",
+      "total_bytes": 1887250,
+      "version": "coco128"
+    },
+    {
       "file_count": 2,
       "files_sha256": "70844068312efc09e064a9e6637d0cef74173f2c78cd17454c47c2b2594e34c5",
       "licence": "amd-eula",
       "package": "flexml",
       "purpose": "VAIML partitioner + compile VFS",
       "total_bytes": 446949912,
+      "version": "1.8.0"
+    },
+    {
+      "file_count": 1,
+      "files_sha256": "2d332c16ee16e28aa383f5b228dbbe64c170cef62355f792dadbc13bbe00fa54",
+      "licence": "amd-eula",
+      "package": "flexmlrt",
+      "purpose": "standalone FlexMLRT runtime",
+      "total_bytes": 12623576,
       "version": "1.8.0"
     },
     {
@@ -19,13 +46,31 @@
       "version": "1.8.0"
     },
     {
-      "file_count": 784,
-      "files_sha256": "22765370d327aa71a5ff038694cb09844b7137404b7c24b7bd80ba0fc4ceb3c2",
+      "file_count": 11,
+      "files_sha256": "eaf78c17fd8439a72931e71d62579a28cb651ac7bcc1b797d3a3bae48e26c46d",
+      "licence": "ml_dtypes-apache",
+      "package": "ml_dtypes",
+      "purpose": "ONNX ML dtypes",
+      "total_bytes": 1808218,
+      "version": "0.6.0"
+    },
+    {
+      "file_count": 1174,
+      "files_sha256": "884d0acac1677eba8170ba29c5389edc5627f4154d66fdd698815b22f2c185fc",
       "licence": "numpy-bsd",
       "package": "numpy",
       "purpose": "compile-harness array support",
-      "total_bytes": 63583434,
-      "version": "1.26.4"
+      "total_bytes": 110843136,
+      "version": "2.5.3"
+    },
+    {
+      "file_count": 1192,
+      "files_sha256": "b240e8de672109a8ee3dfb39b4a1092221081e3274ac20583cd875086204aca6",
+      "licence": "onnx-mit",
+      "package": "onnx",
+      "purpose": "ONNX dist-info; ONNX graph inspection (public PyPI)",
+      "total_bytes": 23150279,
+      "version": "1.23.0"
     },
     {
       "file_count": 11,
@@ -37,6 +82,15 @@
       "version": "1.27.0"
     },
     {
+      "file_count": 64,
+      "files_sha256": "a80f9877861e759167c1009ada5cf8430b23b08735acd7526ce3f785d5c393eb",
+      "licence": "protobuf-bsd",
+      "package": "protobuf",
+      "purpose": "ONNX protobuf runtime",
+      "total_bytes": 1392088,
+      "version": "7.36.2"
+    },
+    {
       "file_count": 1,
       "files_sha256": "e637fb3a31cc857c477817b6ca86203b8fb92258eeb8e5c9914f74d653b08ad5",
       "licence": "ryzenai-sw-mit",
@@ -44,6 +98,15 @@
       "purpose": "VAIML partition recipe",
       "total_bytes": 489,
       "version": "1.8"
+    },
+    {
+      "file_count": 6,
+      "files_sha256": "86380cde8c5f4a18a2746315a7c949d113a9a7afc654b1e89676542c21ef6fcc",
+      "licence": "typing-extensions-mit",
+      "package": "typing_extensions",
+      "purpose": "ONNX typing support",
+      "total_bytes": 182924,
+      "version": "4.16.0"
     },
     {
       "file_count": 673,

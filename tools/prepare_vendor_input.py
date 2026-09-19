@@ -61,20 +61,20 @@ def main() -> int:
     # (public ultralytics COCO128 assets, 1.9 MB). Same bytes => same BF16.
     copy_tree(args.calib_src, os.path.join(args.out, "calib"))
 
+    # Cryptographically verify all shipped payload groups (no partial trust)
     rc = subprocess.run(
         [sys.executable,
          os.path.join(HERE, "..", "packaging", "verify_payload.py"),
          "--manifest", os.path.join(HERE, "..", "packaging",
                                     "vendor-files.manifest.json"),
          "--payload", os.path.join(args.out, "compile-site-packages"),
-         "--xrt", os.path.join(args.out, "xrt")]).returncode
+         "--xrt", os.path.join(args.out, "xrt"),
+         "--flexmlrt", os.path.join(args.out, "flexmlrt"),
+         "--calib", os.path.join(args.out, "calib"),
+         "--legal", os.path.join(args.out, "legal")]).returncode
     if rc != 0:
         print("vendor input FAILED manifest verification")
         return rc
-    for fn in ("libflexmlrt.so",):
-        if not os.path.isfile(os.path.join(args.out, "flexmlrt", fn)):
-            print(f"missing flexmlrt/{fn}")
-            return 1
     print(f"vendor input staged at {args.out}")
     return 0
 

@@ -90,6 +90,12 @@ def origin_for(rel: str, table) -> tuple:
     return ("unknown", "unknown", "UNMAPPED", "unmapped file")
 
 
+ALLOWLISTED_SYMLINKS = {
+    "lib/libxrt_core.so.2": "libxrt_core.so.2.25.37",
+    "lib/libxrt_coreutil.so.2": "libxrt_coreutil.so.2.25.37",
+    "lib/libxrt_driver_xdna.so.2": "libxrt_driver_xdna.so.2.25.260102.56.release",
+}
+
 def walk(root: str, table, strip: str) -> list[dict]:
     # venv scaffolding (pip, dist-info) and bytecode caches are recreated
     # at build time, never part of the audited set.
@@ -106,7 +112,16 @@ def walk(root: str, table, strip: str) -> list[dict]:
                 continue
             full = os.path.join(dirpath, fn)
             if os.path.islink(full):
-                continue  # soname symlinks recreated at install, not hashed
+                rel = os.path.relpath(full, root)
+                target = os.readlink(full)
+                # Only the 3 XRT soname links are allowlisted; they are
+                # recreated at install (Dockerfile ln -sf) and not hashed.
+                # Any other symlink is a payload integrity error.
+                if rel not in ALLOWLISTED_SYMLINKS:
+                    raise SystemExit(f"unexpected symlink {rel!r} -> {target!r}")
+                if os.path.basename(target) != ALLOWLISTED_SYMLINKS[rel]:
+                    raise SystemExit(f"symlink {rel!r} target mismatch: {target!r}")
+                continue
             rel = os.path.relpath(full, root)
             pkg, ver, lic, role = origin_for(rel, table)
             out.append({"path": rel, "sha256": sha256_file(full),
@@ -120,9 +135,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--payload", required=True)
     ap.add_argument("--xrt", required=True)
-    ap.add_argument("--flexmlrt", required=False)
-    ap.add_argument("--calib", required=False)
-    ap.add_argument("--legal", required=False)
+    ap.add_argument("--flexmlrt", required=True)
+    ap.add_argument("--calib", required=True)
+    ap.add_argument("--legal", required=True)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -190,6 +205,35 @@ def main() -> int:
     }
     with open(os.path.join(args.out, "vendor.lock.json"), "w") as f:
         json.dump(vendor_lock, f, indent=2, sort_keys=True)
+
+    # Synchronize legal/component-map.json from the same locked collection
+    # (keeps both outputs consistent; NumPy and all components included).
+    try:
+        existing = json.load(open(os.path.join(args.out, "legal",
+                                               "component-map.json")))
+        governing = existing.get("governing_terms", [])
+        rules = existing.get("rules", [])
+    except (OSError, ValueError):
+        governing, rules = [], []
+    comp_map = {
+        "schema_version": 1,
+        "status": vendor_lock["status"] + "; per-file manifest in "
+                  "packaging/vendor-files.manifest.json",
+        "components": [
+            {
+                "package": c["package"], "version": c["version"],
+                "licence": c["licence"], "file_count": c["file_count"],
+                "files_sha256": c["files_sha256"],
+                "total_bytes": c["total_bytes"],
+                "purpose": c["roles"],
+            } for c in vendor_lock["components"]
+        ],
+        "governing_terms": governing,
+        "rules": rules,
+    }
+    os.makedirs(os.path.join(args.out, "legal"), exist_ok=True)
+    with open(os.path.join(args.out, "legal", "component-map.json"), "w") as f:
+        json.dump(comp_map, f, indent=2, sort_keys=True)
 
     print(f"files={len(files)} bytes={files_manifest['total_bytes']} "
           f"components={len(components)}")

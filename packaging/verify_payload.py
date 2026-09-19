@@ -28,19 +28,43 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
+ALLOWLISTED_SYMLINKS = {
+    "lib/libxrt_core.so.2": "libxrt_core.so.2.25.37",
+    "lib/libxrt_coreutil.so.2": "libxrt_coreutil.so.2.25.37",
+    "lib/libxrt_driver_xdna.so.2": "libxrt_driver_xdna.so.2.25.260102.56.release",
+}
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--payload", required=True)
     ap.add_argument("--xrt", required=True)
+    ap.add_argument("--flexmlrt", required=False)
+    ap.add_argument("--calib", required=False)
+    ap.add_argument("--legal", required=False)
     args = ap.parse_args()
     manifest = json.load(open(args.manifest))
     errors = 0
     seen = set()
+    # Map manifest prefix -> (cli arg, strip)
+    prefix_map = {
+        "xrt/": (args.xrt, 4),
+        "flexmlrt/": (args.flexmlrt, 9),
+        "calib/": (args.calib, 6),
+        "legal/": (args.legal, 6),
+    }
+    def base_for(rel: str):
+        for pfx, (base, strip) in prefix_map.items():
+            if rel.startswith(pfx):
+                return base, rel[strip:]
+        return args.payload, rel
     for entry in manifest["files"]:
         rel = entry["path"]
-        base = args.xrt if rel.startswith("xrt/") else args.payload
-        local = rel[4:] if rel.startswith("xrt/") else rel
+        base, local = base_for(rel)
+        if base is None:
+            print(f"MISSING {rel} (no base dir supplied)")
+            errors += 1
+            continue
         full = os.path.join(base, local)
         seen.add(os.path.normpath(full))
         if not os.path.isfile(full) or os.path.islink(full):
@@ -54,7 +78,17 @@ def main() -> int:
         if sha256_file(full) != entry["sha256"]:
             print(f"HASH {rel}")
             errors += 1
-    for root, label in ((args.payload, ""), (args.xrt, "xrt/")):
+    # Check for extra files and unexpected symlinks in each supplied tree
+    roots = [(args.payload, ""), (args.xrt, "xrt/")]
+    if args.flexmlrt:
+        roots.append((args.flexmlrt, "flexmlrt/"))
+    if args.calib:
+        roots.append((args.calib, "calib/"))
+    if args.legal:
+        roots.append((args.legal, "legal/"))
+    for root, label in roots:
+        if root is None or not os.path.isdir(root):
+            continue
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [d for d in dirnames if d != "__pycache__"]
             top = os.path.relpath(dirpath, root).split(os.sep)[0]
@@ -66,6 +100,18 @@ def main() -> int:
                     continue
                 full = os.path.join(dirpath, fn)
                 if os.path.islink(full):
+                    rel = os.path.relpath(full, root)
+                    # Allowlisted XRT soname links are not in the manifest
+                    # (recreated at install); any other symlink is an error.
+                    check_key = rel if label == "xrt/" else rel
+                    if label == "xrt/" and check_key in ALLOWLISTED_SYMLINKS:
+                        target = os.readlink(full)
+                        if os.path.basename(target) != ALLOWLISTED_SYMLINKS[check_key]:
+                            print(f"SYMLINK_TARGET_MISMATCH {label}{rel} -> {target}")
+                            errors += 1
+                        continue
+                    print(f"UNEXPECTED_SYMLINK {label}{rel} -> {os.readlink(full)}")
+                    errors += 1
                     continue
                 if os.path.normpath(full) not in seen:
                     print(f"EXTRA {label}{os.path.relpath(full, root)}")

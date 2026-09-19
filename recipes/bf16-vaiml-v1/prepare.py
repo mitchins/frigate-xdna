@@ -15,6 +15,8 @@ import os
 import sys
 import time
 
+import resource
+
 import numpy as np
 import onnx
 from onnxruntime.quantization import CalibrationDataReader
@@ -23,13 +25,24 @@ from quark.onnx import ModelQuantizer
 from quark.onnx.quantization.config.config import Config
 from quark.onnx.quantization.config.custom_config import get_default_config
 
+# Safe resource limits (replaces unsafe preexec_fn in launcher): 6 GiB AS,
+# 8 MiB file size cap for any child output (logs are also truncated by parent).
+try:
+    resource.setrlimit(resource.RLIMIT_AS, (6 * 1024 ** 3, 6 * 1024 ** 3))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (8 * 1024 * 1024, 8 * 1024 * 1024))
+except (ValueError, OSError):
+    pass
+
 
 class PILDataReader(CalibrationDataReader):
     def __init__(self, folder, input_name, geometry, limit=32):
-        names = sorted(f for f in os.listdir(folder)
-                       if f.endswith(".jpg"))[:limit]
-        if not names:
-            raise SystemExit("no calibration images found")
+        all_names = sorted(
+            f for f in os.listdir(folder) if f.endswith(".jpg"))
+        if len(all_names) != limit:
+            raise SystemExit(
+                f"calibration images: expected {limit}, found "
+                f"{len(all_names)} in {folder!r}")
+        names = all_names[:limit]
         self.data = []
         for n in names:
             img = Image.open(os.path.join(folder, n)).convert("RGB").resize(

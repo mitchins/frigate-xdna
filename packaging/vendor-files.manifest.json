@@ -1,5 +1,5 @@
 {
- "file_count": 6525,
+ "file_count": 6566,
  "files": [
   {
    "licence": "typing-extensions-mit",
@@ -58725,8 +58725,377 @@
    "sha256": "b8cc96f1875bb8ab7eb36858328382badafd9cda2b39dbe3b51490c1f086e312",
    "size_bytes": 424,
    "version": "2.25.260102.56"
+  },
+  {
+   "licence": "amd-eula",
+   "package": "flexmlrt",
+   "path": "flexmlrt/libflexmlrt.so",
+   "role": "standalone FlexMLRT runtime",
+   "sha256": "793c5327d6f7614d0d7f6df84fba4cd11bf251fea0fa54a0c5e30e799931daff",
+   "size_bytes": 12623576,
+   "version": "1.8.0"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000009.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "3b0bb6bebad60a3329f1e3484434872e86998aeb7750d779b308e4a064868c2c",
+   "size_bytes": 62835,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000025.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "9f016b98f31e4fe826910e56ee39fa0c2889f48d38cc5f4f6b6421c8c5fc7214",
+   "size_bytes": 89652,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000061.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "a1a9ac88e4c5cfbdd1cd425a6d262b1e78bf32676a9c17a2861ca6a23a731955",
+   "size_bytes": 135566,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000071.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "5393bf6575c435daa599c1272d9e61e99c099994ae4d3755311684663fed0917",
+   "size_bytes": 57039,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000077.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "e07c725d9941691ac87386f0f4edd44f62a232696288bf95fb5ddef9384347b1",
+   "size_bytes": 50183,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000086.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "f58a99916783cdf4a7619286dc46adedd4ea1143bcc2cd773c6504aa5280915a",
+   "size_bytes": 87717,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000089.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "cc548c7e669fefde96bdb7b1454c90cf518d414b85eb36827cc78f488d622e5a",
+   "size_bytes": 41759,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000094.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "143779e4a70bb6b6e10232aa02c2ce99a9a1246d763da344b424aba4ca71cd9f",
+   "size_bytes": 66547,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000110.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "39d967c7856965853e90b9283db4a6895a034eb17fe0c84581d17af4a59edcf2",
+   "size_bytes": 56509,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000127.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "0ce2f02f39d5d49260d91762bc9a659f8f9d516d8e416c8120306330bfd58023",
+   "size_bytes": 64488,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000143.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "03d4d20019d5abdf6f9314a166f8f8cf582f1d0d2167beef7ec2400d0f1b629e",
+   "size_bytes": 30392,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000192.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "93a9d9132aefccbb1f1bfb51198b5b427d1cf4a977ef259c9d0507ee5b0df732",
+   "size_bytes": 62642,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000196.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "1e1d801e63ed90d34ee666845ebcc17b56edef1f864d048ff588ce7073bc94a2",
+   "size_bytes": 70172,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000201.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "4efc7ce561df432c2d3d9a60040f62b1b8389b36b401269bfc6802065dfcb9d8",
+   "size_bytes": 52369,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000283.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "a668b293598b0097c9b38c136e54b8b43241df22d1c183f6f204a87eaf1f0724",
+   "size_bytes": 35093,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000359.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "8da8a8320518a8adadbbd79615e066fd60b31c6025919665264ff9d0f746a5dd",
+   "size_bytes": 18860,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000368.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "a10be0a1beb5a34b50af22cc657dbf186a944db7ce8924e570295f35bd954036",
+   "size_bytes": 116152,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000389.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "f6d313afba47fe0747d1d78cd342f420eb305de8faadb5cb164de428522b40d6",
+   "size_bytes": 51895,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000394.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "2cf78c1cfa98714d2ed8a643f931c39511bbb6085fddf157b27ed709089e0343",
+   "size_bytes": 68453,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000397.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "5011e5e9eac564d30fa652281a7fd1d7693545077971741a241f400611e4c33e",
+   "size_bytes": 56346,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000419.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "4b4e5c24a3aafa6d591ab385cc3756f90a804212a8e060ba374d1658b69b308e",
+   "size_bytes": 67866,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000471.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "8f473ca6e651f74a74efea3673445230f6bb7d6ae92f76bf3c1e523853ec3995",
+   "size_bytes": 33837,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000474.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "e5a6b72ea2fda1cd1ea969018036e6da16fa491f9a2ac974a7361b539b00a155",
+   "size_bytes": 37728,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000502.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "f7ce0feeb7699cd56886c64ac4ea923c76be97b34ee3a2ea0909c45e08411ec0",
+   "size_bytes": 82455,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000508.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "0fc73f660a10ed91c52f76a2b34b5fa252bf70ff84f7b2a35374726388528ca2",
+   "size_bytes": 36527,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000520.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "2b971302ba56e1049294f9e0b198f37316148c8257b8d7344002aed624c45844",
+   "size_bytes": 50302,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000532.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "60745e50cb857e4683d3622ac6c1e7ade63bd73ee458eb76a70455badaee2869",
+   "size_bytes": 68045,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000584.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "f1ae69b71470e4d4e88e342b69fa47187fe5c7a56882eac0e548107075f4716f",
+   "size_bytes": 48307,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000620.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "4c7d0e5b1ac23a287f95640c4aaab93a0e120c384558e3fff70b96f6f1eb80ce",
+   "size_bytes": 51808,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000626.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "47b4a3b3fe24c6b1f77a9d89aa2e5d1a3b410b7ba611f54c252c2e13e975afc8",
+   "size_bytes": 38403,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000641.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "8eae4239a000d602acb4c58801a3c070e4bf3da608e57e7a3dcbd5ef719895cc",
+   "size_bytes": 63438,
+   "version": "coco128"
+  },
+  {
+   "licence": "cc-by-4.0",
+   "package": "coco-calib",
+   "path": "calib/000000000650.jpg",
+   "role": "BF16 calibration images (public COCO)",
+   "sha256": "9bb45795336c1d05189fe51a77e04270cd1da8929d62060926798f3dd2d25204",
+   "size_bytes": 33865,
+   "version": "coco128"
+  },
+  {
+   "licence": "amd-eula",
+   "package": "amd-legal",
+   "path": "legal/amd-end-user-license-agreement.pdf",
+   "role": "EULA/TPN flow-down notices",
+   "sha256": "64ab400f2a84c081a19837c604eaeccbfbca14fcb88e046a922685b2c03e2f2f",
+   "size_bytes": 166111,
+   "version": "1.8"
+  },
+  {
+   "licence": "amd-eula",
+   "package": "amd-legal",
+   "path": "legal/amd-end-user-license-agreement.txt",
+   "role": "EULA/TPN flow-down notices",
+   "sha256": "5bbfe30da4d4036fecffdb0ced7f9bd814edabc0c577619e7cd88429234a20d8",
+   "size_bytes": 15405,
+   "version": "1.8"
+  },
+  {
+   "licence": "amd-eula",
+   "package": "amd-legal",
+   "path": "legal/ryzen-ai-1-8-0-linux-tpn-license.pdf",
+   "role": "EULA/TPN flow-down notices",
+   "sha256": "3ec2902922d5ecd2beb72d308ac27de0ca067a861535ff04acee5ceb0ce41990",
+   "size_bytes": 7302553,
+   "version": "1.8"
+  },
+  {
+   "licence": "amd-eula",
+   "package": "amd-legal",
+   "path": "legal/ryzen-ai-1-8-0-linux-tpn-license.txt",
+   "role": "EULA/TPN flow-down notices",
+   "sha256": "a05a9533ad3f03add8884dd40b07b4197e4532179d4553b5a96e0f28a567621e",
+   "size_bytes": 3182789,
+   "version": "1.8"
+  },
+  {
+   "licence": "amd-eula",
+   "package": "amd-legal",
+   "path": "legal/ryzen-ai-1.7.1-linux-tpn-license.pdf",
+   "role": "EULA/TPN flow-down notices",
+   "sha256": "96414698e912629a2daf5a2d28c62a793a90b0a2341cfef9b54dcd8b3dc32de8",
+   "size_bytes": 6299332,
+   "version": "1.8"
+  },
+  {
+   "licence": "amd-eula",
+   "package": "amd-legal",
+   "path": "legal/ryzen-ai-1.7.1-linux-tpn-license.txt",
+   "role": "EULA/TPN flow-down notices",
+   "sha256": "7b14c60e746e6fe00575edea74d280b8a867a2c52dfd54f86e7153c9defd529a",
+   "size_bytes": 2771334,
+   "version": "1.8"
+  },
+  {
+   "licence": "amd-eula",
+   "package": "amd-legal",
+   "path": "legal/ryzen-ai-end-user-license-agreement-public.pdf",
+   "role": "EULA/TPN flow-down notices",
+   "sha256": "587c5b4916ae6053f4a2fbc0a063532bd4ff9e50080491e75cb349c84f2b97a7",
+   "size_bytes": 168872,
+   "version": "1.8"
+  },
+  {
+   "licence": "amd-eula",
+   "package": "amd-legal",
+   "path": "legal/ryzen-ai-end-user-license-agreement-public.txt",
+   "role": "EULA/TPN flow-down notices",
+   "sha256": "f70a05716d915899b4dd56a80ab459dd7d345a2a8fccfd5b9f76dcb3d7d08b8d",
+   "size_bytes": 15808,
+   "version": "1.8"
   }
  ],
  "schema_version": 1,
- "total_bytes": 1764023979
+ "total_bytes": 1798457009
 }

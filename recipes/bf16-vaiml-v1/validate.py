@@ -12,7 +12,14 @@ Prints: VALIDATE_OK <sha256> <bytes> as the last line.
 import argparse
 import hashlib
 import os
+import resource
 import sys
+
+try:
+    resource.setrlimit(resource.RLIMIT_AS, (6 * 1024 ** 3, 6 * 1024 ** 3))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (8 * 1024 * 1024, 8 * 1024 * 1024))
+except (ValueError, OSError):
+    pass
 
 
 def main() -> int:

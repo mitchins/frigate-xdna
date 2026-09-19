@@ -126,7 +126,10 @@ class Supervisor:
             else:
                 compiler_backend_id = COMPILER_BACKEND
         elif compiler_backend_id is None:
-            compiler_backend_id = COMPILER_BACKEND
+            if compiler_prefixes is not None:
+                compiler_backend_id = REAL_BACKEND_ID
+            else:
+                compiler_backend_id = COMPILER_BACKEND
         self.config = config
         self.data_dir = data_dir or config.data_dir
         ensure_layout(self.data_dir)
@@ -344,15 +347,27 @@ class Supervisor:
         source = (self.registry.get_ref(job["ref"]) or {}).get(
             "source_sha256") or ""
         backend = self.jobs.backend_for(job["uuid"])
-        # Backend identity comes from the producer object, never from config,
-        # so a fake job can never be published with the audited backend id.
+        # Backend identity comes from the producer object, never from config.
+        if backend is None:
+            raise FxdnaError(5, "COMPILE_FAILED",
+                             "no backend object for job")
         backend_id = getattr(backend, "BACKEND_ID", None) or getattr(
-            backend, "backend_id", None) or self.compiler_backend_id
+            backend, "backend_id", None)
+        if not backend_id:
+            raise FxdnaError(5, "COMPILE_FAILED",
+                             "backend identity unavailable")
         # Only the real backend's result carries a .rai path; fake has none.
+        # Fake-byte publication is allowed only for FakeCompileJob.
+        from .compiler.fake import FakeCompileJob as _Fake
+        is_fake = isinstance(backend, _Fake)
         result = getattr(backend, "result", None)
         if result is not None and getattr(result, "rai_path", ""):
-            with open(result.rai_path, "rb") as f:
-                rai_bytes = f.read()
+            try:
+                with open(result.rai_path, "rb") as f:
+                    rai_bytes = f.read()
+            except OSError as e:
+                raise FxdnaError(5, "COMPILE_FAILED",
+                                 f"cannot read compiler artifact: {e}") from e
             manifest = {
                 "backend": backend_id,
                 "compile_key": ckey, "source_sha256": source,
@@ -363,7 +378,7 @@ class Supervisor:
                     "peak_rss_kb": result.peak_rss_kb,
                     "bf16_sha256": result.bf16_sha256},
             }
-        else:
+        elif is_fake:
             rai_bytes = b"FXDNA-FAKE-RAI-v0:" + ckey.encode()
             manifest = {
                 "backend": backend_id,
@@ -371,6 +386,9 @@ class Supervisor:
                 "artifact_sha256": sha256_bytes(rai_bytes),
                 "recipe_id": RECIPE_ID, "target_profile": TARGET_PROFILE,
                 "note": "fake compile stand-in; not deployable"}
+        else:
+            raise FxdnaError(5, "COMPILE_FAILED",
+                             "real backend produced no artifact")
         publish_artifact(self.data_dir, ckey, staged, {
             "model.rai": rai_bytes,
             "artifact.json": json.dumps(manifest, sort_keys=True).encode(),

@@ -126,25 +126,41 @@ def spawn(argv: list[str], env: dict[str, str], cwd: str,
         if key in env:
             raise RuntimeError(f"refusing to spawn with secret {key} in env")
     t0 = time.monotonic()
+    # Resource limits (RLIMIT_AS / RLIMIT_FSIZE) are enforced inside the
+    # audited recipe entry points (prepare/compile/validate) rather than via
+    # preexec_fn, which is unsafe in a threaded supervisor (fork without exec
+    # must not run Python). Logs are truncated to MAX_LOG_BYTES after wait.
     with open(f"{log_prefix}.stdout.log", "wb") as out, \
             open(f"{log_prefix}.stderr.log", "wb") as err:
         try:
             proc = subprocess.Popen(
                 argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
                 stdout=out, stderr=err, close_fds=True,
-                start_new_session=True, preexec_fn=_limit_resources)
+                start_new_session=True)
         except OSError as e:
             return 127, time.monotonic() - t0
         try:
             proc.wait(timeout=timeout_s)
-            return proc.returncode, time.monotonic() - t0
+            rc = proc.returncode
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except (OSError, ProcessLookupError):
                 pass
             proc.wait()
-            return 124, time.monotonic() - t0
+            rc = 124
+    # Enforce MAX_LOG_BYTES by truncating any oversize logs (preserves
+    # capture of both streams and the timeout behavior; child also sets
+    # RLIMIT_FSIZE where applicable).
+    for p in (f"{log_prefix}.stdout.log", f"{log_prefix}.stderr.log"):
+        try:
+            sz = os.path.getsize(p)
+            if sz > MAX_LOG_BYTES:
+                with open(p, "r+b") as f:
+                    f.truncate(MAX_LOG_BYTES)
+        except OSError:
+            pass
+    return rc, time.monotonic() - t0
 
 
 def _tail_line(path: str, marker: str) -> str:
@@ -185,13 +201,16 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     bf16_path = os.path.join(workdir, "in", "model-bf16.onnx")
     deadline = t_all + timeout_s
 
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return CompileResult(124, time.monotonic() - t_all,
+                             _child_peak_rss(), error="compile timeout")
     rc, _ = spawn(
         [prefixes.quant_python,
          os.path.join(prefixes.recipe_dir, "prepare.py"),
          "--onnx", model_in, "--calib", prefixes.calib_dir,
          "--out", bf16_path],
-        build_quant_env(workdir), workdir,
-        max(60.0, deadline - time.monotonic()),
+        build_quant_env(workdir), workdir, remaining,
         os.path.join(workdir, "phase1-quant"))
     if rc != 0:
         return CompileResult(rc, time.monotonic() - t_all,
@@ -200,14 +219,17 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
                       "BF16_PREPARE_OK")
     bf16_sha = line.rsplit(" ", 1)[-1] if line else ""
 
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return CompileResult(124, time.monotonic() - t_all,
+                             _child_peak_rss(), error="compile timeout")
     rc, _ = spawn(
         [prefixes.compile_python,
          os.path.join(prefixes.recipe_dir, "compile.py"),
          "--onnx", bf16_path, "--config", prefixes.vaiml_config,
          "--cache-dir", os.path.join(workdir, "cache"),
          "--cache-key", cache_key],
-        build_compile_env(prefixes, workdir), workdir,
-        max(60.0, deadline - time.monotonic()),
+        build_compile_env(prefixes, workdir), workdir, remaining,
         os.path.join(workdir, "phase2-compile"))
     if rc != 0:
         return CompileResult(rc, time.monotonic() - t_all,
@@ -221,12 +243,15 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
             rai_sha, rai_bytes = parts[1], int(parts[2])
     rai_path = os.path.join(workdir, "cache", cache_key, f"{cache_key}.rai")
 
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return CompileResult(124, time.monotonic() - t_all,
+                             _child_peak_rss(), error="compile timeout")
     rc, _ = spawn(
         [prefixes.compile_python,
          os.path.join(prefixes.recipe_dir, "validate.py"),
          "--rai", rai_path],
-        build_quant_env(workdir), workdir,
-        max(60.0, deadline - time.monotonic()),
+        build_quant_env(workdir), workdir, remaining,
         os.path.join(workdir, "phase3-validate"))
     if rc != 0:
         return CompileResult(rc, time.monotonic() - t_all,
