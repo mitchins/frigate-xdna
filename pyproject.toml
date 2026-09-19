@@ -20,3 +20,38 @@ fxdna = "frigate_xdna.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Coverage (Task 8.3.5): measures first-party Python product code.
+# Tools/recipes are operator-run scripts verified by execution, not import
+# coverage; native C++ is covered by contract/hardware tests (see
+# sonar-project.properties + docs/HARDENING.md). CI enforces fail_under.
+[tool.coverage.run]
+source = ["src", "packaging"]
+omit = ["*/__pycache__/*"]
+branch = false
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  'if __name__ == "__main__":',
+]
+# Non-regression floor (baseline 76% at Task 8.3.5); raise as
+# critical-path coverage grows.
+fail_under = 70
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+# Lint (Task 8.3.5): small on purpose — pycodestyle errors, pyflakes,
+# import sorting, py312 upgrades. No formatting/type migration.
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Pinned stock Frigate sources for contract tests: third-party code that
+# must not be reformatted (mirrors sonar-project.properties exclusions).
+"tests/upstream/**" = ["E", "F", "I", "UP"]

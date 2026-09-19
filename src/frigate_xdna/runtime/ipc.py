@@ -8,7 +8,6 @@ tensor contract, bounded payload length. Native independently validates.
 from __future__ import annotations
 
 import json
-import os
 import socket
 import struct
 
@@ -63,7 +62,9 @@ def send_message(
         _send_all(sock, payload)
 
 
-def recv_message(sock: socket.socket, timeout: float | None = None) -> tuple[dict, bytes]:
+def recv_message(
+    sock: socket.socket, timeout: float | None = None
+) -> tuple[dict, bytes]:
     if timeout is not None:
         sock.settimeout(timeout)
     hdr_len = struct.unpack("!I", _recv_exact(sock, 4))[0]
@@ -120,12 +121,12 @@ def validate_tensor_request(header: dict, payload: bytes) -> str | None:
         return "overflow"
     if expected != len(payload):
         return f"byte count mismatch {len(payload)} vs {expected}"
-    # finite check (sampled)
+    # finite check (sampled): NaN/inf inputs are rejected, never run
+    import math as _math
     import struct as _st
 
-    # quick finite check: unpack a few floats
     for i in range(0, min(len(payload), 4096), 4):
         v = _st.unpack_from("<f", payload, i)[0]
-        if v != v or v == float("inf") or v == float("-inf"):
+        if not _math.isfinite(v):
             return "non-finite"
     return None

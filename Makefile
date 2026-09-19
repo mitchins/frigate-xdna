@@ -1,12 +1,12 @@
 VENV ?= /mnt/downloads/frigate-xdna-venvs/dev
-PY := $(VENV)/bin/python
+PY ?= $(VENV)/bin/python
 SRC := $(CURDIR)/src
 UPSTREAM := $(CURDIR)/tests/upstream
 
-.PHONY: test-unit test-contract test build-native image test-image-offline test-hardware test-frigate-e2e
+.PHONY: test-unit test-contract test-integration test coverage build-native image test-image-offline test-hardware test-frigate-e2e
 
 test-unit:
-	PYTHONPATH=$(SRC) $(PY) -m unittest discover -s tests/unit -t . -v
+	PYTHONPATH=$(SRC):$(CURDIR) $(PY) -m unittest discover -s tests/unit -t . -v
 
 test-contract:
 	PYTHONPATH=$(SRC):$(UPSTREAM) $(PY) -m unittest discover -s tests/contract -t . -v
@@ -16,8 +16,31 @@ test-integration:
 
 test: test-unit test-contract test-integration
 
+# Hardware-free coverage across all suites (CI gate). `coverage report`
+# enforces the fail_under floor from pyproject.toml [tool.coverage.report].
+coverage:
+	rm -f .coverage coverage.xml
+	PYTHONPATH=$(SRC):$(CURDIR) $(PY) -m coverage run -m unittest discover -s tests/unit -t .
+	PYTHONPATH=$(SRC):$(UPSTREAM) $(PY) -m coverage run --append -m unittest discover -s tests/contract -t .
+	PYTHONPATH=$(SRC):$(CURDIR) $(PY) -m coverage run --append -m unittest discover -s tests/integration -t .
+	$(PY) -m coverage xml
+	$(PY) -m coverage report
+
+# Native worker build (public path only). Requires the vendored XRT root
+# (packaging/vendor-input/xrt, staged by tools/prepare_vendor_input.py)
+# and FlexMLRT headers; fails fast with the CMake guard otherwise.
+XRT_ROOT ?=
+FLEXMLRT_DIR ?=
+
 build-native:
-	@echo "not yet implemented (Task 04: native IPC worker)" >&2; exit 3
+	@if [ -z "$(XRT_ROOT)" ]; then \
+	  echo "build-native: set XRT_ROOT to the vendored XRT root" >&2; exit 3; \
+	fi
+	cmake -S $(CURDIR)/native -B $(CURDIR)/build/native \
+	  -DXRT_ROOT="$(XRT_ROOT)" \
+	  $(if $(FLEXMLRT_DIR),-DFLEXMLRT_INCLUDE_DIR="$(FLEXMLRT_DIR)/include" -DFLEXMLRT_LIB="$(FLEXMLRT_DIR)/lib/libflexmlrt.so") \
+	  -DCMAKE_BUILD_TYPE=Release
+	cmake --build $(CURDIR)/build/native -j4
 
 image:
 	@echo "not yet implemented (Task 03/05: appliance image)" >&2; exit 3

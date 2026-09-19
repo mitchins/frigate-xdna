@@ -1,19 +1,18 @@
-"""Python ROUTER frontend compatible with stock Frigate rc2 REQ (SPEC §6, INTERFACES.md §3).
+"""Python ROUTER frontend for stock Frigate rc2 REQ (SPEC §6).
 
-Bounded queues, deadlines, generation binding, one-at-a-time native inference.
+INTERFACES.md §3. Bounded queues, deadlines, generation binding,
+one-at-a-time native inference.
 """
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
+import os
 import time
 
 import zmq
 import zmq.asyncio
 
-from ..cache.keys import compile_key as _compile_key
-from ..cache.keys import serving_digest as _serving_digest
 from ..cache.keys import sha256_bytes
 from ..errors import FxdnaError
 from ..models import inspect as _inspect
@@ -29,6 +28,22 @@ MODEL_OP_DEADLINE_S = 25.0
 QUEUE_MAX = 8
 
 ZERO_FRAME = bytes(20 * 6 * 4)
+
+
+def _artifact_usable(data_dir: str, compile_key: str) -> bool:
+    """Sync artifact pre-check; runs off the event loop via to_thread."""
+    art_dir = os.path.join(data_dir, "artifacts", compile_key)
+    if not os.path.isfile(os.path.join(art_dir, "model.rai")):
+        return False
+    # Hardware-free path: refuse fake-backend artifacts (Task 04 gate).
+    try:
+        with open(os.path.join(art_dir, "artifact.json")) as f:
+            meta = json.load(f)
+        if meta.get("backend") == "fake-v0":
+            return False
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 class FrigateZmqFrontend:
@@ -64,18 +79,14 @@ class FrigateZmqFrontend:
         self._worker = asyncio.create_task(self._worker_loop())
 
     async def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        if self._worker:
-            self._worker.cancel()
-            try:
-                await self._worker
-            except asyncio.CancelledError:
-                pass
+        tasks = [t for t in (self._task, self._worker) if t is not None]
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            # Join without swallowing our own cancellation: wait() reports
+            # task outcomes and never raises for the waited tasks, so a
+            # CancelledError surfacing here is genuinely ours.
+            await asyncio.wait(tasks, timeout=5.0)
         if self.sock:
             self.sock.close(linger=0)
             self.sock = None
@@ -84,20 +95,30 @@ class FrigateZmqFrontend:
         assert self.sock is not None
         assert self._queue is not None
         while True:
+            # Cancellation must propagate so stop() observes a cancelled
+            # task; only transport garbage is skipped.
             try:
                 # ROUTER recv: [identity, empty?, header, data?]
                 # stock REQ sends 1 or 2 frames; ROUTER prepends identity
                 parts = await self.sock.recv_multipart()
-            except asyncio.CancelledError:
-                break
+            except zmq.Again:
+                # No message yet (non-blocking race); yield and retry.
+                await asyncio.sleep(0)
+                continue
+            except zmq.ZMQError as e:
+                # Terminal: socket closed/terminated under us (e.g. at
+                # stop()); anything else is a real transport bug.
+                if e.errno in (zmq.ENOTSOCK, zmq.ETERM):
+                    return
+                raise
             except Exception:
                 continue
             # parse envelope
             if len(parts) < 2:
                 continue
             identity = parts[0]
-            # REQ may send [identity, header] or [identity, header, data] or with empty delimiter
-            # Handle optional empty delimiter
+            # REQ may send [identity, header] or [identity, header,
+            # data], optionally with an empty delimiter frame.
             idx = 1
             if parts[1] == b"" and len(parts) > 2:
                 idx = 2
@@ -128,50 +149,61 @@ class FrigateZmqFrontend:
     async def _worker_loop(self) -> None:
         assert self._queue is not None
         while True:
-            try:
-                identity, header, data_raw, deadline, enqueued_at = await self._queue.get()
-            except asyncio.CancelledError:
-                break
+            # Cancellation propagates (no conversion to break) so the
+            # task reports cancelled to stop().
+            req = await self._queue.get()
+            identity, header, data_raw, deadline, _enq = req
             # expired before start? Must reply before discarding to avoid REQ hang
             if time.monotonic() >= deadline:
                 self.counters["late_discard"] += 1
                 if "shape" in header:
                     await self._reply_raw(identity, ZERO_FRAME)
                 elif header.get("model_request"):
-                    await self._reply(identity, {"error_code": "TIMEOUT", "message": "request expired"})
+                    await self._reply(identity, {
+                        "error_code": "TIMEOUT",
+                        "message": "request expired"})
                 elif header.get("model_data"):
-                    await self._reply(identity, {"model_saved": False, "model_loaded": False, "error_code": "TIMEOUT"})
+                    await self._reply(identity, {
+                        "model_saved": False, "model_loaded": False,
+                        "error_code": "TIMEOUT"})
                 else:
                     await self._reply(identity, {"error_code": "TIMEOUT"})
                 continue
             # dispatch by header type (sequential, no overlap)
             if header.get("model_request"):
-                await self._handle_model_request(identity, header, deadline)
+                await self._handle_model_request(identity)
             elif header.get("model_data"):
-                await self._handle_model_data(identity, header, data_raw, deadline)
+                await self._handle_model_data(identity, header, data_raw)
             elif "shape" in header:
                 await self._handle_infer(identity, header, data_raw, deadline)
             else:
                 await self._reply(identity, {"error_code": "INVALID_MODEL"})
                 self.counters["rejected"] += 1
 
-    async def _handle_model_request(self, identity: bytes, header: dict, deadline: float) -> None:
-        # For new routing identity, always force source transfer, even if cached
-        # Basenames are not identities.
+    async def _handle_model_request(self, identity: bytes) -> None:
+        # For new routing identity, always force source transfer,
+        # even if cached. Basenames are not identities.
         binding = self.sessions.get(identity)
-        if binding and binding.generation == self._generation and self._active_artifact:
+        if (binding and binding.generation == self._generation
+                and self._active_artifact):
             # already bound to active generation: can reply available
-            await self._reply(identity, {"model_available": True, "model_loaded": True})
+            await self._reply(identity, {
+                "model_available": True, "model_loaded": True})
             self.sessions.touch(identity)
             return
-        await self._reply(identity, {"model_available": False, "model_loaded": False})
+        await self._reply(identity, {
+            "model_available": False, "model_loaded": False})
 
-    async def _handle_model_data(self, identity: bytes, header: dict, data_raw: bytes, deadline: float) -> None:
+    async def _handle_model_data(
+        self, identity: bytes, header: dict, data_raw: bytes
+    ) -> None:
         # bounded model size
         try:
             check_transfer(self.sup.config.allow_uploads, len(data_raw))
         except FxdnaError as e:
-            await self._reply(identity, {"model_saved": False, "model_loaded": False, "error_code": e.error_code})
+            await self._reply(identity, {
+                "model_saved": False, "model_loaded": False,
+                "error_code": e.error_code})
             self.counters["rejected"] += 1
             return
         # hash exact bytes
@@ -184,104 +216,122 @@ class FrigateZmqFrontend:
             if cls["profile"] is None:
                 raise FxdnaError(5, "UNSUPPORTED_CONTRACT", cls["error"])
         except FxdnaError as e:
-            await self._reply(identity, {"model_saved": False, "model_loaded": False, "error_code": e.error_code})
+            await self._reply(identity, {
+                "model_saved": False, "model_loaded": False,
+                "error_code": e.error_code})
             self.counters["rejected"] += 1
             return
-        except Exception as e:
-            await self._reply(identity, {"model_saved": False, "model_loaded": False, "error_code": "INVALID_MODEL"})
+        except Exception:
+            await self._reply(identity, {
+                "model_saved": False, "model_loaded": False,
+                "error_code": "INVALID_MODEL"})
             self.counters["rejected"] += 1
             return
-        # ingest via supervisor (handles cache, compile key, queue)
-        # Use a wire alias for the ref
+        # Ingest the transferred bytes via the supervisor (content-bound
+        # cache, compile key, work queue). The wire alias is display-only.
         model_name = header.get("model_name") or "model.onnx"
-        # Use local path ref via alias; supervisor expects ref string
-        # For ZMQ transfer, we treat it as local ONNX bytes under an alias
         alias = model_name
-        # Directly call supervisor ingest (bypass Plus fetch)
         try:
-            # Use supervisor's internal ingest path for local bytes
-            # Create a temporary file-like handling via _ingest_source
-            # We need to mimic prepare's local ONNX path but with bytes already
-            # For v0.1, we use the supervisor's _ingest_source directly via a helper
-            # that bypasses file read. Simpler: write to a temp and call prepare with a fake ref?
-            # Instead, call a new helper that ingests bytes.
-            result = self.sup.ingest_zmq_bytes(alias, data_raw, contract, cls, source_sha)
+            result = self.sup.ingest_zmq_bytes(
+                alias, data_raw, contract, cls, source_sha)
         except FxdnaError as e:
             if e.error_code == "SOURCE_CHANGED":
-                await self._reply(identity, {"model_saved": False, "model_loaded": False, "error_code": e.error_code})
+                await self._reply(identity, {
+                    "model_saved": False, "model_loaded": False,
+                    "error_code": e.error_code})
                 self.counters["rejected"] += 1
                 return
-            await self._reply(identity, {"model_saved": False, "model_loaded": False, "error_code": e.error_code})
+            await self._reply(identity, {
+                "model_saved": False, "model_loaded": False,
+                "error_code": e.error_code})
             self.counters["rejected"] += 1
             return
         # result is supervisor prepare output
         compile_key = result.get("compile_key")
+        serving_digest = result.get("serving_digest", "")
         if result.get("cache_hit") and result.get("state") == "PREPARED":
-            # already prepared: need to check if activatable (validation, device lease)
-            # For now, if active generation is 0 (no worker), we need to activate
-            # In v0.1, auto-activation is allowed only when quiescent
-            if self._active_artifact is None:
-                # activate immediately (first model)
-                activated = await self._try_activate(compile_key, source_sha, alias)
-                if activated:
-                    binding = self.sessions.bind(identity, source_sha, result.get("serving_digest", ""), compile_key, self._generation)
-                    await self._reply(identity, {"model_saved": True, "model_loaded": True})
-                    return
-            elif compile_key == self._active_artifact:
-                # same artifact as active: bind and reply loaded
-                serving = result.get("serving_digest", "")
-                self.sessions.bind(identity, source_sha, serving, compile_key, self._generation)
-                await self._reply(identity, {"model_saved": True, "model_loaded": True})
+            if await self._handle_prepared(
+                    identity, compile_key, serving_digest, source_sha):
                 return
-            else:
-                # different model, check MODEL_IN_USE
-                if self.sessions.has_active_traffic(self._generation):
-                    await self._reply(identity, {"model_saved": True, "model_loaded": False, "state": "PREPARING", "error_code": "MODEL_IN_USE"})
-                    return
-                # quiescent: switch
-                if self.sessions.is_quiescent(self._generation):
-                    # need to drain, terminate old, start new
-                    activated = await self._try_activate(compile_key, source_sha, alias)
-                    if activated:
-                        old_gen = self._generation
-                        self._generation += 1
-                        self.sessions.invalidate_generation(old_gen)
-                        self.sessions.mark_superseded(self._active_artifact)
-                        self.sessions.bind(identity, source_sha, result.get("serving_digest", ""), compile_key, self._generation)
-                        await self._reply(identity, {"model_saved": True, "model_loaded": True})
-                        return
         # cold miss or not yet prepared
-        await self._reply(identity, {"model_saved": True, "model_loaded": False, "state": "PREPARING", "error_code": "MODEL_NOT_PREPARED"})
+        await self._reply(identity, {
+            "model_saved": True, "model_loaded": False,
+            "state": "PREPARING", "error_code": "MODEL_NOT_PREPARED"})
 
-    async def _try_activate(self, compile_key: str, source_sha: str, alias: str) -> bool:
+    async def _handle_prepared(
+        self, identity: bytes, compile_key: str, serving_digest: str,
+        source_sha: str,
+    ) -> bool:
+        """Activation decision for a prepared artifact. True if replied."""
+        # Auto-activation is allowed only when quiescent.
+        if self._active_artifact is None:
+            # activate immediately (first model)
+            if await self._try_activate(compile_key):
+                self.sessions.bind(
+                    identity, source_sha, serving_digest,
+                    compile_key, self._generation)
+                await self._reply(identity, {
+                    "model_saved": True, "model_loaded": True})
+                return True
+            return False
+        if compile_key == self._active_artifact:
+            # same artifact as active: bind and reply loaded
+            self.sessions.bind(
+                identity, source_sha, serving_digest,
+                compile_key, self._generation)
+            await self._reply(identity, {
+                "model_saved": True, "model_loaded": True})
+            return True
+        # different model, check MODEL_IN_USE
+        if self.sessions.has_active_traffic(self._generation):
+            await self._reply(identity, {
+                "model_saved": True, "model_loaded": False,
+                "state": "PREPARING",
+                "error_code": "MODEL_IN_USE"})
+            return True
+        # Quiescent by elimination (active traffic returned above):
+        # switch generation, drain old, start new.
+        old_artifact = self._active_artifact
+        # None returns in the first branch; the replaced key is a str.
+        assert old_artifact is not None
+        if await self._try_activate(compile_key):
+            old_gen = self._generation
+            self._generation += 1
+            self.sessions.invalidate_generation(old_gen)
+            # Supersede the REPLACED artifact (activation already
+            # pointed _active_artifact at the new one).
+            self.sessions.mark_superseded(old_artifact)
+            self.sessions.bind(
+                identity, source_sha, serving_digest,
+                compile_key, self._generation)
+            await self._reply(identity, {
+                "model_saved": True, "model_loaded": True})
+            return True
+        return False
+
+    async def _try_activate(self, compile_key: str) -> bool:
         # Acquire device lease, validate artifact, load native worker
         from ..runtime.device_lease import DeviceLease
         lease = DeviceLease(self.sup.data_dir)
         if not lease.try_acquire():
             return False
         try:
-            # Validate artifact exists and is not quarantined
-            art_path = f"{self.sup.data_dir}/artifacts/{compile_key}/model.rai"
-            import os
-            if not os.path.isfile(art_path):
+            # Blocking FS validation runs off the event loop; the lease
+            # still serializes activation against compile/inference.
+            usable = await asyncio.to_thread(
+                _artifact_usable, self.sup.data_dir, compile_key)
+            if not usable:
                 return False
-            # For hardware-free tests, skip native load; for real, would fork native worker via IPC
-            # Here we simulate native validation: check artifact is not fake-v0
-            try:
-                import json as _js
-                with open(f"{self.sup.data_dir}/artifacts/{compile_key}/artifact.json") as f:
-                    m = _js.load(f)
-                if m.get("backend") == "fake-v0":
-                    return False
-            except (OSError, ValueError):
-                return False
-            # Simulate successful native LOAD (would use runtime/ipc to send LOAD)
+            # Simulated native LOAD (would use runtime/ipc to send LOAD).
             self._active_artifact = compile_key
             return True
         finally:
             lease.release()
 
-    async def _handle_infer(self, identity: bytes, header: dict, data_raw: bytes, deadline: float) -> None:
+    async def _handle_infer(
+        self, identity: bytes, header: dict, data_raw: bytes,
+        deadline: float,
+    ) -> None:
         self.counters["accepted"] += 1
         binding = self.sessions.get(identity)
         if not binding or binding.generation != self._generation:
@@ -315,21 +365,17 @@ class FrigateZmqFrontend:
             await self._reply_raw(identity, ZERO_FRAME)
             self.counters["rejected"] += 1
             return
-        # one at a time: forward to native via private IPC if worker exists
-        # For hardware-free tests without native, return zero frame
+        # One at a time: forward to native via private IPC if a worker
+        # exists. Without native, return the zero frame (explicit
+        # not-ready, never fabricated detections). A not-ready zero
+        # frame is not successful inference (INTERFACES.md deadline
+        # rules), so it counts into `zero`, never `success`.
         try:
-            # Attempt native IPC if a worker is active (would use runtime/ipc socketpair)
-            # Here we simulate: if _active_artifact is set, treat as native available
-            if self._active_artifact and hasattr(self, '_native_sock') and self._native_sock:
-                from ..runtime.ipc import send_message, recv_message
-                import socket as _sock
-                # Send INFER via IPC and await RESULT (bounded)
-                # Simplified: use fake response for now
-                await self._reply_raw(identity, ZERO_FRAME)
-                self.counters["success"] += 1
-            else:
-                await self._reply_raw(identity, ZERO_FRAME)
-                self.counters["success"] += 1
+            # A worker would receive INFER via runtime/ipc socketpair and
+            # return RESULT within the bounded budget; until the native
+            # worker lands, answer not-ready either way.
+            await self._reply_raw(identity, ZERO_FRAME)
+            self.counters["zero"] += 1
         except Exception:
             await self._reply_raw(identity, ZERO_FRAME)
             self.counters["rejected"] += 1

@@ -13,7 +13,7 @@ import unittest
 
 from frigate_xdna.cache import gc as _gc
 from frigate_xdna.cache.registry import Registry
-from frigate_xdna.cache.store import disk_preflight, ensure_layout, locked
+from frigate_xdna.cache.store import disk_preflight
 from frigate_xdna.config import Config
 from frigate_xdna.errors import FxdnaError
 from frigate_xdna.supervisor import Supervisor
@@ -125,13 +125,10 @@ class TestLocalPrepare(ManagerBase):
         self.assertNotIn("job_uuid", second)
 
     def test_crash_adopted_after_revalidation(self):
-        import hashlib
-        import json as _json
         pa, _ = self.local_onnx("a.onnx", seed=3)
         out = self.sup.prepare(pa)
         self.sup.pump(5.0)
         ckey = out["compile_key"]
-        art = self.sup.registry.get_artifact(ckey)
         # simulate crash between artifact rename and DB commit: drop the row
         self.sup.registry.execute(
             "DELETE FROM artifacts WHERE compile_key=?", (ckey,))
@@ -431,6 +428,7 @@ class TestPlusPrepare(unittest.TestCase):
 
     def test_plus_prepare_inspects_and_caches(self):
         import tempfile as _tf
+
         from tests.integration.onnx_builders import make_raw_yolo
         with _tf.NamedTemporaryFile(suffix=".onnx") as f:
             onnx_bytes = make_raw_yolo(f.name, res=320, seed=5)
@@ -450,6 +448,7 @@ class TestPlusPrepare(unittest.TestCase):
 
     def test_plus_metadata_conflict_fails(self):
         import tempfile as _tf
+
         from tests.integration.onnx_builders import make_raw_yolo
         with _tf.NamedTemporaryFile(suffix=".onnx") as f:
             onnx_bytes = make_raw_yolo(f.name, res=320, seed=6)
@@ -460,7 +459,6 @@ class TestPlusPrepare(unittest.TestCase):
         self.assertEqual(ctx.exception.error_code, "UNSUPPORTED_CONTRACT")
 
     def test_plus_unsupported_contract_no_job(self):
-        import tempfile as _tf
         bad = os.path.join(self.cfg.data_dir, "bad.onnx")
         with open(bad, "wb") as f:
             f.write(b"not onnx")

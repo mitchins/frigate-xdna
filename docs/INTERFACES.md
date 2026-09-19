@@ -154,7 +154,9 @@ Rows descending by score; unused rows zero; finite values; valid integral class 
 ### Deadline/late-result rules
 
 * Maintain a per-request internal ID, routing identity, generation and deadline.
-* Do not start already-expired queued work.
+* Do not start already-expired queued work. Discarded queue entries still
+  get an explicit error reply (TIMEOUT JSON, or a zero frame for infer),
+  never a silent drop, so stock REQ clients cannot hang.
 * Never deliver late results as the answer to a subsequent request.
 * A reconnect gets a new identity and must handshake again.
 * Individual client timeouts do not unload/reload a healthy native model.

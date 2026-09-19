@@ -10,6 +10,7 @@ import json
 import os
 import socket
 import threading
+import time
 
 SOCKET_NAME = "control.sock"
 MAX_MESSAGE_BYTES = 64 * 1024
@@ -40,7 +41,7 @@ class AdminServer(threading.Thread):
             while not self._stop_event.is_set():
                 try:
                     conn, _ = srv.accept()
-                except socket.timeout:
+                except TimeoutError:
                     continue
                 # One thread per connection: a long `wait` must not wedge
                 # other admin commands behind it (SF2).
@@ -94,12 +95,23 @@ class AdminServer(threading.Thread):
 
 def admin_call(data_dir: str, request: dict, timeout_s: float = 10.0) -> dict:
     """Single admin request; raises on transport failure."""
-    from .errors import FxdnaError, NOT_READY
+    from .errors import NOT_READY, FxdnaError
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout_s)
     try:
         try:
-            s.connect(socket_path(data_dir))
+            deadline = time.monotonic() + 2.0
+            while True:
+                try:
+                    s.connect(socket_path(data_dir))
+                    break
+                except ConnectionRefusedError:
+                    # Server bound the path but is not listening yet
+                    # (bind->listen window at thread startup); retry
+                    # briefly, then report unreachable as before.
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.05)
         except OSError as e:
             raise FxdnaError(NOT_READY, "DAEMON_UNREACHABLE",
                              f"admin socket unreachable: {e.strerror or e}")

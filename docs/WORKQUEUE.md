@@ -22,28 +22,26 @@ Done:
   distinct key c5a40..., no overwrite) proofs. Image prefixes verified
   byte-for-byte at build (vendor manifest) and at runtime (launcher env).
 
-1. **Task 04 — native/ZMQ**: C++ private-IPC child (from
-   `native/reference/`), Python ROUTER frontend, identity/generation
-   binding, activation/validation, device lease + safety journal. Must
-   refuse `backend: fake-v0` artifacts at activation (see
-   `Supervisor._publish_fake_artifact`); set `COMPILER_BACKEND` to the
-   audited backend id when the real compiler lands (stale fake rows
-   auto-invalidate on next prepare). Needs:
-   exclusive device window; short one-context hardware test only.
-2. **Task 05 — acceptance**: full Frigate rc2 container test, private Plus
+- **Task 04** (PR #3, commit `df1a44a`): resident native worker
+  (`native/src`, mmap lifetime preserved) + stock ZMQ ROUTER frontend
+  (`src/frigate_xdna/transport/`), per-identity source/generation
+  binding with forced transfer, device lease + safety journal, fake-v0
+  activation refusal, bounded HW test (LOAD_OK/RUN_OK, Err 0). Soak
+  qualification from Phase 7.6 retained (67 client timeouts in one
+  host stall window).
+1. **Task 05 — acceptance**: full Frigate rc2 container test, private Plus
    model fetch (needs user-supplied key/ID at runtime, never in repo),
    A→B update flow, 24 h service soak, SBOM, release report.
-   Native ZMQ product path (Task 04) not yet claimed.
 3. **Project LICENSE owner**: done — `Copyright (c) 2026 Mitchell Currie`.
 4. **Docker availability**: podman 4.9.3 with
    --security-opt apparmor=unconfined (LXC needs the bypass; image builds
    and runs; storage at /mnt/downloads/podman-data to avoid root fill).
-6. **Plus credentials/model ID**: operator key present in /root/.env
+5. **Plus credentials/model ID**: operator key present in /root/.env
    (token exchange verified); no test model ID supplied yet — Task 05
    private-model acceptance stays gated on an explicit ID.
-7. **`input_dtype: float_denorm`**: contract covers only normalized float32;
+6. **`input_dtype: float_denorm`**: contract covers only normalized float32;
    non-normalized float inputs need an explicit serving-contract decision
    (Task 02/04), not silent acceptance.
-8. **`FXDNA_ALLOW_UPLOADS` default**: stays `true` per the issued spec
+7. **`FXDNA_ALLOW_UPLOADS` default**: stays `true` per the issued spec
    (operator decision 2026-09-18; CodeRabbit's opt-in suggestion recorded
    here for a future product review, not applied silently).

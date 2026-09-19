@@ -1,0 +1,105 @@
+# CI gates — Frigate-XDNA (Task 8.3.5).
+#
+# Hardware-free only. NPU/XDNA tests never run here (no device on
+# GitHub-hosted runners; vendor payloads and Plus credentials must never
+# enter CI artifacts). Each job is bounded with timeout-minutes: 10 to
+# prevent runaway hours.
+name: Build
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Least privilege by default; jobs add only what they use.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Hardware-free tests + coverage + lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # pip cache + coverage artifact upload.
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install pinned dependencies
+        # --only-binary: never execute arbitrary setup.py from sdists.
+        # (Quoted: bare `:all:` is not valid YAML.)
+        run: "pip install --only-binary :all: -r requirements.lock"
+
+      - name: Unit + contract + integration tests with coverage
+        # Makefile runs unittest suites with coverage append; `coverage
+        # report` enforces the fail_under floor from pyproject.toml.
+        run: make coverage PY=python3
+
+      - name: Ruff lint (Python import hygiene)
+        run: python3 -m ruff check src recipes tools packaging tests schemas
+
+      - name: Syntax check
+        run: python3 -m compileall -q src recipes tools packaging
+
+      - name: Packaging sanity (public path only, no vendor payload)
+        run: |
+          python3 -m json.tool packaging/vendor-files.manifest.json > /dev/null
+          python3 -m json.tool packaging/legal/component-map.json > /dev/null
+          python3 tools/build_vendor_manifest.py --help > /dev/null
+          python3 packaging/verify_payload.py --help > /dev/null
+          # Native guard must refuse to configure without the vendored XRT
+          # root instead of silently linking a host XRT.
+          if cmake -S native -B /tmp/fxdna-native-check > /tmp/cmake.log 2>&1; then
+            echo "cmake unexpectedly configured without vendored XRT"; exit 1
+          fi
+          grep -q "XRT_CORE_LIB not found" /tmp/cmake.log
+
+      - name: No proprietary artifacts committed
+        # .rai weights, licence PDFs, SDK tarballs must never enter the repo.
+        run: |
+          if git ls-files | grep -iE '\.(rai|onnx|pdf|tgz|tar\.gz)$'; then
+            echo "proprietary/model artifact committed"; exit 1
+          fi
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 7
+
+  sonarqube:
+    name: SonarQube
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [test]
+    # Fork PRs get no SONAR_TOKEN: never run the scan for them.
+    if: github.event.pull_request.head.repo.fork != true
+    # Coverage artifact download.
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+          persist-credentials: false
+
+      - name: Download coverage
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: coverage-xml
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

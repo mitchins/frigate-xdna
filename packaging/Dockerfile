@@ -6,8 +6,14 @@
 #       --legal-src <licence texts> --calib-src <calib dir>
 #   podman build --security-opt apparmor=unconfined \
 #       -f packaging/Dockerfile -t frigate-xdna:0.1-dev .
-#   # docker alternative (LXC needs the same apparmor bypass via buildx):
+#   # docker alternative (build host needs the same bypass via buildx):
 #   # docker buildx build --allow security.insecure ... --security=insecure
+#
+# NOTE: apparmor=unconfined above is a BUILD-HOST workaround for LXC
+# environments that cannot load the container default profile. It applies
+# to the image build only. End-user runtime must NOT use it: run via
+# examples/compose.yaml (read-only root, cap_drop ALL, no-new-privileges,
+# init, single accelerator device, no published ZMQ port).
 #
 # Prefixes stay separate by construction:
 #   /opt/fxdna/manager        supervisor/CLI (Tasks 01-02 source)
@@ -23,11 +29,19 @@ ARG UBUNTU_TAG=24.04
 FROM ubuntu:${UBUNTU_TAG} AS base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python3.12-venv libpython3.12 \
-      python3.12 \
-      libstdc++6 libgomp1 libncurses6 libexpat1 zlib1g \
+      build-essential \
       ca-certificates \
-      build-essential python3.12-dev ninja-build \
+      libexpat1 \
+      libgomp1 \
+      libncurses6 \
+      libpython3.12 \
+      libstdc++6 \
+      ninja-build \
+      python3 \
+      python3.12 \
+      python3.12-dev \
+      python3.12-venv \
+      zlib1g \
     && rm -rf /var/lib/apt/lists/*
 # build-essential/python3.12-dev/ninja are ordinary prerequisites for the
 # Quark JIT custom-op build (audited Phase-7.7 requirement); no AMD fetch.

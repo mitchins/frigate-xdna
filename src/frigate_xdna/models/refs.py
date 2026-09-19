@@ -10,7 +10,7 @@ import os
 import re
 import urllib.parse
 
-from ..errors import FxdnaError, INVALID_ARGS
+from ..errors import INVALID_ARGS, FxdnaError
 
 PLUS_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 
