@@ -68,6 +68,26 @@ PR #4 CI scan added 5 more finding types, all addressed:
   SonarCloud with the §2 rationale recorded on the issue (status
   ACCEPTED, not a waiver to chase score).
 
+PR #5 (Task 05 acceptance harness) added 7 findings, all addressed:
+
+- `python:S3776` ×3 (`cli._read_status`, `cli.cmd_diagnose`,
+  `replay_acceptance.main`) → **fixed**: extracted `_StatusView`,
+  `_BundleWriter`/`_diagnose_*` helpers,
+  `check_config`/`sample_stats`/`collect_events`/`correlate_sidecar`;
+  follow-up `inspect.compare_plus_metadata` (21) → **fixed** via
+  `_check_layout_tag`; `replay` S1172 (`evidence` param) removed.
+- `python:S1481` (dead accumulator) → **fixed**: removed.
+- `pythonsecurity:S8707` ×4 (`cli.cmd_diagnose` out dir,
+  `gen_sbom.main` ×2, `replay_acceptance.main` out path) → accepted
+  in SonarCloud (wontfix + rationale comment): operator-local tools
+  writing where the invoking operator points is the documented
+  purpose; paths canonicalized via `realpath`; no remote input, no
+  privilege boundary.
+- `pythonsecurity:S8703` (`replay_acceptance.get`) → accepted in
+  SonarCloud (wontfix + rationale comment): local acceptance driver
+  talking to the operator's own Frigate; `--frigate` validated
+  (http/https only, host required, no embedded credentials).
+
 ## 3. Reliability + maintainability fixes
 
 Fixed (were failing the quality gate on new code):
