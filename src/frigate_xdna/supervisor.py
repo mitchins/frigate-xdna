@@ -471,6 +471,7 @@ class Supervisor:
             digest, COMPILER_PAYLOAD_SHA256, RECIPE_ID,
             RECIPE_CONFIG_SHA256, TARGET_PROFILE, ARTIFACT_COMPAT_ID,
             {"shape": geometry, "dtype": "float32"})
+        sdigest = _serving_digest(ckey, inspected)
         if self.registry.get_artifact(ckey):
             if not self._backend_ok(ckey):
                 # Stale backend (e.g. fake row vs real compiler): invalidate
@@ -479,8 +480,8 @@ class Supervisor:
             else:
                 self.registry.set_ref_state(ref, "PREPARED")
                 return {"ref": ref, "source_sha256": digest,
-                        "compile_key": ckey, "state": "PREPARED",
-                        "cache_hit": True}
+                        "compile_key": ckey, "serving_digest": sdigest,
+                        "state": "PREPARED", "cache_hit": True}
         pre = disk_preflight(self.data_dir, COMPILE_SCRATCH_NEED_BYTES)
         if not pre["ok"]:
             raise FxdnaError(6, "RESOURCE_EXCEEDED",
@@ -502,8 +503,8 @@ class Supervisor:
         else:
             self.registry.set_ref_state(ref, "QUEUED")
         out = {"ref": ref, "source_sha256": digest, "compile_key": ckey,
-               "job_uuid": job["uuid"], "state": job["stage"],
-               "cache_hit": False}
+               "serving_digest": sdigest, "job_uuid": job["uuid"],
+               "state": job["stage"], "cache_hit": False}
         return out
 
     def pump(self, dt_s: float = 0.05) -> None:
@@ -627,6 +628,40 @@ class Supervisor:
         rows = self.registry.query(
             "SELECT sha256, size_bytes, origin FROM sources")
         return [dict(zip(("sha256", "bytes", "origin"), r)) for r in rows]
+
+    def ingest_zmq_bytes(
+        self, alias: str, data: bytes, contract: dict, cls: dict, source_sha256: str
+    ) -> dict:
+        """Ingest bytes received via ZMQ transfer (forced transfer path).
+
+        Hash is already computed (source_sha256), contract and cls already
+        inspected. This is the content-bound path; basename is only an alias.
+        """
+        # Reuse _ingest_source logic but with pre-inspected contract
+        # Ref must be content-bound (source_sha256), not alias, so same
+        # model_name with different bytes gets distinct refs and never
+        # triggers SOURCE_CHANGED on alias collision.
+        ref = f"zmq-upload:{source_sha256}"
+        # Register synthetic content-bound ref immediately so later
+        # _ingest_source / _publish_result find the record
+        self.registry.upsert_ref(ref, "onnx", None)
+        # Ensure ref is registered as a local file ref for tracking
+        # (we use a synthetic ref that looks like a local path)
+        parsed = {"ref": ref, "kind": "onnx", "id": None, "path": ref}
+        # Use the same ingestion as local ONNX but with data already
+        # We call _ingest_source with origin "local" and extra containing inspected
+        return self._ingest_source(
+            ref,
+            alias,
+            data,
+            "local",
+            {
+                "inspected": contract,
+                "profile": cls["profile"],
+                "source_sha256": source_sha256,
+            },
+            False,
+        )
 
     def activate(self, ref: str, maintenance: bool = False) -> dict:
         raise FxdnaError(NOT_READY, "ACTIVATION_UNAVAILABLE",

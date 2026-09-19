@@ -193,6 +193,56 @@ def cmd_serve(config) -> int:
                                      "endpoint": "tcp://127.0.0.1:5555"})
     sup = Supervisor(config)
     sup.start_admin()
+    # Start ROUTER frontend (Task 04) if endpoint is configured
+    zfrontend = None
+    zthread = None
+    zloop = None
+    if config.endpoint:
+        from .transport.frigate_zmq import FrigateZmqFrontend
+        import asyncio as _asyncio
+        import threading as _thr
+
+        zfrontend = FrigateZmqFrontend(sup, config.endpoint)
+        zloop = _asyncio.new_event_loop()
+        ready = _thr.Event()
+        exc: list[Exception] = []
+
+        def _run_zmq():
+            _asyncio.set_event_loop(zloop)
+            try:
+                zloop.run_until_complete(zfrontend.start())
+                ready.set()
+                zloop.run_forever()
+            except Exception as e:
+                exc.append(e)
+                ready.set()
+
+        zthread = _thr.Thread(target=_run_zmq, daemon=True)
+        zthread.start()
+        ok = ready.wait(timeout=5.0)
+        if not ok or exc:
+            # Startup did not signal readiness: close frontend, wait for thread, clean up supervisor before propagating
+            try:
+                if zfrontend.sock:
+                    zfrontend.sock.close(linger=0)
+            except Exception:
+                pass
+            # Ensure synchronous startup/bind has completed; wait for thread
+            zthread.join(timeout=5.0)
+            if exc:
+                try:
+                    sup.stop()
+                finally:
+                    raise exc[0]
+            try:
+                sup.stop()
+            finally:
+                raise RuntimeError("ZMQ frontend startup timeout or failed to bind")
+        if not zfrontend.sock:
+            try:
+                sup.stop()
+            finally:
+                raise RuntimeError("ZMQ frontend failed to bind")
     for ref in config.models:
         try:
             sup.prepare(ref)
@@ -208,6 +258,15 @@ def cmd_serve(config) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        if zfrontend is not None and zloop is not None and zthread is not None:
+            try:
+                import asyncio as _asyncio
+                fut = _asyncio.run_coroutine_threadsafe(zfrontend.stop(), zloop)
+                fut.result(timeout=5.0)
+                zloop.call_soon_threadsafe(zloop.stop)
+                zthread.join(timeout=5.0)
+            except Exception:
+                pass
         sup.stop()
     return SUCCESS
 
