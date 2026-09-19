@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Build the product vendor manifests from the audited Phase-7.7 payload.
+
+Reads the trace-accurate payload (as proven in the clean-room chroot) plus
+the pinned recipe/licence evidence, and writes:
+  packaging/vendor-files.manifest.json  (per-file path/sha256/size/origin)
+  packaging/vendor.lock.json            (per-component pins + digests)
+  packaging/legal/component-map.json    (per-component governing terms)
+
+Usage: build_vendor_manifest.py --payload <dir> --xrt <dir> --out <repo>
+
+The payload dir layout mirrors the image prefixes:
+  <payload>/site-packages/...   (compile venv site-packages content)
+  <xrt>/lib/... <xrt>/share/... (minimal XRT userspace)
+
+No binaries are copied or committed — only hashes and metadata.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+
+# path prefix -> (source package, version, licence id, role)
+ORIGINS = [
+    ("voe/lib/", ("voe", "1.8.0", "amd-eula",
+                   "xcompiler/aiecompiler/dyn-dispatch/flexmlrt backend")),
+    ("flexml/flexml_extras/lib/", ("flexml", "1.8.0", "amd-eula",
+                                     "VAIML partitioner + compile VFS")),
+    ("lnx64.o/tools/peano/lib/", ("llvm-aie", "1.8.0", "amd-eula",
+                                   "peano AIE runtime lib (LLVM-sourceable)")),
+    ("include/", ("vitis-aie-essentials", "1.8.0", "amd-eula",
+                   "ADF/AIE-API compile headers")),
+    ("vitis_mllib/", ("vitis-mllib", "1.8.0", "amd-eula",
+                       "AIE kernel compile includes/metadata")),
+    ("data/", ("vitis-aie-essentials", "1.8.0", "amd-eula",
+                "device schema data")),
+    ("onnxruntime/", ("onnxruntime-vitisai", "1.27.0", "amd-eula",
+                       "VitisAI EP driver + opened subset")),
+    ("onnx/", ("onnx", "1.23.0", "onnx-mit",
+                "ONNX graph inspection (public PyPI)")),
+    ("onnx-1.23.0.dist-info/", ("onnx", "1.23.0", "onnx-mit",
+                                "ONNX dist-info")),
+    ("google/protobuf/", ("protobuf", "7.36.2", "protobuf-bsd",
+                          "ONNX protobuf runtime")),
+    ("protobuf-7.36.2.dist-info/", ("protobuf", "7.36.2", "protobuf-bsd",
+                                    "ONNX protobuf runtime")),
+    ("google/", ("protobuf", "7.36.2", "protobuf-bsd",
+                 "ONNX protobuf runtime")),
+    ("typing_extensions", ("typing_extensions", "4.16.0", "typing-extensions-mit",
+                           "ONNX typing support")),
+    ("typing_extensions-", ("typing_extensions", "4.16.0", "typing-extensions-mit",
+                            "ONNX typing support")),
+    ("ml_dtypes", ("ml_dtypes", "0.6.0", "ml_dtypes-apache",
+                   "ONNX ML dtypes")),
+    ("numpy", ("numpy", "2.5.3", "numpy-bsd",
+                "compile-harness array support")),
+    ("numpy.libs", ("numpy", "2.5.3", "numpy-bsd",
+                     "bundled openblas/gfortran")),
+    ("vaiml_config.json", ("ryzenai-sw-example", "1.8", "ryzenai-sw-mit",
+                             "VAIML partition recipe")),
+]
+
+XRT_ORIGINS = [
+    ("lib/libxrt_core", ("xrt-base", "2.25.37", "apache-2.0",
+                          "XRT core runtime")),
+    ("lib/libxrt_coreutil", ("xrt-base", "2.25.37", "apache-2.0",
+                              "XRT core utilities")),
+    ("lib/libxrt_driver_xdna", ("xdna-driver-plugin", "2.25.260102.56",
+                                 "amdnpu-binary",
+                                 "XDNA userspace shim (Apache-2.0 sources)")),
+    ("share/amdxdna/version.json", ("xdna-driver-plugin", "2.25.260102.56",
+                                     "amdnpu-binary", "shim version record")),
+]
+
+
+def sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def origin_for(rel: str, table) -> tuple:
+    for prefix, origin in table:
+        if rel == prefix.rstrip("/") or rel.startswith(prefix):
+            return origin
+    return ("unknown", "unknown", "UNMAPPED", "unmapped file")
+
+
+def walk(root: str, table, strip: str) -> list[dict]:
+    # venv scaffolding (pip, dist-info) and bytecode caches are recreated
+    # at build time, never part of the audited set.
+    skip_dirs = {"__pycache__"}
+    skip_top = {"pip", "pip-24.0.dist-info"}
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        rel_dir = os.path.relpath(dirpath, root)
+        if rel_dir.split(os.sep)[0] in skip_top:
+            continue
+        for fn in sorted(filenames):
+            if fn.endswith((".pyc", ".pyo")):
+                continue
+            full = os.path.join(dirpath, fn)
+            if os.path.islink(full):
+                continue  # soname symlinks recreated at install, not hashed
+            rel = os.path.relpath(full, root)
+            pkg, ver, lic, role = origin_for(rel, table)
+            out.append({"path": rel, "sha256": sha256_file(full),
+                        "size_bytes": os.path.getsize(full),
+                        "package": pkg, "version": ver,
+                        "licence": lic, "role": role})
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--payload", required=True)
+    ap.add_argument("--xrt", required=True)
+    ap.add_argument("--flexmlrt", required=False)
+    ap.add_argument("--calib", required=False)
+    ap.add_argument("--legal", required=False)
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args()
+
+    sp = os.path.join(args.payload, "site-packages")
+    files = walk(sp, ORIGINS, sp)
+    files += [{"path": "xrt/" + f["path"], **{k: v for k, v in f.items()
+                                               if k != "path"}}
+              for f in walk(args.xrt, XRT_ORIGINS, args.xrt)]
+    if args.flexmlrt:
+        files += [{"path": "flexmlrt/" + os.path.basename(f["path"]),
+                   "sha256": f["sha256"], "size_bytes": f["size_bytes"],
+                   "package": "flexmlrt", "version": "1.8.0",
+                   "licence": "amd-eula", "role": "standalone FlexMLRT runtime"}
+                  for f in walk(args.flexmlrt, [], args.flexmlrt)
+                  if f["path"].endswith("libflexmlrt.so")]
+    if args.calib:
+        files += [{"path": "calib/" + f["path"], "sha256": f["sha256"],
+                   "size_bytes": f["size_bytes"], "package": "coco-calib",
+                   "version": "coco128", "licence": "cc-by-4.0",
+                   "role": "BF16 calibration images (public COCO)"}
+                  for f in walk(args.calib, [], args.calib)]
+    if args.legal:
+        files += [{"path": "legal/" + f["path"], "sha256": f["sha256"],
+                   "size_bytes": f["size_bytes"], "package": "amd-legal",
+                   "version": "1.8", "licence": "amd-eula",
+                   "role": "EULA/TPN flow-down notices"}
+                  for f in walk(args.legal, [], args.legal)
+                  if f["path"].endswith(".txt") or f["path"].endswith(".pdf")]
+    unmapped = [f for f in files if f["licence"] == "UNMAPPED"]
+    if unmapped:
+        print(f"UNMAPPED FILES: {[f['path'] for f in unmapped][:10]}")
+        return 1
+
+    files_manifest = {"schema_version": 1, "file_count": len(files),
+                      "total_bytes": sum(f["size_bytes"] for f in files),
+                      "files": files}
+    with open(os.path.join(args.out, "vendor-files.manifest.json"),
+              "w") as f:
+        json.dump(files_manifest, f, indent=1, sort_keys=True)
+
+    components: dict[tuple, dict] = {}
+    for entry in files:
+        key = (entry["package"], entry["version"], entry["licence"])
+        comp = components.setdefault(key, {
+            "package": entry["package"], "version": entry["version"],
+            "licence": entry["licence"], "roles": sorted(set()),
+            "file_count": 0, "total_bytes": 0, "files_sha256": None})
+        comp["file_count"] += 1
+        comp["total_bytes"] += entry["size_bytes"]
+        comp["roles"] = sorted(set(comp["roles"]) | {entry["role"]})
+    for comp in components.values():
+        subset = sorted(f["sha256"] for f in files
+                        if (f["package"], f["version"], f["licence"]) == (
+                            comp["package"], comp["version"],
+                            comp["licence"]))
+        comp["files_sha256"] = hashlib.sha256(
+            "\n".join(subset).encode()).hexdigest()
+        comp["roles"] = "; ".join(comp["roles"])
+    vendor_lock = {
+        "schema_version": 1,
+        "status": "pinned: exact audited Phase-7.7 payload (B1/B2 evidence)",
+        "payload_manifest_sha256": "8a8d28b751974205ffc4e2b87b34cd3e93584b70d8f4f3de557965aee975f4bd",
+        "components": sorted(components.values(),
+                             key=lambda c: c["package"]),
+    }
+    with open(os.path.join(args.out, "vendor.lock.json"), "w") as f:
+        json.dump(vendor_lock, f, indent=2, sort_keys=True)
+
+    print(f"files={len(files)} bytes={files_manifest['total_bytes']} "
+          f"components={len(components)}")
+    for comp in sorted(components.values(), key=lambda c: -c["total_bytes"]):
+        print(f"  {comp['package']:24s} {comp['total_bytes'] // 1024 // 1024:5d} MB"
+              f"  {comp['file_count']:5d} files  {comp['licence']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

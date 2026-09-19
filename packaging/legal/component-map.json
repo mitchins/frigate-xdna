@@ -1,39 +1,166 @@
 {
-  "schema_version": 1,
-  "status": "skeleton: full per-file map is built by the Task 03 packaging step from the audited payload manifest",
+  "components": [
+    {
+      "file_count": 2,
+      "files_sha256": "70844068312efc09e064a9e6637d0cef74173f2c78cd17454c47c2b2594e34c5",
+      "licence": "amd-eula",
+      "package": "flexml",
+      "purpose": "VAIML partitioner + compile VFS",
+      "total_bytes": 446949912,
+      "version": "1.8.0"
+    },
+    {
+      "file_count": 1,
+      "files_sha256": "fa91b309fc1c71000ebdf9a77042848d50da3b4d125f5c6a67a3935287224d70",
+      "licence": "amd-eula",
+      "package": "llvm-aie",
+      "purpose": "peano AIE runtime lib (LLVM-sourceable)",
+      "total_bytes": 186631968,
+      "version": "1.8.0"
+    },
+    {
+      "file_count": 784,
+      "files_sha256": "22765370d327aa71a5ff038694cb09844b7137404b7c24b7bd80ba0fc4ceb3c2",
+      "licence": "numpy-bsd",
+      "package": "numpy",
+      "purpose": "compile-harness array support",
+      "total_bytes": 63583434,
+      "version": "1.26.4"
+    },
+    {
+      "file_count": 11,
+      "files_sha256": "87ed19dfd088f505b2c7555c1f1074d44d609e882af3bbc9ed0d87e461bca8d6",
+      "licence": "amd-eula",
+      "package": "onnxruntime-vitisai",
+      "purpose": "VitisAI EP driver + opened subset",
+      "total_bytes": 102659574,
+      "version": "1.27.0"
+    },
+    {
+      "file_count": 1,
+      "files_sha256": "e637fb3a31cc857c477817b6ca86203b8fb92258eeb8e5c9914f74d653b08ad5",
+      "licence": "ryzenai-sw-mit",
+      "package": "ryzenai-sw-example",
+      "purpose": "VAIML partition recipe",
+      "total_bytes": 489,
+      "version": "1.8"
+    },
+    {
+      "file_count": 673,
+      "files_sha256": "059668ec58ca9f85c2bad5253a57971860d5a0fa86749b63c55c8bb4e2e5131f",
+      "licence": "amd-eula",
+      "package": "vitis-aie-essentials",
+      "purpose": "ADF/AIE-API compile headers; device schema data",
+      "total_bytes": 32895408,
+      "version": "1.8.0"
+    },
+    {
+      "file_count": 3378,
+      "files_sha256": "1850e32f7774bccb3e85c89b314ef89166170b3cbeb248624a67432fdf0424ce",
+      "licence": "amd-eula",
+      "package": "vitis-mllib",
+      "purpose": "AIE kernel compile includes/metadata",
+      "total_bytes": 49685103,
+      "version": "1.8.0"
+    },
+    {
+      "file_count": 8,
+      "files_sha256": "4dd6e7578ecf0babd6c6f5482f6624f25deaf10b3d562edcb1eb14eec111843f",
+      "licence": "amd-eula",
+      "package": "voe",
+      "purpose": "xcompiler/aiecompiler/dyn-dispatch/flexmlrt backend",
+      "total_bytes": 799397408,
+      "version": "1.8.0"
+    },
+    {
+      "file_count": 2,
+      "files_sha256": "a9ef473cb5c4fda2788e7341644a178b4ed57fe7df1d40ce45fe10273d9add7a",
+      "licence": "amdnpu-binary",
+      "package": "xdna-driver-plugin",
+      "purpose": "XDNA userspace shim (Apache-2.0 sources); shim version record",
+      "total_bytes": 784120,
+      "version": "2.25.260102.56"
+    },
+    {
+      "file_count": 2,
+      "files_sha256": "80b64fad32375a8b1680e17a5e6fdcc0fcf168bc25035fa9f51c697364111b2a",
+      "licence": "apache-2.0",
+      "package": "xrt-base",
+      "purpose": "XRT core runtime",
+      "total_bytes": 7643352,
+      "version": "2.25.37"
+    }
+  ],
   "governing_terms": [
     {
       "id": "amd-eula",
-      "name": "AMD End-User License Agreement",
-      "local_pdf_sha256": "64ab400f2a84c081a19837c604eaeccbfbca14fcb88e046a922685b2c03e2f2f",
       "key_conditions": [
-        "Object-Code use with AMD products (§2.1-2.2)",
-        "Derivative-Works-to-customers distribution with at-least-as-restrictive flow-down (§2.3)",
-        "No standalone distribution of the Software (§3.2)",
-        "No Free-Software-License subjection (§3.6)",
+        "Object-Code use with AMD products (\u00a72.1-2.2)",
+        "Derivative-Works-to-customers distribution with at-least-as-restrictive flow-down (\u00a72.3)",
+        "No standalone distribution of the Software (\u00a73.2)",
+        "No Free-Software-License subjection (\u00a73.6)",
         "Acceptance by installing/copying/using; no technical activation"
-      ]
+      ],
+      "local_pdf_sha256": "64ab400f2a84c081a19837c604eaeccbfbca14fcb88e046a922685b2c03e2f2f",
+      "name": "AMD End-User License Agreement"
     },
     {
       "id": "ryzen-ai-tpn-1.7.1",
-      "name": "Ryzen AI 1.7.1 Linux Third-Party Notices (referenced by 1.8 wheel LICENSE.txt)",
-      "local_pdf_sha256": "96414698e912629a2daf5a2d28c62a793a90b0a2341cfef9b54dcd8b3dc32de8"
+      "local_pdf_sha256": "96414698e912629a2daf5a2d28c62a793a90b0a2341cfef9b54dcd8b3dc32de8",
+      "name": "Ryzen AI 1.7.1 Linux Third-Party Notices (referenced by 1.8 wheel LICENSE.txt)"
     },
     {
       "id": "ryzen-ai-tpn-1.8.0",
-      "name": "Ryzen AI 1.8.0 Linux Third-Party Notices",
-      "local_pdf_sha256": "3ec2902922d5ecd2beb72d308ac27de0ca067a861535ff04acee5ceb0ce41990"
+      "local_pdf_sha256": "3ec2902922d5ecd2beb72d308ac27de0ca067a861535ff04acee5ceb0ce41990",
+      "name": "Ryzen AI 1.8.0 Linux Third-Party Notices"
     },
     {
       "id": "frigate-mit",
       "name": "Frigate MIT licence (contract-test sources only)",
       "upstream_blob": "924cb4148cda90ee9d7f7953dcbd9fea31a05874"
+    },
+    {
+      "id": "numpy-bsd",
+      "name": "NumPy upstream BSD-3-Clause (public PyPI redistribution)"
+    },
+    {
+      "id": "apache-2.0",
+      "name": "Apache License 2.0 (XRT userspace sources)"
+    },
+    {
+      "id": "amdnpu-binary",
+      "name": "LICENSE.amdnpu unmodified-binary redistribution (shim prebuilt)"
+    },
+    {
+      "id": "ryzenai-sw-mit",
+      "name": "MIT (amd/RyzenAI-SW example config)"
+    },
+    {
+      "id": "onnx-mit",
+      "name": "ONNX MIT (public PyPI)"
+    },
+    {
+      "id": "protobuf-bsd",
+      "name": "Protocol Buffers BSD-3-Clause"
+    },
+    {
+      "id": "typing-extensions-mit",
+      "name": "typing_extensions MIT"
+    },
+    {
+      "id": "ml_dtypes-apache",
+      "name": "ml_dtypes Apache-2.0"
+    },
+    {
+      "id": "cc-by-4.0",
+      "name": "CC-BY 4.0 (COCO calibration images)"
     }
   ],
-  "components": [],
   "rules": [
     "Every incorporated vendor binary gets: path, sha256, size, source package/version, governing terms id, purpose.",
     "Binaries are never patched/stripped when relying on the unmodified-binary grant.",
     "No vendor tarball, licence PDF, private model or secret is committed or published standalone."
-  ]
+  ],
+  "schema_version": 1,
+  "status": "pinned: exact audited Phase-7.7 payload (B1/B2 evidence); per-file manifest in packaging/vendor-files.manifest.json"
 }

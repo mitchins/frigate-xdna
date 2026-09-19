@@ -29,6 +29,7 @@ from .cache.store import (
     try_exclusive,
 )
 from .compiler.jobs import TERMINAL_ERROR_STATES, JobManager
+from .compiler.real import BACKEND_ID as REAL_BACKEND_ID
 from .config import Config
 from .errors import (
     CACHE_CORRUPT,
@@ -99,7 +100,33 @@ class Supervisor:
     def __init__(self, config: Config, data_dir: str | None = None,
                  fake_compile: dict | None = None,
                  plus_client_factory=None,
-                 plus_allow_private_hosts: tuple[str, ...] = ()):
+                 plus_allow_private_hosts: tuple[str, ...] = (),
+                 compiler_backend_id: str | None = None,
+                 compiler_prefixes=None,
+                 compiler_timeout_s: float = 2700.0):
+        # Auto-detect the audited appliance prefixes when running inside
+        # the image (real backend) vs host dev (fake). Explicit args win;
+        # otherwise probe the image layout. Keeps host tests fake without
+        # extra configuration.
+        if compiler_backend_id is None and compiler_prefixes is None:
+            if os.path.isdir("/opt/compile-venv") and os.path.isdir(
+                    "/opt/quant-venv") and os.path.isdir("/opt/xilinx-xrt"):
+                from .compiler.launcher import CompilerPrefixes
+                compiler_prefixes = CompilerPrefixes(
+                    quant_python="/opt/quant-venv/bin/python",
+                    compile_python="/opt/compile-venv/bin/python",
+                    compile_lib="/opt/compile-venv/lib/python3.12/site-packages",
+                    xrt_lib="/opt/xilinx-xrt/lib",
+                    xrt_root="/opt/xilinx-xrt",
+                    recipe_dir="/opt/fxdna/recipes/bf16-vaiml-v1",
+                    calib_dir="/opt/fxdna/calib",
+                    vaiml_config="/opt/compile-venv/lib/python3.12/"
+                                 "site-packages/vaiml_config.json")
+                compiler_backend_id = "bf16-vaiml-v1"
+            else:
+                compiler_backend_id = COMPILER_BACKEND
+        elif compiler_backend_id is None:
+            compiler_backend_id = COMPILER_BACKEND
         self.config = config
         self.data_dir = data_dir or config.data_dir
         ensure_layout(self.data_dir)
@@ -111,14 +138,41 @@ class Supervisor:
                              f"daemon; standalone commands refuse its lock")
         self.registry = Registry(os.path.join(self.data_dir,
                                               "registry.sqlite3"))
-        self.jobs = JobManager(self.registry, boot_token=boot_token())
+        self.jobs = JobManager(self.registry,
+                               backend_factory=self._make_backend_job,
+                               boot_token=boot_token())
         self.fake_compile = fake_compile or {}
+        self.compiler_backend_id = compiler_backend_id
+        self.compiler_prefixes = compiler_prefixes
+        self.compiler_timeout_s = compiler_timeout_s
         self._plus_client_factory = plus_client_factory or PlusClient
         # Test-only affordance for loopback fake Plus servers. Production
         # default is empty: only public https download targets are allowed.
         self._plus_allow_private = tuple(plus_allow_private_hosts)
         self._server: AdminServer | None = None
         recover(self.data_dir, self.registry)
+
+    def _make_backend_job(self, **kw):
+        """Job factory: real audited backend when prefixes are configured,
+        fake backend otherwise (hardware-free tests + offline development).
+        """
+        if self.compiler_prefixes is not None and kw.get("compile_key"):
+            from .compiler.real import RealCompileJob
+            return RealCompileJob(
+                source_sha256=kw.get("source_sha256", ""),
+                compile_key=kw.get("compile_key", ""),
+                source_path=kw.get("source_path", ""),
+                workdir=os.path.join(self.data_dir, "work",
+                                     kw.get("job_uuid", "nojobs")),
+                prefixes=self.compiler_prefixes,
+                timeout_s=self.compiler_timeout_s)
+        from .compiler.fake import FakeCompileJob
+        params = {k: v for k, v in kw.items() if k in (
+            "source_sha256", "compile_key", "duration_s", "succeed",
+            "fail_state", "device_required", "device_held_by_worker",
+            "job_uuid")}
+        params.update(self.fake_compile)
+        return FakeCompileJob(**params)
 
     # -- lifecycle ---------------------------------------------------
     def start_admin(self):
@@ -264,13 +318,14 @@ class Supervisor:
                                    "imported-rai",
                                    {"descriptor": descriptor}, refresh)
 
-    def _publish_fake_artifact(self, job: dict) -> None:
-        """Commit the fake backend's PREPARED result (Task 02 stand-in).
+    def _publish_result(self, job: dict) -> None:
+        """Commit a backend's PREPARED result via the atomic-publish path.
 
-        Writes clearly-marked FAKE bytes via the real atomic-publish path
-        so the cache-hit branch is genuinely exercised. `artifact.json`
-        records backend=fake; activation MUST refuse fake-backend artifacts
+        Fake backend: clearly-marked FAKE bytes; `artifact.json` records
+        backend=fake-v0. Activation MUST refuse fake-backend artifacts
         (Task 04 gate — see WORKQUEUE). Never VERIFIED, never ACTIVE.
+        Real backend: the compiler child's .rai + manifest carrying the
+        audited backend id, recipe, target and compile stats.
         """
         ckey = job["compile_key"]
         if self.registry.get_artifact(ckey):
@@ -286,14 +341,36 @@ class Supervisor:
             os.rename(dest, aside)
         staged = os.path.join(self.data_dir, "work", f"stage-{job['uuid']}")
         os.makedirs(staged, exist_ok=True)
-        rai_bytes = b"FXDNA-FAKE-RAI-v0:" + ckey.encode()
         source = (self.registry.get_ref(job["ref"]) or {}).get(
             "source_sha256") or ""
-        manifest = {"backend": COMPILER_BACKEND, "compile_key": ckey,
-                    "source_sha256": source,
-                    "artifact_sha256": sha256_bytes(rai_bytes),
-                    "recipe_id": RECIPE_ID, "target_profile": TARGET_PROFILE,
-                    "note": "Task 02 fake compile stand-in; not deployable"}
+        backend = self.jobs.backend_for(job["uuid"])
+        # Backend identity comes from the producer object, never from config,
+        # so a fake job can never be published with the audited backend id.
+        backend_id = getattr(backend, "BACKEND_ID", None) or getattr(
+            backend, "backend_id", None) or self.compiler_backend_id
+        # Only the real backend's result carries a .rai path; fake has none.
+        result = getattr(backend, "result", None)
+        if result is not None and getattr(result, "rai_path", ""):
+            with open(result.rai_path, "rb") as f:
+                rai_bytes = f.read()
+            manifest = {
+                "backend": backend_id,
+                "compile_key": ckey, "source_sha256": source,
+                "artifact_sha256": sha256_bytes(rai_bytes),
+                "recipe_id": RECIPE_ID, "target_profile": TARGET_PROFILE,
+                "compile_stats": {
+                    "wall_s": round(result.wall_s, 1),
+                    "peak_rss_kb": result.peak_rss_kb,
+                    "bf16_sha256": result.bf16_sha256},
+            }
+        else:
+            rai_bytes = b"FXDNA-FAKE-RAI-v0:" + ckey.encode()
+            manifest = {
+                "backend": backend_id,
+                "compile_key": ckey, "source_sha256": source,
+                "artifact_sha256": sha256_bytes(rai_bytes),
+                "recipe_id": RECIPE_ID, "target_profile": TARGET_PROFILE,
+                "note": "fake compile stand-in; not deployable"}
         publish_artifact(self.data_dir, ckey, staged, {
             "model.rai": rai_bytes,
             "artifact.json": json.dumps(manifest, sort_keys=True).encode(),
@@ -327,7 +404,7 @@ class Supervisor:
         except (OSError, ValueError):
             return False
         return isinstance(manifest, dict) and \
-            manifest.get("backend") == COMPILER_BACKEND
+            manifest.get("backend") == self.compiler_backend_id
 
     def _invalidate_artifact(self, compile_key: str) -> None:
         """Move a stale artifact aside and drop its row (never in place)."""
@@ -393,7 +470,13 @@ class Supervisor:
                              f"{pre['need_bytes']} + reserve "
                              f"{pre['reserve_bytes']}, free "
                              f"{pre['free_bytes']}")
-        job = self.jobs.submit(ref, ckey, **self.fake_compile)
+        job = self.jobs.submit(
+            ref, ckey, **self.fake_compile,
+            extra={"source_sha256": digest,
+                   "source_path": os.path.join(
+                       self.data_dir, "sources", digest,
+                       "model.onnx" if origin != "imported-rai"
+                       else "model.rai")})
         if job["stage"] in TERMINAL_ERROR_STATES:
             # A sticky terminal failure must be visible on the ref, not
             # masked as QUEUED by a job that will never run.
@@ -431,7 +514,7 @@ class Supervisor:
             if job["stage"] == "PREPARED":
                 if job.get("compile_key"):
                     try:
-                        self._publish_fake_artifact(job)
+                        self._publish_result(job)
                     except FxdnaError as e:
                         self.registry.set_job(
                             row[0], "COMPILE_FAILED",
@@ -463,7 +546,7 @@ class Supervisor:
             if job["stage"] == "PREPARED":
                 if pump and job.get("compile_key"):
                     try:
-                        self._publish_fake_artifact(job)
+                        self._publish_result(job)
                     except FxdnaError as e:
                         self.registry.set_job(
                             job_uuid, "COMPILE_FAILED",

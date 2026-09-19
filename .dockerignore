@@ -1,0 +1,9 @@
+.git
+evidence/
+mnt/
+tmp/
+*.log
+__pycache__
+tests/
+docs/
+agent-tasks/

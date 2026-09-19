@@ -19,6 +19,7 @@ SLOW_COMPILE_S = 45.0
 
 @dataclass
 class FakeCompileJob:
+    BACKEND_ID = "fake-v0"
     source_sha256: str
     compile_key: str
     duration_s: float = 0.0
@@ -30,6 +31,7 @@ class FakeCompileJob:
     state: str = "QUEUED"
     artifact_sha256: str | None = None
     log: list[str] = field(default_factory=list)
+    job_uuid: str = ""
 
     def poll(self, dt_s: float) -> str:
         """Advance the fake job by dt_s seconds. Pure function of inputs."""
