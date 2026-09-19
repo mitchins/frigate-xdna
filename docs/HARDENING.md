@@ -56,8 +56,14 @@ PR #4 CI scan added 5 more finding types, all addressed:
   activation decision extracted to `_handle_prepared`.
 - `python:S3923` (identical if/else) → **fixed**: collapsed to one
   not-ready reply.
-- `python:S5778` ×3 (new unit tests) → residual, same test-style
-  category as §1; `S5958` fixed by narrowing to `OSError`.
+- `python:S5778` ×3 (new unit tests) → **fixed**: setup moved out
+  of the `try` via `addCleanup`, leaving a single throwing call;
+  `S5958` fixed by narrowing to `OSError`.
+- `pythonbugs:S2589` (always-true quiescence guard) → **fixed**:
+  dead `if` removed, quiescence holds by elimination.
+- `pythonsecurity:S8707` (`verify_payload.py:63`) → accepted in
+  SonarCloud with the §2 rationale recorded on the issue (status
+  ACCEPTED, not a waiver to chase score).
 
 ## 3. Reliability + maintainability fixes
 
@@ -85,8 +91,9 @@ manifest file in `verify_payload.py`.
 Residuals (reviewed, intentionally left):
 
 - `native/reference/**` smells: provenance, not modified by policy.
-- `tests/**` S8997/S5778: pytest-specific style rules on a unittest
-  suite; churn not justified.
+- `tests/**` S8997: pytest-`monkeypatch` rule on a unittest suite;
+  churn not justified (S5778 instances on new tests were fixed
+  instead, see above).
 - `verify_payload.py` S3776 (complexity 73): linear manifest checker,
   now unit-tested; splitting it would obscure the check sequence.
 - `build_vendor_manifest.py` S3776 (16 vs 15): one point over, churn
@@ -100,7 +107,7 @@ Residuals (reviewed, intentionally left):
 `make coverage` (unittest suites ×3 with append) → `coverage.xml` +
 terminal report; Sonar ingests via
 `sonar.python.coverage.reportPaths`. Floor `fail_under = 70`
-(`pyproject.toml`), CI-enforced.
+(`pyproject.toml`), CI-enforced. Baseline 59% → 78%.
 
 | Area | Before | After | Note |
 |---|---|---|---|

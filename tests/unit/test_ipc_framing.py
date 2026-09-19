@@ -60,32 +60,26 @@ class TestFraming(unittest.TestCase):
 
     def test_version_mismatch_rejected(self):
         a, b = create_socketpair()
-        try:
-            with self.assertRaises(ValueError):
-                send_message(a, _hdr("STATUS", protocol_version=999))
-        finally:
-            a.close()
-            b.close()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        with self.assertRaises(ValueError):
+            send_message(a, _hdr("STATUS", protocol_version=999))
 
     def test_tensor_bound_enforced(self):
-        a, _b = create_socketpair()
-        try:
-            with self.assertRaises(ValueError):
-                send_message(a, _hdr("INFER"),
-                             b"x" * (MAX_TENSOR_BYTES + 1))
-        finally:
-            a.close()
-            _b.close()
+        a, b = create_socketpair()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        with self.assertRaises(ValueError):
+            send_message(a, _hdr("INFER"),
+                         b"x" * (MAX_TENSOR_BYTES + 1))
 
     def test_model_bound_enforced(self):
-        a, _b = create_socketpair()
-        try:
-            with self.assertRaises(ValueError):
-                send_message(a, _hdr("LOAD"),
-                             b"x" * (MAX_MODEL_BYTES + 1))
-        finally:
-            a.close()
-            _b.close()
+        a, b = create_socketpair()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        with self.assertRaises(ValueError):
+            send_message(a, _hdr("LOAD"),
+                         b"x" * (MAX_MODEL_BYTES + 1))
 
     def test_garbage_header_length_rejected(self):
         a, b = create_socketpair()

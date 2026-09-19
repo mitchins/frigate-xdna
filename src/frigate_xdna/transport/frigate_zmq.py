@@ -279,23 +279,23 @@ class FrigateZmqFrontend:
                 "state": "PREPARING",
                 "error_code": "MODEL_IN_USE"})
             return True
-        # quiescent: switch generation, drain old, start new
-        if self.sessions.is_quiescent(self._generation):
-            old_artifact = self._active_artifact
-            if await self._try_activate(compile_key):
-                old_gen = self._generation
-                self._generation += 1
-                self.sessions.invalidate_generation(old_gen)
-                # Supersede the REPLACED artifact (activation already
-                # pointed _active_artifact at the new one).
-                if old_artifact is not None:
-                    self.sessions.mark_superseded(old_artifact)
-                self.sessions.bind(
-                    identity, source_sha, serving_digest,
-                    compile_key, self._generation)
-                await self._reply(identity, {
-                    "model_saved": True, "model_loaded": True})
-                return True
+        # Quiescent by elimination (active traffic returned above):
+        # switch generation, drain old, start new.
+        old_artifact = self._active_artifact
+        if await self._try_activate(compile_key):
+            old_gen = self._generation
+            self._generation += 1
+            self.sessions.invalidate_generation(old_gen)
+            # Supersede the REPLACED artifact (activation already
+            # pointed _active_artifact at the new one).
+            if old_artifact is not None:
+                self.sessions.mark_superseded(old_artifact)
+            self.sessions.bind(
+                identity, source_sha, serving_digest,
+                compile_key, self._generation)
+            await self._reply(identity, {
+                "model_saved": True, "model_loaded": True})
+            return True
         return False
 
     async def _try_activate(self, compile_key: str) -> bool:
