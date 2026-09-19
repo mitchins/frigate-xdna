@@ -462,7 +462,15 @@ class Supervisor:
                                  f"no such job {job_uuid}")
             if job["stage"] == "PREPARED":
                 if pump and job.get("compile_key"):
-                    self._publish_fake_artifact(job)
+                    try:
+                        self._publish_fake_artifact(job)
+                    except FxdnaError as e:
+                        self.registry.set_job(
+                            job_uuid, "COMPILE_FAILED",
+                            error_code=e.error_code)
+                        for ref in self.registry.refs_for_job(job_uuid):
+                            self.registry.set_ref_state(ref, "COMPILE_FAILED")
+                        return self.registry.get_job(job_uuid)
                 if job.get("compile_key"):
                     self._mark_prepared_refs(job["compile_key"])
                 else:

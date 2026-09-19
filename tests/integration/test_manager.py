@@ -219,6 +219,26 @@ class TestJobsAndWait(ManagerBase):
             rec = self.sup.registry.get_ref(ref)
             self.assertEqual(rec["state"], "COMPILE_FAILED", ref)
 
+    def test_wait_job_publish_failure_marks_refs(self):
+        # A publication failure inside wait_job gets the same handling as
+        # the pump loop: terminal job returned, all refs marked.
+        from frigate_xdna.errors import FxdnaError as _E
+        pa, _ = self.local_onnx("a.onnx", seed=3)
+        out = self.sup.prepare(pa)
+        orig = self.sup._publish_fake_artifact
+
+        def boom(job):
+            raise _E(6, "COMPILE_FAILED", "simulated publish failure")
+
+        self.sup._publish_fake_artifact = boom
+        try:
+            done = self.sup.wait_job(out["job_uuid"], 5.0)
+        finally:
+            self.sup._publish_fake_artifact = orig
+        self.assertEqual(done["stage"], "COMPILE_FAILED")
+        rec = self.sup.registry.get_ref(pa)
+        self.assertEqual(rec["state"], "COMPILE_FAILED")
+
     def test_geometry_required_for_compile_key(self):
         pa, _ = self.local_onnx("a.onnx", seed=3)
         with open(pa, "rb") as f:
