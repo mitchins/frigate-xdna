@@ -96,6 +96,34 @@ ALLOWLISTED_SYMLINKS = {
     "lib/libxrt_driver_xdna.so.2": "libxrt_driver_xdna.so.2.25.260102.56.release",
 }
 
+def _validate_allowlisted_symlink(root: str, rel: str, target: str) -> None:
+    """Validate an allowlisted XRT soname symlink's target chain."""
+    if rel not in ALLOWLISTED_SYMLINKS:
+        raise SystemExit(f"unexpected symlink {rel!r} -> {target!r}")
+    # Reject absolute targets and parent traversal
+    if os.path.isabs(target):
+        raise SystemExit(f"symlink {rel!r} has absolute target {target!r}")
+    if ".." in target.split(os.sep):
+        raise SystemExit(f"symlink {rel!r} target escapes via '..': {target!r}")
+    expected = ALLOWLISTED_SYMLINKS[rel]
+    if target != expected and os.path.basename(target) != expected:
+        # Require exact basename match at minimum; full relative check above
+        raise SystemExit(f"symlink {rel!r} target mismatch: {target!r} "
+                         f"expected {expected!r}")
+    # Must not be dangling and must resolve inside the XRT root
+    link_path = os.path.join(root, rel)
+    try:
+        resolved = os.path.realpath(link_path)
+        # realpath resolves the symlink; must be inside root and exist
+        if not resolved.startswith(os.path.realpath(root) + os.sep):
+            raise SystemExit(f"symlink {rel!r} resolves outside XRT root: "
+                             f"{resolved!r}")
+        if not os.path.isfile(resolved):
+            raise SystemExit(f"symlink {rel!r} dangles (target missing): "
+                             f"{target!r} -> {resolved!r}")
+    except OSError as e:
+        raise SystemExit(f"symlink {rel!r} validation failed: {e}") from e
+
 def walk(root: str, table, strip: str) -> list[dict]:
     # venv scaffolding (pip, dist-info) and bytecode caches are recreated
     # at build time, never part of the audited set.
@@ -103,6 +131,14 @@ def walk(root: str, table, strip: str) -> list[dict]:
     skip_top = {"pip", "pip-24.0.dist-info"}
     out = []
     for dirpath, dirnames, filenames in os.walk(root):
+        # Reject directory symlinks outright (no allowlisted dir links)
+        for d in list(dirnames):
+            full_d = os.path.join(dirpath, d)
+            if os.path.islink(full_d):
+                rel_d = os.path.relpath(full_d, root)
+                target_d = os.readlink(full_d)
+                raise SystemExit(f"unexpected directory symlink {rel_d!r} "
+                                 f"-> {target_d!r}")
         dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         rel_dir = os.path.relpath(dirpath, root)
         if rel_dir.split(os.sep)[0] in skip_top:
@@ -114,13 +150,7 @@ def walk(root: str, table, strip: str) -> list[dict]:
             if os.path.islink(full):
                 rel = os.path.relpath(full, root)
                 target = os.readlink(full)
-                # Only the 3 XRT soname links are allowlisted; they are
-                # recreated at install (Dockerfile ln -sf) and not hashed.
-                # Any other symlink is a payload integrity error.
-                if rel not in ALLOWLISTED_SYMLINKS:
-                    raise SystemExit(f"unexpected symlink {rel!r} -> {target!r}")
-                if os.path.basename(target) != ALLOWLISTED_SYMLINKS[rel]:
-                    raise SystemExit(f"symlink {rel!r} target mismatch: {target!r}")
+                _validate_allowlisted_symlink(root, rel, target)
                 continue
             rel = os.path.relpath(full, root)
             pkg, ver, lic, role = origin_for(rel, table)
@@ -208,13 +238,24 @@ def main() -> int:
 
     # Synchronize legal/component-map.json from the same locked collection
     # (keeps both outputs consistent; NumPy and all components included).
+    # Read the committed source, not args.out (which may be a clean temp
+    # during generation); fail loudly if it is missing or malformed.
+    committed_map = os.path.join(
+        os.path.dirname(__file__), "..", "packaging", "legal",
+        "component-map.json")
     try:
-        existing = json.load(open(os.path.join(args.out, "legal",
-                                               "component-map.json")))
-        governing = existing.get("governing_terms", [])
-        rules = existing.get("rules", [])
-    except (OSError, ValueError):
-        governing, rules = [], []
+        with open(committed_map) as f:
+            existing = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"cannot read committed component-map {committed_map!r}: {e}",
+              file=sys.stderr)
+        return 1
+    governing = existing.get("governing_terms")
+    rules = existing.get("rules")
+    if not isinstance(governing, list) or not isinstance(rules, list):
+        print("committed component-map missing governing_terms/rules",
+              file=sys.stderr)
+        return 1
     comp_map = {
         "schema_version": 1,
         "status": vendor_lock["status"] + "; per-file manifest in "

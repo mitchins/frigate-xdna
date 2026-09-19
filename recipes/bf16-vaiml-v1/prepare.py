@@ -25,11 +25,11 @@ from quark.onnx import ModelQuantizer
 from quark.onnx.quantization.config.config import Config
 from quark.onnx.quantization.config.custom_config import get_default_config
 
-# Safe resource limits (replaces unsafe preexec_fn in launcher): 6 GiB AS,
-# 8 MiB file size cap for any child output (logs are also truncated by parent).
+# Safe resource limits (replaces unsafe preexec_fn in launcher): 6 GiB AS.
+# File-size capping is handled by parent log truncation, not RLIMIT_FSIZE,
+# so artifact writes (BF16 ONNX) are not capped at 8 MiB.
 try:
     resource.setrlimit(resource.RLIMIT_AS, (6 * 1024 ** 3, 6 * 1024 ** 3))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (8 * 1024 * 1024, 8 * 1024 * 1024))
 except (ValueError, OSError):
     pass
 

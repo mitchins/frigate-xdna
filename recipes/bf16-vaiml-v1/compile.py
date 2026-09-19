@@ -23,7 +23,6 @@ import onnxruntime as ort
 
 try:
     resource.setrlimit(resource.RLIMIT_AS, (6 * 1024 ** 3, 6 * 1024 ** 3))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (8 * 1024 * 1024, 8 * 1024 * 1024))
 except (ValueError, OSError):
     pass
 
@@ -42,10 +41,14 @@ def main() -> int:
     ap.add_argument("--cache-dir", required=True)
     ap.add_argument("--cache-key", required=True)
     args = ap.parse_args()
-    if os.path.isdir(args.cache_dir) and os.listdir(args.cache_dir):
-        raise SystemExit(
-            f"cache dir not empty: {args.cache_dir!r} — refusing to reuse; "
-            f"provide a fresh empty directory")
+    if os.path.exists(args.cache_dir):
+        if not os.path.isdir(args.cache_dir):
+            raise SystemExit(
+                f"cache dir exists and is not a directory: {args.cache_dir!r}")
+        if os.listdir(args.cache_dir):
+            raise SystemExit(
+                f"cache dir not empty: {args.cache_dir!r} — refusing to reuse; "
+                f"provide a fresh empty directory")
     input_name, geom = geometry_of(args.onnx)
     os.makedirs(args.cache_dir, exist_ok=True)
     so = ort.SessionOptions()

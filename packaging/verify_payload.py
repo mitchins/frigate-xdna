@@ -78,6 +78,39 @@ def main() -> int:
         if sha256_file(full) != entry["sha256"]:
             print(f"HASH {rel}")
             errors += 1
+    def _check_symlink(root: str, label: str, rel: str, target: str) -> bool:
+        # Only the 3 XRT file symlinks are allowlisted; directory symlinks
+        # are never allowlisted.
+        if label != "xrt/" or rel not in ALLOWLISTED_SYMLINKS:
+            print(f"UNEXPECTED_SYMLINK {label}{rel} -> {target}")
+            return False
+        if os.path.isabs(target):
+            print(f"SYMLINK_ABSOLUTE_TARGET {label}{rel} -> {target}")
+            return False
+        if ".." in target.split(os.sep):
+            print(f"SYMLINK_TRAVERSAL {label}{rel} -> {target}")
+            return False
+        expected = ALLOWLISTED_SYMLINKS[rel]
+        if target != expected and os.path.basename(target) != expected:
+            print(f"SYMLINK_TARGET_MISMATCH {label}{rel} -> {target} "
+                  f"expected {expected}")
+            return False
+        # Validate resolved target is inside XRT root and not dangling
+        link_path = os.path.join(root, rel)
+        try:
+            resolved = os.path.realpath(link_path)
+            real_root = os.path.realpath(root)
+            if not resolved.startswith(real_root + os.sep):
+                print(f"SYMLINK_OUTSIDE_ROOT {label}{rel} -> {resolved}")
+                return False
+            if not os.path.exists(resolved):
+                print(f"SYMLINK_DANGLING {label}{rel} -> {target}")
+                return False
+        except OSError as e:
+            print(f"SYMLINK_ERROR {label}{rel}: {e}")
+            return False
+        return True
+
     # Check for extra files and unexpected symlinks in each supplied tree
     roots = [(args.payload, ""), (args.xrt, "xrt/")]
     if args.flexmlrt:
@@ -90,7 +123,17 @@ def main() -> int:
         if root is None or not os.path.isdir(root):
             continue
         for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+            # Directory symlinks: always reject (no allowlisted dir links)
+            for d in list(dirnames):
+                full_d = os.path.join(dirpath, d)
+                if os.path.islink(full_d):
+                    rel_d = os.path.relpath(full_d, root)
+                    print(f"UNEXPECTED_DIR_SYMLINK {label}{rel_d} -> "
+                          f"{os.readlink(full_d)}")
+                    errors += 1
+            dirnames[:] = [d for d in dirnames
+                           if d != "__pycache__" and not os.path.islink(
+                               os.path.join(dirpath, d))]
             top = os.path.relpath(dirpath, root).split(os.sep)[0]
             if label == "" and top in ("pip", "pip-24.0.dist-info"):
                 dirnames[:] = []
@@ -101,16 +144,9 @@ def main() -> int:
                 full = os.path.join(dirpath, fn)
                 if os.path.islink(full):
                     rel = os.path.relpath(full, root)
-                    # Allowlisted XRT soname links are not in the manifest
-                    # (recreated at install); any other symlink is an error.
-                    check_key = rel if label == "xrt/" else rel
-                    if label == "xrt/" and check_key in ALLOWLISTED_SYMLINKS:
-                        target = os.readlink(full)
-                        if os.path.basename(target) != ALLOWLISTED_SYMLINKS[check_key]:
-                            print(f"SYMLINK_TARGET_MISMATCH {label}{rel} -> {target}")
-                            errors += 1
+                    target = os.readlink(full)
+                    if _check_symlink(root, label, rel, target):
                         continue
-                    print(f"UNEXPECTED_SYMLINK {label}{rel} -> {os.readlink(full)}")
                     errors += 1
                     continue
                 if os.path.normpath(full) not in seen:
