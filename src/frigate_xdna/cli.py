@@ -193,6 +193,25 @@ def cmd_serve(config) -> int:
                                      "endpoint": "tcp://127.0.0.1:5555"})
     sup = Supervisor(config)
     sup.start_admin()
+    # Start ROUTER frontend (Task 04) if endpoint is configured
+    zfrontend = None
+    if config.endpoint:
+        try:
+            from .transport.frigate_zmq import FrigateZmqFrontend
+            import asyncio as _asyncio
+            zfrontend = FrigateZmqFrontend(sup, config.endpoint)
+            # run in background thread with its own loop
+            import threading as _thr
+
+            def _run_zmq():
+                loop = _asyncio.new_event_loop()
+                _asyncio.set_event_loop(loop)
+                loop.run_until_complete(zfrontend.start())
+                loop.run_forever()
+
+            _thr.Thread(target=_run_zmq, daemon=True).start()
+        except Exception as e:
+            print(f"fxdna: ZMQ frontend failed to start: {e}", file=sys.stderr)
     for ref in config.models:
         try:
             sup.prepare(ref)
@@ -208,6 +227,12 @@ def cmd_serve(config) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        if zfrontend is not None:
+            try:
+                import asyncio as _asyncio
+                _asyncio.run(zfrontend.stop())
+            except Exception:
+                pass
         sup.stop()
     return SUCCESS
 

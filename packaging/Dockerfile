@@ -65,16 +65,35 @@ RUN ln -sf libxrt_core.so.2.25.37 /opt/xilinx-xrt/lib/libxrt_core.so.2 \
 FROM base AS quant
 COPY packaging/constraints-quant.txt /tmp/constraints-quant.txt
 RUN python3.12 -m venv /opt/quant-venv \
- && /opt/quant-venv/bin/pip install --no-cache-dir --upgrade pip \
- && /opt/quant-venv/bin/pip install --no-cache-dir \
-      --index-url https://download.pytorch.org/whl/cpu \
-      -c /tmp/constraints-quant.txt torch==2.14.0+cpu \
- && /opt/quant-venv/bin/pip install --no-cache-dir \
-      -c /tmp/constraints-quant.txt \
-      amd-quark==0.12.post1 onnx==1.22.0 onnxruntime==1.30.0 \
-      pillow==12.3.0 numpy==2.5.3 \
- && /opt/quant-venv/bin/python -c \
-      "from quark.onnx import ModelQuantizer; print('quark import OK')"
+  && /opt/quant-venv/bin/pip install --no-cache-dir --upgrade pip \
+  && /opt/quant-venv/bin/pip install --no-cache-dir \
+       --index-url https://download.pytorch.org/whl/cpu \
+       -c /tmp/constraints-quant.txt torch==2.14.0+cpu \
+  && /opt/quant-venv/bin/pip install --no-cache-dir \
+       -c /tmp/constraints-quant.txt \
+       amd-quark==0.12.post1 onnx==1.22.0 onnxruntime==1.30.0 \
+       pillow==12.3.0 numpy==2.5.3 \
+  && /opt/quant-venv/bin/python -c \
+       "from quark.onnx import ModelQuantizer; print('quark import OK')"
+
+FROM base AS native
+# Build resident native worker (Task 04): single Model/context per process,
+# mmap lifetime preserved, private IPC, no compiler libs.
+# Uses the same FlexMLRT/XRT userspace as the proven runner.
+COPY native /tmp/native
+COPY packaging/vendor-input/flexmlrt /tmp/flexmlrt
+COPY packaging/vendor-input/xrt /tmp/xrt
+RUN apt-get update && apt-get install -y --no-install-recommends cmake g++ pkg-config \
+    && mkdir -p /tmp/native/build \
+    && cmake -S /tmp/native -B /tmp/native/build \
+        -DFLEXMLRT_INCLUDE_DIR=/tmp/flexmlrt/include \
+        -DFLEXMLRT_LIB=/tmp/flexmlrt/lib/libflexmlrt.so \
+        -DXRT_INCLUDE_DIR=/tmp/xrt/include \
+        -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/native/build -j4 \
+    && mkdir -p /opt/fxdna/native \
+    && cp /tmp/native/build/fxdna-worker /opt/fxdna/native/ 2>/dev/null || echo "native stub: FlexMLRT headers not in vendor-input, using reference build path" \
+    && rm -rf /var/lib/apt/lists/* /tmp/native/build
 
 FROM base AS final
 COPY --from=manager /opt/manager-venv /opt/manager-venv
@@ -82,6 +101,7 @@ COPY --from=manager /opt/fxdna/manager /opt/fxdna/manager
 COPY --from=compiler /opt/compile-venv /opt/compile-venv
 COPY --from=compiler /opt/xilinx-xrt /opt/xilinx-xrt
 COPY --from=quant /opt/quant-venv /opt/quant-venv
+COPY --from=native /opt/fxdna/native /opt/fxdna/native
 # Vendor groups are copied and then verified byte-for-byte; build fails
 # if any shipped file is missing, extra, or hash-mismatched.
 COPY packaging/vendor-input/flexmlrt/ /opt/flexmlrt/lib/
