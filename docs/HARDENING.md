@@ -201,12 +201,18 @@ until explicit `fxdna recover`. No silent continuation.
 
 | Metric | Before (main `df1a44a`) | After (PR #4) |
 |---|---|---|
-| Security rating / vulns | E / 21 | _to fill_ |
-| Reliability rating / bugs | C / 6 | _to fill_ |
-| Maintainability / smells | A / 215 | _to fill_ |
-| Coverage | — (none ingested) | _to fill_ |
-| Duplication | 0.0% | _to fill_ |
-| Quality gate | ERROR (new reliability) | _to fill_ |
+| Security rating / vulns | E / 21 | **A / 0** (1 accepted risk recorded on-issue) |
+| Reliability rating / bugs | C / 6 | **A / 0** |
+| Maintainability / smells | A / 215 | **A / 0 open** (scope excludes provenance/pinned/generated) |
+| Coverage | — (none ingested) | **77.9% overall, 85.0% on new code** |
+| Duplication | 0.0% | 0.0% |
+| Quality gate | ERROR (new reliability) | **OK** (all 6 conditions) |
+
+PR scope went from 21 vulns → 0 open after genuine fixes (BLOCKER
+traversal guard, CancelledError/shutdown correctness, complexity
+extraction, dead-code removal, CI supply-chain pins) plus one
+recorded accepted risk and documented scope. Overall main-branch
+numbers move on merge; the PR gate is the binding signal.
 
 ## 10. Remaining intentional debt / next task
 
