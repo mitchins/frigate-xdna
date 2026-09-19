@@ -1,0 +1,713 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pypi:annotated-types@0.8.0",
+      "name": "annotated-types",
+      "purl": "pkg:pypi/annotated-types@0.8.0",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "0.8.0"
+    },
+    {
+      "bom-ref": "pypi:attrs@26.1.0",
+      "name": "attrs",
+      "purl": "pkg:pypi/attrs@26.1.0",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "26.1.0"
+    },
+    {
+      "bom-ref": "pypi:certifi@2026.7.22",
+      "name": "certifi",
+      "purl": "pkg:pypi/certifi@2026.7.22",
+      "scope": "runtime",
+      "type": "library",
+      "version": "2026.7.22"
+    },
+    {
+      "bom-ref": "pypi:charset-normalizer@3.5.1",
+      "name": "charset-normalizer",
+      "purl": "pkg:pypi/charset-normalizer@3.5.1",
+      "scope": "runtime",
+      "type": "library",
+      "version": "3.5.1"
+    },
+    {
+      "bom-ref": "pypi:coverage@7.16.1",
+      "name": "coverage",
+      "purl": "pkg:pypi/coverage@7.16.1",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "7.16.1"
+    },
+    {
+      "bom-ref": "pypi:idna@3.20",
+      "name": "idna",
+      "purl": "pkg:pypi/idna@3.20",
+      "scope": "runtime",
+      "type": "library",
+      "version": "3.20"
+    },
+    {
+      "bom-ref": "pypi:jsonschema-specifications@2025.9.1",
+      "name": "jsonschema-specifications",
+      "purl": "pkg:pypi/jsonschema-specifications@2025.9.1",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "2025.9.1"
+    },
+    {
+      "bom-ref": "pypi:jsonschema@4.26.0",
+      "name": "jsonschema",
+      "purl": "pkg:pypi/jsonschema@4.26.0",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "4.26.0"
+    },
+    {
+      "bom-ref": "pypi:ml_dtypes@0.6.0",
+      "name": "ml_dtypes",
+      "purl": "pkg:pypi/ml_dtypes@0.6.0",
+      "scope": "runtime",
+      "type": "library",
+      "version": "0.6.0"
+    },
+    {
+      "bom-ref": "pypi:numpy@2.5.3",
+      "name": "numpy",
+      "purl": "pkg:pypi/numpy@2.5.3",
+      "scope": "runtime",
+      "type": "library",
+      "version": "2.5.3"
+    },
+    {
+      "bom-ref": "pypi:onnx@1.23.0",
+      "name": "onnx",
+      "purl": "pkg:pypi/onnx@1.23.0",
+      "scope": "runtime",
+      "type": "library",
+      "version": "1.23.0"
+    },
+    {
+      "bom-ref": "pypi:protobuf@7.36.2",
+      "name": "protobuf",
+      "purl": "pkg:pypi/protobuf@7.36.2",
+      "scope": "runtime",
+      "type": "library",
+      "version": "7.36.2"
+    },
+    {
+      "bom-ref": "pypi:pydantic@2.13.5",
+      "name": "pydantic",
+      "purl": "pkg:pypi/pydantic@2.13.5",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "2.13.5"
+    },
+    {
+      "bom-ref": "pypi:pydantic_core@2.46.5",
+      "name": "pydantic_core",
+      "purl": "pkg:pypi/pydantic_core@2.46.5",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "2.46.5"
+    },
+    {
+      "bom-ref": "pypi:pyzmq@27.2.0",
+      "name": "pyzmq",
+      "purl": "pkg:pypi/pyzmq@27.2.0",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "27.2.0"
+    },
+    {
+      "bom-ref": "pypi:referencing@0.37.0",
+      "name": "referencing",
+      "purl": "pkg:pypi/referencing@0.37.0",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "0.37.0"
+    },
+    {
+      "bom-ref": "pypi:requests@2.34.2",
+      "name": "requests",
+      "purl": "pkg:pypi/requests@2.34.2",
+      "scope": "runtime",
+      "type": "library",
+      "version": "2.34.2"
+    },
+    {
+      "bom-ref": "pypi:rpds-py@2026.6.3",
+      "name": "rpds-py",
+      "purl": "pkg:pypi/rpds-py@2026.6.3",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "2026.6.3"
+    },
+    {
+      "bom-ref": "pypi:ruff@0.16.8",
+      "name": "ruff",
+      "purl": "pkg:pypi/ruff@0.16.8",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "0.16.8"
+    },
+    {
+      "bom-ref": "pypi:typing-inspection@0.4.4",
+      "name": "typing-inspection",
+      "purl": "pkg:pypi/typing-inspection@0.4.4",
+      "scope": "dev-test",
+      "type": "library",
+      "version": "0.4.4"
+    },
+    {
+      "bom-ref": "pypi:typing_extensions@4.16.0",
+      "name": "typing_extensions",
+      "purl": "pkg:pypi/typing_extensions@4.16.0",
+      "scope": "runtime",
+      "type": "library",
+      "version": "4.16.0"
+    },
+    {
+      "bom-ref": "pypi:urllib3@2.8.0",
+      "name": "urllib3",
+      "purl": "pkg:pypi/urllib3@2.8.0",
+      "scope": "runtime",
+      "type": "library",
+      "version": "2.8.0"
+    },
+    {
+      "bom-ref": "vendor:amd-legal@1.8",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "02a882a4a4341aa6ca0bf3f963bca44c0a8466fb692424193e7a9b98f449ed6e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "amd-eula"
+          }
+        }
+      ],
+      "name": "amd-legal",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "EULA/TPN flow-down notices"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "19922204"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "1.8"
+    },
+    {
+      "bom-ref": "vendor:coco-calib@coco128",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f195522eb7a61da590bc3f27276b003d024f82a721cd6d2b902b1679c53ac98f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "cc-by-4.0"
+          }
+        }
+      ],
+      "name": "coco-calib",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "BF16 calibration images (public COCO)"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "1887250"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "coco128"
+    },
+    {
+      "bom-ref": "vendor:flexml@1.8.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "70844068312efc09e064a9e6637d0cef74173f2c78cd17454c47c2b2594e34c5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "amd-eula"
+          }
+        }
+      ],
+      "name": "flexml",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "VAIML partitioner + compile VFS"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "446949912"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "1.8.0"
+    },
+    {
+      "bom-ref": "vendor:flexmlrt@1.8.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2d332c16ee16e28aa383f5b228dbbe64c170cef62355f792dadbc13bbe00fa54"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "amd-eula"
+          }
+        }
+      ],
+      "name": "flexmlrt",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "standalone FlexMLRT runtime"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "12623576"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "1.8.0"
+    },
+    {
+      "bom-ref": "vendor:llvm-aie@1.8.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "fa91b309fc1c71000ebdf9a77042848d50da3b4d125f5c6a67a3935287224d70"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "amd-eula"
+          }
+        }
+      ],
+      "name": "llvm-aie",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "peano AIE runtime lib (LLVM-sourceable)"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "186631968"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "1.8.0"
+    },
+    {
+      "bom-ref": "vendor:ml_dtypes@0.6.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "eaf78c17fd8439a72931e71d62579a28cb651ac7bcc1b797d3a3bae48e26c46d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ml_dtypes-apache"
+          }
+        }
+      ],
+      "name": "ml_dtypes",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "ONNX ML dtypes"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "1808218"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "0.6.0"
+    },
+    {
+      "bom-ref": "vendor:numpy@2.5.3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "884d0acac1677eba8170ba29c5389edc5627f4154d66fdd698815b22f2c185fc"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "numpy-bsd"
+          }
+        }
+      ],
+      "name": "numpy",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "compile-harness array support"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "110843136"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "2.5.3"
+    },
+    {
+      "bom-ref": "vendor:onnx@1.23.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b240e8de672109a8ee3dfb39b4a1092221081e3274ac20583cd875086204aca6"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "onnx-mit"
+          }
+        }
+      ],
+      "name": "onnx",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "ONNX dist-info; ONNX graph inspection (public PyPI)"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "23150279"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "1.23.0"
+    },
+    {
+      "bom-ref": "vendor:onnxruntime-vitisai@1.27.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "87ed19dfd088f505b2c7555c1f1074d44d609e882af3bbc9ed0d87e461bca8d6"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "amd-eula"
+          }
+        }
+      ],
+      "name": "onnxruntime-vitisai",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "VitisAI EP driver + opened subset"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "102659574"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "1.27.0"
+    },
+    {
+      "bom-ref": "vendor:protobuf@7.36.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a80f9877861e759167c1009ada5cf8430b23b08735acd7526ce3f785d5c393eb"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "protobuf-bsd"
+          }
+        }
+      ],
+      "name": "protobuf",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "ONNX protobuf runtime"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "1392088"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "7.36.2"
+    },
+    {
+      "bom-ref": "vendor:ryzenai-sw-example@1.8",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e637fb3a31cc857c477817b6ca86203b8fb92258eeb8e5c9914f74d653b08ad5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ryzenai-sw-mit"
+          }
+        }
+      ],
+      "name": "ryzenai-sw-example",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "VAIML partition recipe"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "489"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "1.8"
+    },
+    {
+      "bom-ref": "vendor:typing_extensions@4.16.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "86380cde8c5f4a18a2746315a7c949d113a9a7afc654b1e89676542c21ef6fcc"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "typing-extensions-mit"
+          }
+        }
+      ],
+      "name": "typing_extensions",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "ONNX typing support"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "182924"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "4.16.0"
+    },
+    {
+      "bom-ref": "vendor:vitis-aie-essentials@1.8.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "059668ec58ca9f85c2bad5253a57971860d5a0fa86749b63c55c8bb4e2e5131f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "amd-eula"
+          }
+        }
+      ],
+      "name": "vitis-aie-essentials",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "ADF/AIE-API compile headers; device schema data"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "32895408"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "1.8.0"
+    },
+    {
+      "bom-ref": "vendor:vitis-mllib@1.8.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1850e32f7774bccb3e85c89b314ef89166170b3cbeb248624a67432fdf0424ce"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "amd-eula"
+          }
+        }
+      ],
+      "name": "vitis-mllib",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "AIE kernel compile includes/metadata"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "49685103"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "1.8.0"
+    },
+    {
+      "bom-ref": "vendor:voe@1.8.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4dd6e7578ecf0babd6c6f5482f6624f25deaf10b3d562edcb1eb14eec111843f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "amd-eula"
+          }
+        }
+      ],
+      "name": "voe",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "xcompiler/aiecompiler/dyn-dispatch/flexmlrt backend"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "799397408"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "1.8.0"
+    },
+    {
+      "bom-ref": "vendor:xdna-driver-plugin@2.25.260102.56",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a9ef473cb5c4fda2788e7341644a178b4ed57fe7df1d40ce45fe10273d9add7a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "amdnpu-binary"
+          }
+        }
+      ],
+      "name": "xdna-driver-plugin",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "XDNA userspace shim (Apache-2.0 sources); shim version record"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "784120"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "2.25.260102.56"
+    },
+    {
+      "bom-ref": "vendor:xrt-base@2.25.37",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "80b64fad32375a8b1680e17a5e6fdcc0fcf168bc25035fa9f51c697364111b2a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "apache-2.0"
+          }
+        }
+      ],
+      "name": "xrt-base",
+      "properties": [
+        {
+          "name": "fxdna:roles",
+          "value": "XRT core runtime"
+        },
+        {
+          "name": "fxdna:total_bytes",
+          "value": "7643352"
+        }
+      ],
+      "scope": "required",
+      "type": "library",
+      "version": "2.25.37"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "ghcr.io/mitchins/frigate-xdna",
+      "name": "ghcr.io/mitchins/frigate-xdna",
+      "type": "container",
+      "version": "5e94a3835e00f92cefc722d3a52c1631b9c1accfcb7662bf4da2c98f420cef53"
+    },
+    "properties": [
+      {
+        "name": "fxdna:component-map-sha256",
+        "value": "0da57884f7c662de60d3d43214a9107af2dead412c8a802f2a1ffcee46ad90a1"
+      }
+    ],
+    "tools": [
+      {
+        "name": "fxdna-gen-sbom",
+        "version": "8.4"
+      }
+    ]
+  },
+  "specVersion": "1.5",
+  "version": 1
+}

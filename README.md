@@ -1,12 +1,19 @@
 # frigate-xdna
 
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=mitchins_frigate-xdna&metric=alert_status)](https://sonarcloud.io/summary/new-code?id=mitchins_frigate-xdna)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=mitchins_frigate-xdna&metric=coverage)](https://sonarcloud.io/summary/new-code?id=mitchins_frigate-xdna)
+
 Self-contained Linux XDNA detector sidecar for **unmodified** Frigate
 (`v0.18.0-rc2`): Frigate+ acquisition, local ONNX→RAI compilation, persistent
 multi-model cache, resident native inference worker.
 
-Status: **Tasks 01–02 done** (CLI surface, exact contracts, Plus client,
-content-addressed cache, serve daemon; fake compile backend). No real
-compiler or native worker yet — see `docs/WORKQUEUE.md`.
+Status: **Tasks 01–04 + 8.3.5 done** — CLI surface, exact contracts, Plus
+client, content-addressed cache, serve daemon, offline compiler appliance
+(`bf16-vaiml-v1`), resident native worker + stock ZMQ ROUTER frontend,
+repository hardening (CI, coverage floor 70, SonarCloud gate OK). In
+progress: **Task 05 acceptance** (full Frigate rc2 replay, private Plus
+model, A→B update, soak, release report) — see `docs/WORKQUEUE.md` and
+`docs/RELEASE-8.4.md`.
 
 ## Quick start
 
