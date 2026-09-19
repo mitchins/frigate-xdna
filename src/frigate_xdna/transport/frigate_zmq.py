@@ -282,14 +282,15 @@ class FrigateZmqFrontend:
         # Quiescent by elimination (active traffic returned above):
         # switch generation, drain old, start new.
         old_artifact = self._active_artifact
+        # None returns in the first branch; the replaced key is a str.
+        assert old_artifact is not None
         if await self._try_activate(compile_key):
             old_gen = self._generation
             self._generation += 1
             self.sessions.invalidate_generation(old_gen)
             # Supersede the REPLACED artifact (activation already
             # pointed _active_artifact at the new one).
-            if old_artifact is not None:
-                self.sessions.mark_superseded(old_artifact)
+            self.sessions.mark_superseded(old_artifact)
             self.sessions.bind(
                 identity, source_sha, serving_digest,
                 compile_key, self._generation)

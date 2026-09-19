@@ -57,10 +57,13 @@ PR #4 CI scan added 5 more finding types, all addressed:
 - `python:S3923` (identical if/else) → **fixed**: collapsed to one
   not-ready reply.
 - `python:S5778` ×3 (new unit tests) → **fixed**: setup moved out
-  of the `try` via `addCleanup`, leaving a single throwing call;
+  of the `try` via `addCleanup`, then header construction hoisted so
+  each `assertRaises` block holds exactly one throwing call;
   `S5958` fixed by narrowing to `OSError`.
-- `pythonbugs:S2589` (always-true quiescence guard) → **fixed**:
-  dead `if` removed, quiescence holds by elimination.
+- `pythonbugs:S2589` (always-true guards) → **fixed**: dead
+  quiescence `if` removed (holds by elimination), then the residual
+  always-true `None` check replaced with an `assert` stating the
+  branch invariant (fail-fast beats silent skip).
 - `pythonsecurity:S8707` (`verify_payload.py:63`) → accepted in
   SonarCloud with the §2 rationale recorded on the issue (status
   ACCEPTED, not a waiver to chase score).

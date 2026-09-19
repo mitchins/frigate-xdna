@@ -62,24 +62,25 @@ class TestFraming(unittest.TestCase):
         a, b = create_socketpair()
         self.addCleanup(a.close)
         self.addCleanup(b.close)
+        bad = _hdr("STATUS", protocol_version=999)
         with self.assertRaises(ValueError):
-            send_message(a, _hdr("STATUS", protocol_version=999))
+            send_message(a, bad)
 
     def test_tensor_bound_enforced(self):
         a, b = create_socketpair()
         self.addCleanup(a.close)
         self.addCleanup(b.close)
+        hdr = _hdr("INFER")
         with self.assertRaises(ValueError):
-            send_message(a, _hdr("INFER"),
-                         b"x" * (MAX_TENSOR_BYTES + 1))
+            send_message(a, hdr, b"x" * (MAX_TENSOR_BYTES + 1))
 
     def test_model_bound_enforced(self):
         a, b = create_socketpair()
         self.addCleanup(a.close)
         self.addCleanup(b.close)
+        hdr = _hdr("LOAD")
         with self.assertRaises(ValueError):
-            send_message(a, _hdr("LOAD"),
-                         b"x" * (MAX_MODEL_BYTES + 1))
+            send_message(a, hdr, b"x" * (MAX_MODEL_BYTES + 1))
 
     def test_garbage_header_length_rejected(self):
         a, b = create_socketpair()
