@@ -1,6 +1,8 @@
-# Operator workflow (for the future implemented image)
+# Operator workflow
 
-These commands describe the target product interface. The specification kit itself is not an executable service.
+These commands describe the implemented product interface (`fxdna` CLI +
+appliance image, Tasks 01–04). Hardware acceptance (Task 05) may still
+extend them.
 
 ## First launch
 

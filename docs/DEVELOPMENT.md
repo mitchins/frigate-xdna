@@ -8,22 +8,29 @@
 
 macOS can run suitable pure-Python/unit tests, but is not an XDNA execution platform for this project. Do not imply that a Docker image substitutes for the host's NPU driver.
 
-## Intended developer commands
+## Developer commands
 
-Task 01 should provide a small task runner or Makefile implementing:
+Implemented in the Makefile (Tasks 01–04 landed):
 
 ```
-make test-unit                # available (Task 01)
-make test-contract            # available (Task 01)
-make test-integration         # available (Task 02)
-make build-native             # planned (Task 04)
-make image                    # planned (Task 03/05)
-make test-image-offline       # planned (Task 03)
-make test-hardware            # explicit opt-in/ownership guard (Task 04+)
-make test-frigate-e2e         # planned (Task 05)
+make test-unit                # hardware-free unit tests
+make test-contract            # stock Frigate rc2 contract tests (pinned)
+make test-integration         # fake-Plus / fake-backend integration
+make test                     # all of the above, hardware-free
+make coverage                 # all suites with coverage + fail_under floor
+make build-native             # cmake build of fxdna-worker (needs XRT_ROOT)
+make test-hardware            # explicit opt-in/ownership guard (refuses by default)
+make image                    # appliance image (Task 05; needs staged vendor-input)
+make test-image-offline       # compiler appliance gate (Task 05)
+make test-frigate-e2e         # full Frigate gate (Task 05)
 ```
 
-The code is not included in this spec kit; implement these commands before documenting them as available. Pin manager and compiler dependencies separately. CI must not download mutable `latest` dependencies or run tests from Frigate `dev` and describe them as rc2 compatibility.
+Environment: `pip install -r requirements.lock` (pinned runtime + dev
+pins: contract deps, pyzmq, coverage, ruff). `ruff check` covers
+`src recipes tools packaging tests schemas`; CI runs the same gates.
+Pin manager and compiler dependencies separately. CI must not download
+mutable `latest` dependencies or run tests from Frigate `dev` and
+describe them as rc2 compatibility.
 
 ## Vendor/build inputs
 

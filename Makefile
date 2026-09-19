@@ -26,8 +26,21 @@ coverage:
 	$(PY) -m coverage xml
 	$(PY) -m coverage report
 
+# Native worker build (public path only). Requires the vendored XRT root
+# (packaging/vendor-input/xrt, staged by tools/prepare_vendor_input.py)
+# and FlexMLRT headers; fails fast with the CMake guard otherwise.
+XRT_ROOT ?=
+FLEXMLRT_DIR ?=
+
 build-native:
-	@echo "not yet implemented (Task 04: native IPC worker)" >&2; exit 3
+	@if [ -z "$(XRT_ROOT)" ]; then \
+	  echo "build-native: set XRT_ROOT to the vendored XRT root" >&2; exit 3; \
+	fi
+	cmake -S $(CURDIR)/native -B $(CURDIR)/build/native \
+	  -DXRT_ROOT="$(XRT_ROOT)" \
+	  $(if $(FLEXMLRT_DIR),-DFLEXMLRT_INCLUDE_DIR="$(FLEXMLRT_DIR)/include" -DFLEXMLRT_LIB="$(FLEXMLRT_DIR)/lib/libflexmlrt.so") \
+	  -DCMAKE_BUILD_TYPE=Release
+	cmake --build $(CURDIR)/build/native -j4
 
 image:
 	@echo "not yet implemented (Task 03/05: appliance image)" >&2; exit 3
