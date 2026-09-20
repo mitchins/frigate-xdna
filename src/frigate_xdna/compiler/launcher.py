@@ -274,6 +274,38 @@ def run_compile(prefixes: CompilerPrefixes, source_onnx: str, workdir: str,
         _compile_lock.release()
 
 
+def _run_vaiml_phase(prefixes, bf16_path: str, workdir: str,
+                     cache_key: str, deadline: float, t_all: float):
+    """Phase 2 (VAIML compile). Returns (rai_sha, rai_bytes, rai_path)
+    or a terminal CompileResult on timeout/failure."""
+    def wall() -> float:
+        return time.monotonic() - t_all
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return CompileResult(124, wall(), _child_peak_rss(),
+                             error="compile timeout")
+    rc, _ = spawn(
+        [prefixes.compile_python,
+         os.path.join(prefixes.recipe_dir, "compile.py"),
+         "--onnx", bf16_path, "--config", prefixes.vaiml_config,
+         "--cache-dir", os.path.join(workdir, "cache"),
+         "--cache-key", cache_key],
+        build_compile_env(prefixes, workdir), workdir, remaining,
+        os.path.join(workdir, "phase2-compile"))
+    if rc != 0:
+        return CompileResult(rc, wall(), _child_peak_rss(),
+                             error="vaiml-compile failed")
+    line = _tail_line(os.path.join(workdir, "phase2-compile.stdout.log"),
+                      "COMPILE_OK")
+    rai_sha, rai_bytes = "", 0
+    if line:
+        parts = line.rsplit(" ", 2)
+        if len(parts) == 3:
+            rai_sha, rai_bytes = parts[1], int(parts[2])
+    return (rai_sha, rai_bytes,
+            os.path.join(workdir, "cache", cache_key, f"{cache_key}.rai"))
+
+
 def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
                 t_all, data_dir=None, worker_factory=None) -> CompileResult:
     for sub in ("in", "home", "tmp", "cache"):
@@ -301,29 +333,11 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
                       "BF16_PREPARE_OK")
     bf16_sha = line.rsplit(" ", 1)[-1] if line else ""
 
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return CompileResult(124, time.monotonic() - t_all,
-                             _child_peak_rss(), error="compile timeout")
-    rc, _ = spawn(
-        [prefixes.compile_python,
-         os.path.join(prefixes.recipe_dir, "compile.py"),
-         "--onnx", bf16_path, "--config", prefixes.vaiml_config,
-         "--cache-dir", os.path.join(workdir, "cache"),
-         "--cache-key", cache_key],
-        build_compile_env(prefixes, workdir), workdir, remaining,
-        os.path.join(workdir, "phase2-compile"))
-    if rc != 0:
-        return CompileResult(rc, time.monotonic() - t_all,
-                             _child_peak_rss(), error="vaiml-compile failed")
-    line = _tail_line(os.path.join(workdir, "phase2-compile.stdout.log"),
-                      "COMPILE_OK")
-    rai_sha, rai_bytes = "", 0
-    if line:
-        parts = line.rsplit(" ", 2)
-        if len(parts) == 3:
-            rai_sha, rai_bytes = parts[1], int(parts[2])
-    rai_path = os.path.join(workdir, "cache", cache_key, f"{cache_key}.rai")
+    phase2 = _run_vaiml_phase(prefixes, bf16_path, workdir, cache_key,
+                              deadline, t_all)
+    if isinstance(phase2, CompileResult):
+        return phase2
+    rai_sha, rai_bytes, rai_path = phase2
 
     # Out-of-child probe through the real worker path (fresh process;
     # the in-compile probe cannot map device memory under the child's
