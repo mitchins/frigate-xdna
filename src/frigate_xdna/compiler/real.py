@@ -22,6 +22,9 @@ BACKEND_ID = "bf16-vaiml-v1"
 
 class RealCompileJob:
     TERMINAL_OK = "PREPARED"
+    # Producer-object identity (supervisor reads it off the instance;
+    # the module constant below is the importable pin for selection).
+    BACKEND_ID = BACKEND_ID
 
     def __init__(self, source_sha256: str, compile_key: str,
                  source_path: str, workdir: str, prefixes: CompilerPrefixes,

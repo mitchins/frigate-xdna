@@ -6,6 +6,7 @@ inhibit-on-death policy (never respawn). Sources/artifacts are real
 ONNX bytes + registry rows in a temp data dir.
 """
 import hashlib
+import json
 import os
 import tempfile
 import time
@@ -312,6 +313,59 @@ class TestWorkerSupervision(unittest.TestCase):
             self.assertTrue(self.children[0].retired)
             inh = sup.registry.get_state("inhibition")
             self.assertEqual(inh["reason"], "ACTIVATION_STATE")
+        finally:
+            sup.stop()
+
+    def test_publish_real_backend_result(self):
+        # Regression: RealCompileJob must carry BACKEND_ID on the
+        # object (supervisor reads it off the producer); a missing
+        # attribute silently failed every real publish as
+        # "backend identity unavailable".
+        from frigate_xdna.compiler.real import RealCompileJob
+        self.assertEqual(RealCompileJob.BACKEND_ID, "bf16-vaiml-v1")
+        sup = self._sup()
+        try:
+            data = make_raw_yolo(os.path.join(sup.data_dir, "t.onnx"),
+                                 res=320, classes=46, seed=21)
+            sha = hashlib.sha256(data).hexdigest()
+            src_dir = os.path.join(sup.data_dir, "sources", sha)
+            os.makedirs(src_dir, exist_ok=True)
+            with open(os.path.join(src_dir, "model.onnx"), "wb") as f:
+                f.write(data)
+            ref, ckey = "plus://pub", "ck-pub"
+            sup.registry.upsert_ref(ref, "plus", "pub")
+            sup.registry.set_ref_source(ref, sha, "md", "PREPARED")
+            rai_path = os.path.join(sup.data_dir, "work", "r.rai")
+            os.makedirs(os.path.join(sup.data_dir, "work"), exist_ok=True)
+            with open(rai_path, "wb") as f:
+                f.write(b"REAL-RAI-BYTES")
+            sup.registry.execute(
+                "INSERT INTO jobs(uuid, ref, compile_key, stage, attempt,"
+                " created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                ("job-pub", ref, ckey, "PREPARED", 1, time.time(),
+                 time.time()))
+
+            class Backend:
+                BACKEND_ID = "bf16-vaiml-v1"
+
+                def __init__(self):
+                    self.result = type("R", (), {
+                        "rai_path": rai_path,
+                        "wall_s": 1.0, "peak_rss_kb": 2,
+                        "vm_peak_kb": 3, "bf16_sha256": "b" * 64})()
+            sup.jobs._backends["job-pub"] = Backend()
+            sup._publish_result({"uuid": "job-pub", "ref": ref,
+                                 "compile_key": ckey})
+            art = sup.registry.get_artifact(ckey)
+            self.assertIsNotNone(art)
+            with open(os.path.join(sup.data_dir, "artifacts", ckey,
+                                   "model.rai"), "rb") as f:
+                self.assertEqual(f.read(), b"REAL-RAI-BYTES")
+            with open(os.path.join(sup.data_dir, "artifacts", ckey,
+                                   "artifact.json")) as f:
+                manifest = json.load(f)
+            self.assertEqual(manifest["backend"], "bf16-vaiml-v1")
+            self.assertEqual(manifest["compile_stats"]["vm_peak_kb"], 3)
         finally:
             sup.stop()
 
