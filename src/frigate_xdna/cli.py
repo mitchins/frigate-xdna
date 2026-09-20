@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
+import threading
 import time
 
 from . import __version__
@@ -310,6 +312,16 @@ def _diagnose_inventory(config, show: bool, key: bytes | None):
     return refs_out, arts_out
 
 
+def _install_serve_handlers(handler) -> None:
+    """Install SIGTERM/SIGINT serve handlers (PID-1 safe). Split out so
+    unit tests can verify registration without sending real signals."""
+    signal.signal(signal.SIGTERM, handler)
+    try:
+        signal.signal(signal.SIGINT, handler)
+    except (OSError, ValueError):
+        pass
+
+
 # Admin error_code -> CLI exit mapping (mirrors _TERMINAL_EXIT for the
 # daemon path so online/standalone exits agree — SF1).
 _ADMIN_EXIT = {
@@ -419,12 +431,22 @@ def cmd_serve(config) -> int:
                   f"[{e.error_code}]", file=sys.stderr)
     print(f"fxdna: serving endpoint={config.endpoint} "
           f"data={sup.data_dir}", file=sys.stderr)
+    # Explicit handlers: as container PID 1 the default SIGTERM action
+    # is ignored by the kernel, so without these the process never
+    # stops gracefully (grace timeout -> SIGKILL -> exit 137) and the
+    # worker is never retired cleanly. Handlers only set the event;
+    # teardown stays in the finally below (bounded, ordered).
+    stop_event = threading.Event()
+
+    def _on_signal(signum, _frame):
+        print(f"fxdna: signal {signum}, stopping", file=sys.stderr)
+        stop_event.set()
+
+    _install_serve_handlers(_on_signal)
     try:
-        while True:
+        while not stop_event.is_set():
             sup.pump(0.2)
-            time.sleep(0.2)
-    except KeyboardInterrupt:
-        pass
+            stop_event.wait(0.2)
     finally:
         if zfrontend is not None and zloop is not None and zthread is not None:
             try:

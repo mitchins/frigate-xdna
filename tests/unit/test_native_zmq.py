@@ -208,6 +208,22 @@ class DispatchCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.fe.counters["rejected"], 1)
         self.assertEqual(self.fe.counters["success"], 0)
 
+    async def test_activation_exception_fails_closed(self):
+        art = os.path.join(self.tmp.name, "artifacts")
+        os.makedirs(os.path.join(art, "ck-boom"), exist_ok=True)
+        with open(os.path.join(art, "ck-boom", "model.rai"), "wb") as f:
+            f.write(b"REAL")
+        with open(os.path.join(art, "ck-boom", "artifact.json"),
+                  "w") as f:
+            json.dump({"backend": "bf16-vaiml-v1"}, f)
+
+        def _boom(ck):
+            raise RuntimeError("simulated supervisor bug")
+        self.fe.sup.activate_worker = _boom
+        # must report False, never propagate out of the serve path
+        self.assertFalse(await self.fe._try_activate("ck-boom"))
+        self.assertIsNone(self.fe._active_artifact)
+
     async def test_refused_artifact_activates_nothing(self):
         art = os.path.join(self.tmp.name, "artifacts")
         os.makedirs(os.path.join(art, "ck-ref"), exist_ok=True)

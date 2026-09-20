@@ -262,6 +262,59 @@ class TestWorkerSupervision(unittest.TestCase):
         finally:
             sup.stop()
 
+    def test_activate_selects_prepared_over_newer_failure(self):
+        # A newer failed job must not hide an older valid PREPARED row.
+        sup = self._sup()
+        try:
+            ref, ckey, _sha = plant(sup)
+            add_job(sup, ref, ckey, stage="PREPARED")
+            add_job(sup, ref, "ck-stale", stage="COMPILE_FAILED")
+            doc = sup.activate(ref)
+            self.assertEqual(doc["compile_key"], ckey)
+            self.assertEqual(doc["state"], "ACTIVE")
+        finally:
+            sup.stop()
+
+    def test_inspect_failure_inhibits_but_unknown_artifact_does_not(self):
+        sup = self._sup()
+        try:
+            ref, ckey, sha = plant(sup)
+            os.remove(os.path.join(self.tmp.name, "sources", sha,
+                                   "model.onnx"))
+            self.assertFalse(sup.activate_worker(ckey))
+            inh = sup.registry.get_state("inhibition")
+            self.assertEqual(inh["reason"],
+                             "ACTIVATION_INSPECT:CACHE_CORRUPT")
+            sup.registry.execute("DELETE FROM service_state WHERE key=?",
+                                 ("inhibition",))
+            self.assertFalse(sup.activate_worker("ck-nope-unknown"))
+            self.assertIsNone(sup.registry.get_state("inhibition"))
+        finally:
+            sup.stop()
+
+    def test_state_publish_failure_rolls_back(self):
+        from unittest import mock
+        sup = self._sup()
+        try:
+            _ref, ckey, _sha = plant(sup)
+            real_set_state = sup.registry.set_state
+
+            def flaky(key, value):
+                if key == "active":
+                    raise OSError("disk gone")
+                return real_set_state(key, value)
+            with mock.patch.object(sup.registry, "set_state",
+                                   side_effect=flaky):
+                self.assertFalse(sup.activate_worker(ckey))
+            self.assertIsNone(sup._worker)
+            self.assertEqual(sup._worker_generation, 0)
+            self.assertIsNone(sup._worker_compile_key)
+            self.assertTrue(self.children[0].retired)
+            inh = sup.registry.get_state("inhibition")
+            self.assertEqual(inh["reason"], "ACTIVATION_STATE")
+        finally:
+            sup.stop()
+
     def test_activate_ref_and_unknown_ref(self):
         sup = self._sup()
         try:

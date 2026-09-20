@@ -696,10 +696,12 @@ class Supervisor:
                                  "compile in flight; retry when idle or"
                                  " pass maintenance explicitly")
         parsed = parse_ref(ref)
+        # Only terminal-ok rows qualify: a newer failed job must never
+        # hide an older valid PREPARED artifact (the old excluded stage
+        # names are not even in the job vocabulary).
         row = self.registry.query(
             "SELECT compile_key FROM jobs WHERE ref=? AND compile_key"
-            " IS NOT NULL AND stage NOT IN"
-            " ('FAILED','CANCELLED','EXHAUSTED') ORDER BY updated_at DESC"
+            " IS NOT NULL AND stage='PREPARED' ORDER BY updated_at DESC"
             " LIMIT 1", (parsed["ref"],))
         if not row:
             raise FxdnaError(NOT_READY, "NOT_PREPARED",
@@ -761,6 +763,14 @@ class Supervisor:
                 "class_count": class_count,
                 "input_shape": inspected["input_shape"]}
 
+    def _inhibit_quiet(self, reason: str, ref: str) -> None:
+        """Best-effort inhibition: failure-path booleans must never turn
+        into raises just because the registry is also unhealthy."""
+        try:
+            _inhibit(self.data_dir, self.registry, reason, ref)
+        except Exception:
+            pass
+
     def _spawn_worker(self):
         if self._worker_factory is not None:
             return self._worker_factory()
@@ -780,13 +790,20 @@ class Supervisor:
         with self._worker_lock:
             try:
                 spec = self._inspect_activation(compile_key)
-            except FxdnaError:
+            except FxdnaError as e:
+                # Inspection failures inhibit (corrupt source, contract
+                # conflict) — except a plain unknown artifact, which is
+                # operator error with no safety implication.
+                if e.error_code != "NOT_PREPARED":
+                    self._inhibit_quiet(
+                             f"ACTIVATION_INSPECT:{e.error_code}",
+                             self._ref_for_artifact(compile_key))
                 return False
             generation = self._worker_generation + 1
             try:
                 worker = self._spawn_worker()
             except _native.WorkerError:
-                _inhibit(self.data_dir, self.registry, "WORKER_SPAWN",
+                self._inhibit_quiet("WORKER_SPAWN",
                          self._ref_for_artifact(compile_key))
                 return False
             try:
@@ -797,19 +814,35 @@ class Supervisor:
                     worker.retire()
                 except Exception:
                     pass
-                _inhibit(self.data_dir, self.registry,
+                self._inhibit_quiet(
                          f"WORKER_LOAD:{e.code}",
                          self._ref_for_artifact(compile_key))
                 return False
-            old = self._worker
+            old, old_key = self._worker, self._worker_compile_key
+            old_generation = self._worker_generation
             self._worker = worker
             self._worker_generation = generation
             self._worker_compile_key = compile_key
-            self.registry.set_state("active",
-                                    {"compile_key": compile_key,
-                                     "worker_generation": generation,
-                                     "serving_digest":
-                                     spec["serving_digest"]})
+            try:
+                self.registry.set_state(
+                    "active",
+                    {"compile_key": compile_key,
+                     "worker_generation": generation,
+                     "serving_digest": spec["serving_digest"]})
+            except Exception:
+                # Publish failed: roll the swap back (retire the new
+                # child, restore previous fields) and inhibit — a live
+                # worker with no published identity must not exist.
+                try:
+                    worker.retire()
+                except Exception:
+                    pass
+                self._worker = old
+                self._worker_generation = old_generation
+                self._worker_compile_key = old_key
+                self._inhibit_quiet("ACTIVATION_STATE",
+                         self._ref_for_artifact(compile_key))
+                return False
             if old is not None:
                 try:
                     old.retire()
@@ -828,7 +861,7 @@ class Supervisor:
                 pass
         ref = (self._ref_for_artifact(compile_key)
                if compile_key else "active")
-        _inhibit(self.data_dir, self.registry, reason, ref)
+        self._inhibit_quiet(reason, ref)
 
     def worker_infer(self, payload: bytes, shape: list[int],
                      timeout_s: float) -> tuple[str, bytes]:

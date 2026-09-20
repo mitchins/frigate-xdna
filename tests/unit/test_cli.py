@@ -37,6 +37,28 @@ class TestCli(unittest.TestCase):
                     "cache", "doctor", "health", "recover"):
             self.assertIn(cmd, out)
 
+    def test_install_serve_handlers_registers_signals(self):
+        import signal as _signal
+
+        from frigate_xdna import cli as _cli
+        calls = []
+
+        def _handler(signum, _frame):
+            calls.append(signum)
+
+        old_term = _signal.getsignal(_signal.SIGTERM)
+        old_int = _signal.getsignal(_signal.SIGINT)
+        try:
+            _cli._install_serve_handlers(_handler)
+            self.assertIs(_signal.getsignal(_signal.SIGTERM), _handler)
+            self.assertIs(_signal.getsignal(_signal.SIGINT), _handler)
+            # the handler only signals shutdown, never raises
+            _signal.getsignal(_signal.SIGTERM)(_signal.SIGTERM, None)
+            self.assertEqual(calls, [int(_signal.SIGTERM)])
+        finally:
+            _signal.signal(_signal.SIGTERM, old_term)
+            _signal.signal(_signal.SIGINT, old_int)
+
     def test_unknown_command_rejected(self):
         rc, _, _ = run_cli(["frobnicate"])
         self.assertEqual(rc, 2)

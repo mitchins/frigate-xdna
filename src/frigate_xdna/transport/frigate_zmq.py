@@ -325,9 +325,14 @@ class FrigateZmqFrontend:
             # Resident native LOAD via the supervisor: the new child
             # LOADs and verifies before it becomes active (A->B safe).
             # A refused artifact inhibits (explicit recover, no retry
-            # loop) and this activation reports False.
-            ok = await asyncio.to_thread(
-                self.sup.activate_worker, compile_key)
+            # loop) and this activation reports False. An unexpected
+            # activation exception must never escape: it would kill
+            # the serve task, so it fails this activation instead.
+            try:
+                ok = await asyncio.to_thread(
+                    self.sup.activate_worker, compile_key)
+            except Exception:
+                return False
             if not ok:
                 return False
             self._active_artifact = compile_key
