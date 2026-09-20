@@ -88,6 +88,25 @@ PR #5 (Task 05 acceptance harness) added 7 findings, all addressed:
   talking to the operator's own Frigate; `--frigate` validated
   (http/https only, host required, no embedded credentials).
 
+PR #5 round 2 (supervision/recipe findings):
+
+- `python:S3776` ×3 (`launcher._run_locked`, `inspect` geometry,
+  `prepare.restore_float_inputs`) → **fixed** via `_probe_spec`,
+  `_want_from_lists/_want_from_wh`, `_input_chain`/
+  `_prune_dead_edge_nodes`; follow-up `launcher.probe` split into
+  `_run_probe_exchange`.
+- `python:S1172` (`activate maintenance`) → **fixed** with a real
+  semantic (refuse during compile unless explicit maintenance).
+- `python:S1192` / `cpp:S6004` / `S7494` / `S7504` → **fixed**.
+- `python:S8997` ×3 (unittest env handling) → **fixed** with
+  `mock.patch.dict` (suite is unittest, not pytest).
+- `pythonsecurity:S8707` (`prepare.restore_float_inputs` out path) →
+  accepted (wontfix): operator-local recipe tool writing the
+  operator-named `--out` in the audited launcher workdir.
+- `python:S5713` (`WorkerError` redundant) → false positive:
+  `.code` drives the inhibit policy (fault vs refusal paths) and is
+  asserted in unit tests.
+
 ## 3. Reliability + maintainability fixes
 
 Fixed (were failing the quality gate on new code):
