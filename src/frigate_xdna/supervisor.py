@@ -165,6 +165,8 @@ class Supervisor:
         self._worker_generation = 0
         self._worker_compile_key: str | None = None
         self._worker_lock = threading.Lock()
+        # Set by serve wiring after frontend creation (None standalone).
+        self.frontend = None
         self._server: AdminServer | None = None
         recover(self.data_dir, self.registry)
 
@@ -240,6 +242,17 @@ class Supervisor:
             return {"entries": self.cache_list(),
                     "sources": self.source_list(),
                     "pins": self.registry.list_pins()}
+        if cmd == "infer_stats":
+            if self.frontend is None:
+                return {"infer_stats": None,
+                        "note": "no frontend in this process"}
+            stats = self.frontend.get_stats()
+            stats["worker_generation"] = self._worker_generation
+            stats["worker_loaded"] = (
+                self._worker is not None
+                and getattr(self._worker, "loaded", False))
+            stats["inhibition"] = self.registry.get_state("inhibition")
+            return {"infer_stats": stats}
         if cmd == "prune":
             return self.prune(bool(req.get("apply", False)),
                               req.get("max_bytes"))

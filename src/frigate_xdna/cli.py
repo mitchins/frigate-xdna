@@ -386,6 +386,7 @@ def cmd_serve(config) -> int:
         from .transport.frigate_zmq import FrigateZmqFrontend
 
         zfrontend = FrigateZmqFrontend(sup, config.endpoint)
+        sup.frontend = zfrontend
         zloop = _asyncio.new_event_loop()
         ready = _thr.Event()
         exc: list[Exception] = []

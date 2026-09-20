@@ -369,6 +369,22 @@ class TestWorkerSupervision(unittest.TestCase):
         finally:
             sup.stop()
 
+    def test_infer_stats_admin(self):
+        from types import SimpleNamespace
+        sup = self._sup()
+        try:
+            doc = sup.handle_admin({"command": "infer_stats"})
+            self.assertIsNone(doc["infer_stats"])
+            sup.frontend = SimpleNamespace(
+                get_stats=lambda: {"counters": {"success": 3}})
+            doc = sup.handle_admin({"command": "infer_stats"})
+            self.assertEqual(
+                doc["infer_stats"]["counters"]["success"], 3)
+            self.assertEqual(doc["infer_stats"]["worker_generation"], 0)
+            self.assertFalse(doc["infer_stats"]["worker_loaded"])
+        finally:
+            sup.stop()
+
     def test_activate_ref_and_unknown_ref(self):
         sup = self._sup()
         try:

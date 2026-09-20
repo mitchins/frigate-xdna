@@ -68,6 +68,13 @@ class FrigateZmqFrontend:
             "late_discard": 0,
         }
 
+    def get_stats(self) -> dict:
+        """Request accounting snapshot (soak/ops observability)."""
+        return {"counters": dict(self.counters),
+                "frontend_generation": self._generation,
+                "active_artifact": self._active_artifact,
+                "bound_sessions": self.sessions.count()}
+
     async def start(self) -> None:
         self.sock = self.ctx.socket(zmq.ROUTER)
         # ROUTER must preserve envelope exactly

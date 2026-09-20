@@ -208,6 +208,15 @@ class DispatchCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.fe.counters["rejected"], 1)
         self.assertEqual(self.fe.counters["success"], 0)
 
+    async def test_get_stats_snapshot(self):
+        stats = self.fe.get_stats()
+        self.assertEqual(stats["counters"]["accepted"], 0)
+        self.assertEqual(stats["frontend_generation"], 0)
+        self.assertIsNone(stats["active_artifact"])
+        self.assertEqual(stats["bound_sessions"], 0)
+        self.fe.sessions.bind(b"s1", "sha", "srv", "ck", 0)
+        self.assertEqual(self.fe.get_stats()["bound_sessions"], 1)
+
     async def test_activation_exception_fails_closed(self):
         art = os.path.join(self.tmp.name, "artifacts")
         os.makedirs(os.path.join(art, "ck-boom"), exist_ok=True)

@@ -53,6 +53,10 @@ class SessionTable:
     def get(self, identity: bytes) -> Binding | None:
         return self._by_identity.get(identity)
 
+    def count(self) -> int:
+        """Number of bound identities (observability)."""
+        return len(self._by_identity)
+
     def touch(self, identity: bytes) -> None:
         b = self._by_identity.get(identity)
         if b:
