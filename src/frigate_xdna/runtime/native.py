@@ -47,8 +47,13 @@ class NativeWorker:
         self.loaded = False
 
     @classmethod
-    def spawn(cls, worker_bin: str, lib_dirs: list[str]) -> NativeWorker:
-        """Spawn the worker with a private socketpair on an inherited fd."""
+    def spawn(cls, worker_bin: str, lib_dirs: list[str],
+              xrt_root: str | None = None) -> NativeWorker:
+        """Spawn the worker with a private socketpair on an inherited fd.
+
+        FlexML resolves XRT via XILINX_XRT (not just LD_LIBRARY_PATH);
+        without it Model creation fails before ever touching the device.
+        """
         if not os.path.isfile(worker_bin) or not os.access(worker_bin,
                                                             os.X_OK):
             raise WorkerError("WORKER_MISSING",
@@ -57,7 +62,8 @@ class NativeWorker:
         try:
             fdno = child_sock.fileno()
             env = {"PATH": "/usr/bin:/bin",
-                   "LD_LIBRARY_PATH": ":".join(lib_dirs)}
+                   "LD_LIBRARY_PATH": ":".join(lib_dirs),
+                   "XILINX_XRT": xrt_root or worker_xrt_root()}
             proc = subprocess.Popen(
                 [worker_bin, "--fd", str(fdno)],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -174,5 +180,11 @@ def worker_lib_dirs() -> list[str]:
 def worker_binary() -> str:
     """Worker binary path (image layout; tests inject a factory)."""
     return os.environ.get("FXDNA_WORKER_BIN", "/opt/fxdna/native/fxdna-worker")
+
+
+def worker_xrt_root() -> str:
+    """XRT prefix for the worker child (image layout; native dev overrides
+    via FXDNA_XRT_ROOT)."""
+    return os.environ.get("FXDNA_XRT_ROOT", "/opt/xilinx-xrt")
 
 

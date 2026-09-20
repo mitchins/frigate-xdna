@@ -47,7 +47,7 @@ int main(int argc, char** argv){
     std::fprintf(stderr, "fxdna-worker: starting on private fd %d\n", fd);
 
     // Buffers for FlexML output
-    std::vector<float> outbuf; // sized after load from output_cols*84
+    std::vector<float> outbuf; // sized after load from channels*cols
     float result20x6[20][6];
 
     while(!g_term){
@@ -117,11 +117,14 @@ int main(int argc, char** argv){
             else if(cols==8400){ yolo_cfg.image_w=640; yolo_cfg.image_h=640; }
             else if(cols) { /* keep 320 default, but log */ std::fprintf(stderr,"fxdna-worker: unexpected cols %zu\n",cols); }
             size_t out_elems = model.output_elements();
-            // Permanent OOB guard: the postprocessor indexes rows
-            // [4, 4+class_count); the loaded tensor must contain them.
-            // Checked BEFORE generation advances: a rejected LOAD must
-            // neither claim its generation nor leave a usable model.
-            if(!cols || (size_t)hdr.class_count + 4 > out_elems / cols){
+            // Permanent shape guard: the postprocessor indexes rows
+            // [4, 4+class_count) of a [C,N] tensor with
+            // C == class_count+4 exactly. Checked BEFORE generation
+            // advances: a rejected LOAD must neither claim its
+            // generation nor leave a usable model.
+            size_t channels = model.output_channels();
+            if(!cols || channels != (size_t)hdr.class_count + 4
+                    || out_elems != channels * cols){
                 model.unload();
                 Header rep; rep.protocol_version=PROTOCOL_VERSION; rep.message_type=MessageType::STATUS;
                 rep.request_id=hdr.request_id; rep.worker_generation=hdr.worker_generation;
@@ -228,7 +231,9 @@ int main(int argc, char** argv){
             }
             // Postprocess YOLO raw -> [20,6]
             size_t cols = model.output_cols();
-            if(cols==0) cols = outbuf.size()/84;
+            if(cols==0 && yolo_cfg.class_count > 0
+                    && outbuf.size() % ((size_t)yolo_cfg.class_count + 4) == 0)
+                cols = outbuf.size() / ((size_t)yolo_cfg.class_count + 4);
             std::memset(result20x6,0,sizeof(result20x6));
             // Update config from tensor_spec geometry (320 vs 640 derived from shape)
             int h = hdr.tensor_spec.shape[2];

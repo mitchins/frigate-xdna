@@ -71,6 +71,98 @@ def geometry_of(onnx_path: str) -> tuple[str, int]:
     return model.graph.input[0].name, shape[2]
 
 
+def restore_float_inputs(path: str) -> int:
+    """Collapse input quantization chains back to float graph inputs.
+
+    Quark's BF16QDQToCast conversion can leave Cast nodes with BF16
+    inputs (e.g. on the images edge) that onnxruntime-vitisai refuses
+    to load. Walk each graph input through single-consumer
+    QuantizeLinear/DequantizeLinear/Cast nodes, rewire the first real
+    consumer back to the graph input, and drop the orphaned chain.
+    Numerically exact: restores the original float32 input edge (the
+    compile probe feeds float32). Model-agnostic: graphs without such
+    chains are byte-unchanged apart from a checker pass. Returns the
+    number of collapsed chains.
+    """
+    model = onnx.load(path)
+    graph_inputs = {i.name for i in model.graph.input}
+    edge_ops = {"QuantizeLinear", "DequantizeLinear", "Cast"}
+
+    def consumers():
+        cons = {}
+        for n in model.graph.node:
+            for i in n.input:
+                cons.setdefault(i, []).append(n)
+        return cons
+
+    collapsed = 0
+    for gi in sorted(graph_inputs):
+        chain = []
+        cur = gi
+        while True:
+            users = consumers().get(cur, [])
+            if len(users) != 1:
+                break
+            nxt = users[0]
+            if nxt.op_type not in edge_ops or len(nxt.output) != 1:
+                break
+            chain.append(nxt)
+            cur = nxt.output[0]
+        if not chain:
+            continue
+        tail_users = consumers().get(cur, [])
+        if not tail_users:
+            continue
+        for n in model.graph.node:
+            for idx, inp in enumerate(n.input):
+                if inp == cur:
+                    n.input[idx] = gi
+        collapsed += 1
+
+    # Drop edge-op nodes no kept node consumes anymore (cascading),
+    # then prune orphaned initializers/value_info. Non-edge nodes and
+    # graph outputs are never touched.
+    used = set()
+    for n in model.graph.node:
+        used.update(n.input)
+        used.update(n.output)
+    used.update(o.name for o in model.graph.output)
+    graph_outputs = set(o.name for o in model.graph.output)
+    # Index-based liveness (protobuf node wrappers have unstable id()).
+    nodes = list(model.graph.node)
+    keep = set(range(len(nodes)))
+    changed = True
+    while changed:
+        changed = False
+        live_inputs = set()
+        for i in keep:
+            live_inputs.update(nodes[i].input)
+        for i in list(keep):
+            n = nodes[i]
+            if n.op_type in edge_ops and not any(
+                    o in live_inputs or o in graph_outputs
+                    for o in n.output):
+                keep.discard(i)
+                changed = True
+    kept = [nodes[i] for i in range(len(nodes)) if i in keep]
+    del model.graph.node[:]
+    model.graph.node.extend(kept)
+    refd = set()
+    for n in model.graph.node:
+        refd.update(n.input)
+    refd.update(o.name for o in model.graph.output)
+    kept_init = [t for t in model.graph.initializer if t.name in refd]
+    del model.graph.initializer[:]
+    model.graph.initializer.extend(kept_init)
+    kept_vi = [v for v in model.graph.value_info if v.name in refd]
+    del model.graph.value_info[:]
+    model.graph.value_info.extend(kept_vi)
+    onnx.checker.check_model(model, full_check=False)
+    with open(path, "wb") as f:
+        f.write(model.SerializeToString())
+    return collapsed
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--onnx", required=True)
@@ -80,12 +172,17 @@ def main() -> int:
     input_name, geom = geometry_of(args.onnx)
     qc = get_default_config("BF16")
     qc.extra_options["BF16QDQToCast"] = True
+    # Quark's own VAIML-targeted repair: removes BF16 Cast couples and
+    # converts stray BF16 weights to float32 (see remove_bf16_cast).
+    qc.extra_options["EnableVaimlBF16"] = True
     t0 = time.time()
     ModelQuantizer(Config(global_quant_config=copy.deepcopy(qc))).quantize_model(
         args.onnx, args.out,
         PILDataReader(args.calib, input_name, geom, 32))
+    collapsed = restore_float_inputs(args.out)
     digest = hashlib.sha256(open(args.out, "rb").read()).hexdigest()
-    print(f"BF16_PREPARE_OK {time.time() - t0:.1f}s {digest}", flush=True)
+    print(f"BF16_PREPARE_OK {time.time() - t0:.1f}s {digest}"
+          f" collapsed_inputs={collapsed}", flush=True)
     return 0
 
 
