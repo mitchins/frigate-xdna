@@ -128,8 +128,7 @@ bool json_to_header(const std::string& js, Header& h, std::string& err) {
     uint64_t pl=0;
     if (extract_uint64(js,"payload_length",pl)) h.payload_length=(size_t)pl;
     else h.payload_length=0;
-    int64_t cc=0;
-    if (extract_int64(js,"class_count",cc)) h.class_count=(int)cc;
+    if (int64_t cc=0; extract_int64(js,"class_count",cc)) h.class_count=(int)cc;
     else h.class_count=0;
 
     // tensor_spec nested

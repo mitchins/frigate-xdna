@@ -179,6 +179,20 @@ def compare_plus_metadata(info: dict, inspected: dict) -> None:
     it (common keys width/height, input_shape, ...); absent fields are
     recorded, never guessed. Raises UNSUPPORTED_CONTRACT on conflict.
     """
+    want = _want_from_lists(info)
+    if want is None:
+        want = _want_from_wh(info)
+    if want is None:
+        return  # metadata carries no geometry claim; nothing to conflict
+    got = inspected["input_shape"]
+    if want != got:
+        raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                    f"Plus metadata geometry {want} conflicts with ONNX "
+                    f"graph input {got}")
+
+
+def _want_from_lists(info: dict) -> list[int] | None:
+    """First int-list geometry claim (string layouts checked, not used)."""
     want = None
     for key in ("input_shape", "inputShape", "dimensions", "input_dims"):
         if key not in info:
@@ -189,20 +203,17 @@ def compare_plus_metadata(info: dict, inspected: dict) -> None:
             continue
         if want is None:
             want = _strict_int_list(claimed, f"metadata {key}")
-    if want is None and ("width" in info or "height" in info):
-        # Present-but-invalid geometry is malformed metadata, not an
-        # absent claim: fail instead of silently skipping the comparison.
-        w, h = info.get("width"), info.get("height")
-        for v in (w, h):
-            if isinstance(v, bool) or not isinstance(v, int):
-                raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
-                            f"invalid metadata geometry value {v!r}:"
-                            " integers only")
-        want = [1, 3, h, w]
-    if want is None:
-        return  # metadata carries no geometry claim; nothing to conflict
-    got = inspected["input_shape"]
-    if want != got:
-        raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
-                    f"Plus metadata geometry {want} conflicts with ONNX "
-                    f"graph input {got}")
+    return want
+
+
+def _want_from_wh(info: dict) -> list[int] | None:
+    """[1,3,h,w] from width/height; present-but-invalid is malformed."""
+    if "width" not in info and "height" not in info:
+        return None
+    w, h = info.get("width"), info.get("height")
+    for v in (w, h):
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                        f"invalid metadata geometry value {v!r}:"
+                        " integers only")
+    return [1, 3, h, w]

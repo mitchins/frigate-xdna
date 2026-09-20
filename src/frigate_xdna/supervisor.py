@@ -61,6 +61,7 @@ COMPILER_PAYLOAD_SHA256 = (
 TARGET_PROFILE = "xc10AIE2P_ML-die-0x-e-S-es1"
 ARTIFACT_COMPAT_ID = "UNASSIGNED-TBD"  # assigned at activation validation
 COMPILE_SCRATCH_NEED_BYTES = 4 * 1024 ** 3
+SOURCE_ONNX_NAME = "model.onnx"  # sources/<sha>/ content filename
 
 
 def boot_token() -> str:
@@ -467,7 +468,7 @@ class Supervisor:
             raise FxdnaError(INVALID_ARGS, "SOURCE_CHANGED",
                              f"source bytes changed under {ref}; kept "
                              f"previous artifact (use --refresh to accept)")
-        ingest_bytes(self.data_dir, data, "sources", "model.onnx"
+        ingest_bytes(self.data_dir, data, "sources", SOURCE_ONNX_NAME
                      if origin != "imported-rai" else "model.rai")
         self.registry.add_source(
             digest, len(data), f"sources/{digest}/"
@@ -514,9 +515,9 @@ class Supervisor:
         job = self.jobs.submit(
             ref, ckey, **self.fake_compile,
             extra={"source_sha256": digest,
-                   "source_path": os.path.join(
+                       "source_path": os.path.join(
                        self.data_dir, "sources", digest,
-                       "model.onnx" if origin != "imported-rai"
+                       SOURCE_ONNX_NAME if origin != "imported-rai"
                        else "model.rai")})
         if job["stage"] in TERMINAL_ERROR_STATES:
             # A sticky terminal failure must be visible on the ref, not
@@ -685,7 +686,15 @@ class Supervisor:
     def activate(self, ref: str, maintenance: bool = False) -> dict:
         """Activate a PREPARED ref: spawn the resident worker on its
         artifact (A→B: the new child LOADs and verifies before the old
-        one retires; a failed B never becomes active)."""
+        one retires; a failed B never becomes active). Refuses while a
+        compile holds the device unless the operator explicitly passes
+        maintenance (background-compile-while-serving window)."""
+        if not maintenance:
+            from .compiler.launcher import compile_in_flight
+            if compile_in_flight():
+                raise FxdnaError(DEVICE_UNAVAILABLE, "DEVICE_BUSY",
+                                 "compile in flight; retry when idle or"
+                                 " pass maintenance explicitly")
         parsed = parse_ref(ref)
         row = self.registry.query(
             "SELECT compile_key FROM jobs WHERE ref=? AND compile_key"
@@ -717,7 +726,7 @@ class Supervisor:
                              f"unknown artifact {compile_key[:12]}…")
         source_sha = art["source_sha256"] or ""
         src_path = os.path.join(self.data_dir, "sources", source_sha,
-                                "model.onnx")
+                                SOURCE_ONNX_NAME)
         try:
             with open(src_path, "rb") as f:
                 data = f.read(_inspect.MAX_ONNX_BYTES + 1)

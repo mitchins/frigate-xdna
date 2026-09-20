@@ -226,6 +226,42 @@ class TestWorkerSupervision(unittest.TestCase):
         finally:
             sup2.stop()
 
+    def test_activate_refuses_during_compile_without_maintenance(self):
+        import frigate_xdna.compiler.launcher as launcher
+        sup = self._sup()
+        try:
+            ref, ckey, _sha = plant(sup)
+            add_job(sup, ref, ckey)
+            self.assertTrue(launcher._compile_lock.acquire(blocking=False))
+            try:
+                with self.assertRaises(FxdnaError) as ctx:
+                    sup.activate(ref)
+                self.assertEqual(ctx.exception.error_code, "DEVICE_BUSY")
+                # explicit maintenance window overrides
+                doc = sup.activate(ref, maintenance=True)
+                self.assertEqual(doc["state"], "ACTIVE")
+            finally:
+                launcher._compile_lock.release()
+        finally:
+            sup.stop()
+
+    def test_compile_in_flight_helper(self):
+        import frigate_xdna.compiler.launcher as launcher
+        self.assertFalse(launcher.compile_in_flight())
+        self.assertTrue(launcher._compile_lock.acquire(blocking=False))
+        try:
+            self.assertTrue(launcher.compile_in_flight())
+        finally:
+            launcher._compile_lock.release()
+
+    def test_activate_unknown_artifact(self):
+        sup = self._sup()
+        try:
+            self.assertFalse(sup.activate_worker("ck-nope"))
+            self.assertIsNone(sup.registry.get_state("inhibition"))
+        finally:
+            sup.stop()
+
     def test_activate_ref_and_unknown_ref(self):
         sup = self._sup()
         try:

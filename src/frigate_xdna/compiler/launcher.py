@@ -201,27 +201,48 @@ def probe_artifact(data_dir: str, rai_path: str, class_count: int,
                   else _native.NativeWorker.spawn(
                       _native.worker_binary(), _native.worker_lib_dirs()))
         try:
-            worker.load(rai_path, 1, "probe", class_count,
-                        timeout_s=min(25.0, timeout_s))
-            out = worker.infer(b"\x00" * (elems * 4), list(shape), 1,
-                               timeout_s=timeout_s)
-        except _native.WorkerError as e:
-            return ("failed", f"{e.code}: {e}")
+            detail = _run_probe_exchange(worker, rai_path, class_count,
+                                         shape, elems, timeout_s)
         finally:
             try:
                 worker.retire()
             except Exception:
                 pass
-        if len(out) != _native.RESULT_BYTES:
-            return ("failed", f"short frame {len(out)}")
-        import math as _math
-        import struct as _st
-        vals = _st.unpack(f"<{len(out) // 4}f", out)
-        if not all(_math.isfinite(v) for v in vals):
-            return ("failed", "non-finite probe output")
-        return ("ok", "")
+        return ("ok", "") if detail is None else ("failed", detail)
     finally:
         lease.release()
+
+
+def _run_probe_exchange(worker, rai_path: str, class_count: int,
+                        shape: list[int], elems: int,
+                        timeout_s: float) -> str | None:
+    """LOAD + zeros INFER + frame validation. None == probe passed."""
+    import math as _math
+    import struct as _st
+
+    from ..runtime import native as _native
+    try:
+        worker.load(rai_path, 1, "probe", class_count,
+                    timeout_s=min(25.0, timeout_s))
+        out = worker.infer(b"\x00" * (elems * 4), list(shape), 1,
+                           timeout_s=timeout_s)
+    except _native.WorkerError as e:
+        return f"{e.code}: {e}"
+    if len(out) != _native.RESULT_BYTES:
+        return f"short frame {len(out)}"
+    vals = _st.unpack(f"<{len(out) // 4}f", out)
+    if not all(_math.isfinite(v) for v in vals):
+        return "non-finite probe output"
+    return None
+
+
+def compile_in_flight() -> bool:
+    """Non-blocking check whether a compile owns the launcher lock."""
+    acquired = _compile_lock.acquire(blocking=False)
+    if not acquired:
+        return True
+    _compile_lock.release()
+    return False
 
 
 def run_compile(prefixes: CompilerPrefixes, source_onnx: str, workdir: str,

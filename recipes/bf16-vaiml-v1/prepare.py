@@ -71,6 +71,69 @@ def geometry_of(onnx_path: str) -> tuple[str, int]:
     return model.graph.input[0].name, shape[2]
 
 
+EDGE_OPS = frozenset({"QuantizeLinear", "DequantizeLinear", "Cast"})
+
+
+def _consumers(nodes):
+    cons = {}
+    for n in nodes:
+        for i in n.input:
+            cons.setdefault(i, []).append(n)
+    return cons
+
+
+def _input_chain(nodes, graph_input):
+    """Single-consumer edge-op chain from a graph input to its tail."""
+    cons = _consumers(nodes)
+    chain, cur = [], graph_input
+    while True:
+        users = cons.get(cur, [])
+        if len(users) != 1:
+            break
+        nxt = users[0]
+        if nxt.op_type not in EDGE_OPS or len(nxt.output) != 1:
+            break
+        chain.append(nxt)
+        cur = nxt.output[0]
+    if not chain or not cons.get(cur):
+        return None
+    return cur
+
+
+def _prune_dead_edge_nodes(model):
+    """Drop edge-op nodes no kept node consumes (cascading), then prune
+    orphaned initializers/value_info. Index-based: protobuf node
+    wrappers have unstable id(). Non-edge nodes and graph outputs are
+    never touched."""
+    nodes = list(model.graph.node)
+    graph_outputs = {o.name for o in model.graph.output}
+    keep = set(range(len(nodes)))
+    changed = True
+    while changed:
+        changed = False
+        live_inputs = set()
+        for i in keep:
+            live_inputs.update(nodes[i].input)
+        for i in list(keep):
+            if nodes[i].op_type in EDGE_OPS and not any(
+                    o in live_inputs or o in graph_outputs
+                    for o in nodes[i].output):
+                keep.discard(i)
+                changed = True
+    kept = [nodes[i] for i in range(len(nodes)) if i in keep]
+    del model.graph.node[:]
+    model.graph.node.extend(kept)
+    refd = {o.name for o in model.graph.output}
+    for n in model.graph.node:
+        refd.update(n.input)
+    kept_init = [t for t in model.graph.initializer if t.name in refd]
+    del model.graph.initializer[:]
+    model.graph.initializer.extend(kept_init)
+    kept_vi = [v for v in model.graph.value_info if v.name in refd]
+    del model.graph.value_info[:]
+    model.graph.value_info.extend(kept_vi)
+
+
 def restore_float_inputs(path: str) -> int:
     """Collapse input quantization chains back to float graph inputs.
 
@@ -85,78 +148,17 @@ def restore_float_inputs(path: str) -> int:
     number of collapsed chains.
     """
     model = onnx.load(path)
-    graph_inputs = {i.name for i in model.graph.input}
-    edge_ops = {"QuantizeLinear", "DequantizeLinear", "Cast"}
-
-    def consumers():
-        cons = {}
-        for n in model.graph.node:
-            for i in n.input:
-                cons.setdefault(i, []).append(n)
-        return cons
-
     collapsed = 0
-    for gi in sorted(graph_inputs):
-        chain = []
-        cur = gi
-        while True:
-            users = consumers().get(cur, [])
-            if len(users) != 1:
-                break
-            nxt = users[0]
-            if nxt.op_type not in edge_ops or len(nxt.output) != 1:
-                break
-            chain.append(nxt)
-            cur = nxt.output[0]
-        if not chain:
-            continue
-        tail_users = consumers().get(cur, [])
-        if not tail_users:
+    for gi in sorted(i.name for i in model.graph.input):
+        tail = _input_chain(list(model.graph.node), gi)
+        if tail is None:
             continue
         for n in model.graph.node:
             for idx, inp in enumerate(n.input):
-                if inp == cur:
+                if inp == tail:
                     n.input[idx] = gi
         collapsed += 1
-
-    # Drop edge-op nodes no kept node consumes anymore (cascading),
-    # then prune orphaned initializers/value_info. Non-edge nodes and
-    # graph outputs are never touched.
-    used = set()
-    for n in model.graph.node:
-        used.update(n.input)
-        used.update(n.output)
-    used.update(o.name for o in model.graph.output)
-    graph_outputs = set(o.name for o in model.graph.output)
-    # Index-based liveness (protobuf node wrappers have unstable id()).
-    nodes = list(model.graph.node)
-    keep = set(range(len(nodes)))
-    changed = True
-    while changed:
-        changed = False
-        live_inputs = set()
-        for i in keep:
-            live_inputs.update(nodes[i].input)
-        for i in list(keep):
-            n = nodes[i]
-            if n.op_type in edge_ops and not any(
-                    o in live_inputs or o in graph_outputs
-                    for o in n.output):
-                keep.discard(i)
-                changed = True
-    kept = [nodes[i] for i in range(len(nodes)) if i in keep]
-    del model.graph.node[:]
-    model.graph.node.extend(kept)
-    refd = set()
-    for n in model.graph.node:
-        refd.update(n.input)
-    refd.update(o.name for o in model.graph.output)
-    kept_init = [t for t in model.graph.initializer if t.name in refd]
-    del model.graph.initializer[:]
-    model.graph.initializer.extend(kept_init)
-    kept_vi = [v for v in model.graph.value_info if v.name in refd]
-    del model.graph.value_info[:]
-    model.graph.value_info.extend(kept_vi)
+    _prune_dead_edge_nodes(model)
     onnx.checker.check_model(model, full_check=False)
     with open(path, "wb") as f:
         f.write(model.SerializeToString())

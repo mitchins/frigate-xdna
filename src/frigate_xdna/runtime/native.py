@@ -48,11 +48,14 @@ class NativeWorker:
 
     @classmethod
     def spawn(cls, worker_bin: str, lib_dirs: list[str],
-              xrt_root: str | None = None) -> NativeWorker:
+              xrt_root: str | None = None,
+              worker_argv: tuple[str, ...] = ()) -> NativeWorker:
         """Spawn the worker with a private socketpair on an inherited fd.
 
         FlexML resolves XRT via XILINX_XRT (not just LD_LIBRARY_PATH);
         without it Model creation fails before ever touching the device.
+        worker_argv carries extra fixture flags in tests only;
+        production always passes none (the child env stays minimal).
         """
         if not os.path.isfile(worker_bin) or not os.access(worker_bin,
                                                             os.X_OK):
@@ -65,7 +68,7 @@ class NativeWorker:
                    "LD_LIBRARY_PATH": ":".join(lib_dirs),
                    "XILINX_XRT": xrt_root or worker_xrt_root()}
             proc = subprocess.Popen(
-                [worker_bin, "--fd", str(fdno)],
+                [worker_bin, "--fd", str(fdno), *worker_argv],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, close_fds=True,
                 pass_fds=(fdno,), env=env)
