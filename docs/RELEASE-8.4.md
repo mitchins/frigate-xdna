@@ -15,11 +15,12 @@ only: this file + `reports/sbom-8.4.json` + the digests below.
 | Field | Value |
 |---|---|
 | Local reference | `localhost/frigate-xdna:0.1-dev` |
-| Image ID | `e25f65776232205bf9801fc60dbdeffcdfdfb60f8adfc55aac99b4fef55e3f0a` |
-| Content digest (local) | `sha256:8099dc3d5081bae695ca85f41a95096a0405a6468609595f655c34de5f5e7493` |
-| Uncompressed size | 4109545242 B (3.83 GiB) |
+| Image ID | `a465117727c5655e3c988ecc22934b54fe33018d9f30dc6e7946f4d28cb2e9f9` |
+| Content digest (local) | `sha256:b4017d0434a6976442e1d5c034b567b29b6c19803d6cfb226a7ff3ee2cf6a223` |
+| Uncompressed size | 4109585180 B (3.83 GiB) |
 | Registry digest | none — never pushed; the digest above is local content only |
 | Built | 2026-09-20 (Task 8.4, branch `feature/task-05-acceptance`) |
+| NPU status | fix baked, NOT yet hardware-validated (no device sessions since build) |
 
 This image is the first that actually contains the inference path:
 `/opt/fxdna/native/fxdna-worker` (previously missing — the Task-04
@@ -58,7 +59,7 @@ podman build --security-opt apparmor=unconfined \
   + 11 dev/test PyPI pins (from `requirements.lock`; dev/test flagged,
   not shipped; pyzmq correctly scoped runtime). Generated offline by
   `tools/gen_sbom.py`; no syft/trivy on the build host.
-  `sha256=0f682c4a3f0a511eada1c92c2170b5f9ec31e7ee924636e1d2fb6fdb7a281d2c`
+  `sha256=b0713841223c79943922d9f1719a967aa4131b1af484b1ccd160ed58f30b699c`
 * Licence inventory: `THIRD_PARTY_NOTICES.md` + file-level mapping
   `packaging/legal/component-map.json` (EULA flow-down notices under
   `/opt/fxdna/legal` in-image).

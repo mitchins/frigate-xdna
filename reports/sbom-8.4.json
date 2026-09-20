@@ -693,7 +693,7 @@
       "bom-ref": "ghcr.io/mitchins/frigate-xdna",
       "name": "ghcr.io/mitchins/frigate-xdna",
       "type": "container",
-      "version": "e25f65776232205bf9801fc60dbdeffcdfdfb60f8adfc55aac99b4fef55e3f0a"
+      "version": "a465117727c5655e3c988ecc22934b54fe33018d9f30dc6e7946f4d28cb2e9f9"
     },
     "properties": [
       {
