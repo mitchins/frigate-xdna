@@ -27,8 +27,28 @@ from dataclasses import dataclass
 COMPILE_TIMEOUT_S = 2700.0  # SPEC §9: 45-minute compiler timeout
 _TIMEOUT_ERROR = "compile timeout"
 COMPILER_THREADS = 4  # SPEC §9: four compiler threads
-MEM_LIMIT_BYTES = 6 * 1024 ** 3  # SPEC §9: 6 GiB compiler-child allowance
 MAX_LOG_BYTES = 8 * 1024 * 1024
+
+
+def sample_vm_peak(pid: int, stop: threading.Event,
+                   interval_s: float = 0.5) -> int:
+    """Peak VmPeak (kB) of a live child, sampled until stop is set.
+
+    Hardware-free and read-only (/proc/<pid>/status). Returns 0 when the
+    process (or procfs) is unavailable. Split out for unit tests.
+    """
+    peak = 0
+    while not stop.is_set():
+        try:
+            with open(f"/proc/{pid}/status", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VmPeak:"):
+                        peak = max(peak, int(line.split()[1]))
+                        break
+        except (OSError, ValueError, IndexError):
+            pass
+        stop.wait(interval_s)
+    return peak
 
 # Secret names that must never appear in a child environment, even if the
 # manager process was started with them set.
@@ -62,6 +82,7 @@ class CompileResult:
     rai_sha256: str = ""
     rai_bytes: int = 0
     error: str = ""
+    vm_peak_kb: int = 0
 
 
 def build_compile_env(prefixes: CompilerPrefixes, workdir: str) -> dict[str, str]:
@@ -111,26 +132,23 @@ def build_quant_env(workdir: str) -> dict[str, str]:
     return env
 
 
-def _limit_resources():
-    try:
-        resource.setrlimit(resource.RLIMIT_AS,
-                           (MEM_LIMIT_BYTES, MEM_LIMIT_BYTES))
-    except (ValueError, OSError):
-        pass
-
-
 def spawn(argv: list[str], env: dict[str, str], cwd: str,
-          timeout_s: float, log_prefix: str) -> tuple[int, float]:
-    """Run one child phase; returns (returncode, wall_s). Logs bounded."""
+          timeout_s: float, log_prefix: str
+          ) -> tuple[int, float, int]:
+    """Run one child phase; returns (returncode, wall_s, vm_peak_kb).
+
+    Memory is bounded by the container/cgroup (compose mem_limit 8g),
+    never by RLIMIT_AS: an address-space cap breaks large VA mappings
+    (512 MiB ENOMEM) while RSS stays far below any real limit. The
+    VmPeak sampler reports what the child actually reserved. Logs are
+    bounded; preexec_fn is never used (unsafe in a threaded
+    supervisor: fork without exec must not run Python).
+    """
     os.makedirs(cwd, exist_ok=True)
     for key in FORBIDDEN_ENV_KEYS:
         if key in env:
             raise RuntimeError(f"refusing to spawn with secret {key} in env")
     t0 = time.monotonic()
-    # Resource limits (RLIMIT_AS / RLIMIT_FSIZE) are enforced inside the
-    # audited recipe entry points (prepare/compile/validate) rather than via
-    # preexec_fn, which is unsafe in a threaded supervisor (fork without exec
-    # must not run Python). Logs are truncated to MAX_LOG_BYTES after wait.
     with open(f"{log_prefix}.stdout.log", "wb") as out, \
             open(f"{log_prefix}.stderr.log", "wb") as err:
         try:
@@ -139,7 +157,13 @@ def spawn(argv: list[str], env: dict[str, str], cwd: str,
                 stdout=out, stderr=err, close_fds=True,
                 start_new_session=True)
         except OSError:
-            return 127, time.monotonic() - t0
+            return 127, time.monotonic() - t0, 0
+        stop = threading.Event()
+        peak: list[int] = []
+        sampler = threading.Thread(
+            target=lambda: peak.append(sample_vm_peak(proc.pid, stop)),
+            daemon=True)
+        sampler.start()
         try:
             proc.wait(timeout=timeout_s)
             rc = proc.returncode
@@ -150,6 +174,9 @@ def spawn(argv: list[str], env: dict[str, str], cwd: str,
                 pass
             proc.wait()
             rc = 124
+        finally:
+            stop.set()
+            sampler.join(timeout=5.0)
     # Enforce MAX_LOG_BYTES by truncating any oversize logs (preserves
     # capture of both streams and the timeout behavior; child also sets
     # RLIMIT_FSIZE where applicable).
@@ -161,7 +188,7 @@ def spawn(argv: list[str], env: dict[str, str], cwd: str,
                     f.truncate(MAX_LOG_BYTES)
         except OSError:
             pass
-    return rc, time.monotonic() - t0
+    return rc, time.monotonic() - t0, peak[0] if peak else 0
 
 
 def _tail_line(path: str, marker: str) -> str:
@@ -277,15 +304,15 @@ def run_compile(prefixes: CompilerPrefixes, source_onnx: str, workdir: str,
 
 def _run_vaiml_phase(prefixes, bf16_path: str, workdir: str,
                      cache_key: str, deadline: float, t_all: float):
-    """Phase 2 (VAIML compile). Returns (rai_sha, rai_bytes, rai_path)
-    or a terminal CompileResult on timeout/failure."""
+    """Phase 2 (VAIML compile). Returns (rai_sha, rai_bytes, rai_path,
+    vm_peak_kb) or a terminal CompileResult on timeout/failure."""
     def wall() -> float:
         return time.monotonic() - t_all
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return CompileResult(124, wall(), _child_peak_rss(),
                              error=_TIMEOUT_ERROR)
-    rc, _ = spawn(
+    rc, _, vm_peak = spawn(
         [prefixes.compile_python,
          os.path.join(prefixes.recipe_dir, "compile.py"),
          "--onnx", bf16_path, "--config", prefixes.vaiml_config,
@@ -295,7 +322,8 @@ def _run_vaiml_phase(prefixes, bf16_path: str, workdir: str,
         os.path.join(workdir, "phase2-compile"))
     if rc != 0:
         return CompileResult(rc, wall(), _child_peak_rss(),
-                             error="vaiml-compile failed")
+                             error="vaiml-compile failed",
+                             vm_peak_kb=vm_peak)
     line = _tail_line(os.path.join(workdir, "phase2-compile.stdout.log"),
                       "COMPILE_OK")
     rai_sha, rai_bytes = "", 0
@@ -304,7 +332,8 @@ def _run_vaiml_phase(prefixes, bf16_path: str, workdir: str,
         if len(parts) == 3:
             rai_sha, rai_bytes = parts[1], int(parts[2])
     return (rai_sha, rai_bytes,
-            os.path.join(workdir, "cache", cache_key, f"{cache_key}.rai"))
+            os.path.join(workdir, "cache", cache_key, f"{cache_key}.rai"),
+            vm_peak)
 
 
 def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
@@ -315,21 +344,25 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     shutil.copyfile(source_onnx, model_in)
     bf16_path = os.path.join(workdir, "in", "model-bf16.onnx")
     deadline = t_all + timeout_s
+    vm_peak = 0
 
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return CompileResult(124, time.monotonic() - t_all,
-                             _child_peak_rss(), error=_TIMEOUT_ERROR)
-    rc, _ = spawn(
+                             _child_peak_rss(), error=_TIMEOUT_ERROR,
+                             vm_peak_kb=vm_peak)
+    rc, _, _vm = spawn(
         [prefixes.quant_python,
          os.path.join(prefixes.recipe_dir, "prepare.py"),
          "--onnx", model_in, "--calib", prefixes.calib_dir,
          "--out", bf16_path],
         build_quant_env(workdir), workdir, remaining,
         os.path.join(workdir, "phase1-quant"))
+    vm_peak = max(vm_peak, _vm)
     if rc != 0:
         return CompileResult(rc, time.monotonic() - t_all,
-                             _child_peak_rss(), error="bf16-prepare failed")
+                             _child_peak_rss(), error="bf16-prepare failed",
+                             vm_peak_kb=vm_peak)
     line = _tail_line(os.path.join(workdir, "phase1-quant.stdout.log"),
                       "BF16_PREPARE_OK")
     bf16_sha = line.rsplit(" ", 1)[-1] if line else ""
@@ -337,8 +370,10 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     phase2 = _run_vaiml_phase(prefixes, bf16_path, workdir, cache_key,
                               deadline, t_all)
     if isinstance(phase2, CompileResult):
+        phase2.vm_peak_kb = max(phase2.vm_peak_kb, vm_peak)
         return phase2
-    rai_sha, rai_bytes, rai_path = phase2
+    rai_sha, rai_bytes, rai_path, _vm = phase2
+    vm_peak = max(vm_peak, _vm)
 
     # Out-of-child probe through the real worker path (fresh process;
     # the in-compile probe cannot map device memory under the child's
@@ -349,30 +384,36 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
         except Exception as e:
             return CompileResult(7, time.monotonic() - t_all,
                                  _child_peak_rss(),
-                                 error=f"probe inspection failed: {e}")
+                                 error=f"probe inspection failed: {e}",
+                                 vm_peak_kb=vm_peak)
         _status, _detail = probe_artifact(
             data_dir, rai_path, spec[0], spec[1],
             worker_factory=worker_factory, timeout_s=180.0)
         if _status == "failed":
             return CompileResult(7, time.monotonic() - t_all,
                                  _child_peak_rss(),
-                                 error=f"probe failed: {_detail}")
+                                 error=f"probe failed: {_detail}",
+                                 vm_peak_kb=vm_peak)
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return CompileResult(124, time.monotonic() - t_all,
-                             _child_peak_rss(), error=_TIMEOUT_ERROR)
-    rc, _ = spawn(
+                             _child_peak_rss(), error=_TIMEOUT_ERROR,
+                             vm_peak_kb=vm_peak)
+    rc, _, _vm = spawn(
         [prefixes.compile_python,
          os.path.join(prefixes.recipe_dir, "validate.py"),
          "--rai", rai_path],
         build_quant_env(workdir), workdir, remaining,
         os.path.join(workdir, "phase3-validate"))
+    vm_peak = max(vm_peak, _vm)
     if rc != 0:
         return CompileResult(rc, time.monotonic() - t_all,
-                             _child_peak_rss(), error="validate failed")
+                             _child_peak_rss(), error="validate failed",
+                             vm_peak_kb=vm_peak)
     return CompileResult(0, time.monotonic() - t_all, _child_peak_rss(),
                          bf16_sha256=bf16_sha, rai_path=rai_path,
-                         rai_sha256=rai_sha, rai_bytes=rai_bytes)
+                         rai_sha256=rai_sha, rai_bytes=rai_bytes,
+                         vm_peak_kb=vm_peak)
 
 
 def _child_peak_rss() -> int:

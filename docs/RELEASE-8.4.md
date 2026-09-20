@@ -104,6 +104,18 @@ else per the redaction policy.
 | §6 24 h soak | NOT STARTED — needs quiet host after §6 |
 | §7 release gate | THIS FILE — inputs complete, publication explicitly withheld |
 
+Post-acceptance correction (2026-09-20): the "CMA exhaustion" verdict
+below was built on container-view counters (`CmaTotal: 0 kB` proves
+filtering) and is WITHDRAWN as a device diagnosis. The exact failure —
+a 512 MiB anonymous VA reservation returning ENOMEM after a valid
+`.rai` was generated — matches process address-space pressure from
+the compiler's `RLIMIT_AS=6GiB` cap (ORT reserves multi-GB virtual
+arenas; RSS was only ~1.8 GB). Fixed on the branch: AS limiting
+removed (container/cgroup `mem_limit 8g` is the bound), VmSize/VmPeak
+instrumented per phase into `compile_stats`, in-child probe already
+moved out. No NPU runs until this fix is validated; CMA must be
+re-recorded from the raw Proxmox host (see `docs/OPERATIONS.md`).
+
 Fixes landed during Task 8.4 (all committed on the branch):
 
 * Real-Plus contract: `inputShape: "nchw"` layout tag accepted (was
@@ -124,17 +136,17 @@ Fixes landed during Task 8.4 (all committed on the branch):
 
 **BLOCKERS before Task 8.5** (i.e. NOT `RELEASE_AUTOMATION_READY`):
 
-1. **Device CMA exhaustion (new, stops hardware work).** The NPU
-   backing store cannot satisfy the 512 MB HW-runner mapping
-   (`mmap_range … failed (err=-12)`; CmaFree observed falling
-   373 MB → 318 MB across the session, need 512 MB), and ORT session
-   init segfaults intermittently — a progressive degradation pattern
-   consistent with un-reclaimed device memory from crashed VAIML
-   sessions. Per stop policy: no further device sessions, no reset
-   attempted. Owner action: host reboot to reclaim CMA, then re-run
+1. **Validate the rlimit fix, then re-run.** The 512 MB mapping
+   failure is now attributed to the removed `RLIMIT_AS=6GiB` cap, but
+   that attribution itself needs a hardware proof run: one fresh
+   product compile with per-phase VmPeak recorded, then
    compile→probe→activate→replay→A→B→offline→soak on a quiet host.
+   Container-view CMA numbers are NOT evidence either way; record
+   host-side CMA at every boundary (see `docs/OPERATIONS.md`). The
+   intermittent pre-reboot session segfaults remain unexplained —
+   treat any recurrence as a stop event, not background noise.
    Evidence preserved under `/mnt/downloads/fxdna-084/` (phase logs,
-   workdirs, sidecar volume `frigate-xdna-084d`, replay evidence).
+   workdirs, sidecar volumes, replay evidence).
 2. Full-app detection + A→B + offline + soak runs outstanding (same
    rebooted window as 1).
 3. Serve SIGTERM handling (exit 137 twice) must be fixed.

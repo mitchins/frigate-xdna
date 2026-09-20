@@ -70,8 +70,8 @@ class TestSpawn(unittest.TestCase):
             os.environ["PLUS_API_KEY"] = "topsecret-value"
             with tempfile.TemporaryDirectory() as d:
                 env = build_quant_env(d)
-                rc, _ = spawn(["/usr/bin/env"], env, d, 30.0,
-                              os.path.join(d, "env"))
+                rc, _, _ = spawn(["/usr/bin/env"], env, d, 30.0,
+                                 os.path.join(d, "env"))
                 self.assertEqual(rc, 0)
                 out = open(os.path.join(d, "env.stdout.log")).read()
                 self.assertNotIn("topsecret-value", out)
@@ -83,8 +83,8 @@ class TestSpawn(unittest.TestCase):
     def test_timeout_kills_group(self):
         with tempfile.TemporaryDirectory() as d:
             env = build_quant_env(d)
-            rc, wall = spawn(["/bin/sleep", "60"], env, d, 2.0,
-                             os.path.join(d, "sleep"))
+            rc, wall, _ = spawn(["/bin/sleep", "60"], env, d, 2.0,
+                                os.path.join(d, "sleep"))
             self.assertEqual(rc, 124)
             self.assertLess(wall, 30.0)
 
@@ -98,9 +98,10 @@ class TestSpawn(unittest.TestCase):
 
     def test_missing_executable(self):
         with tempfile.TemporaryDirectory() as d:
-            rc, _ = spawn(["/nonexistent-xyz"], build_quant_env(d), d,
-                          10.0, os.path.join(d, "t"))
+            rc, _, vm = spawn(["/nonexistent-xyz"], build_quant_env(d),
+                              d, 10.0, os.path.join(d, "t"))
             self.assertEqual(rc, 127)
+            self.assertEqual(vm, 0)
 
 
 class FakeProbeChild:
@@ -176,6 +177,54 @@ class TestProbeArtifact(unittest.TestCase):
                 self.assertEqual(status, "skipped")
             finally:
                 lease.release()
+
+
+class TestVmPeak(unittest.TestCase):
+    def test_spawn_reports_vm_peak(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = build_quant_env(d)
+            rc, _wall, vm = spawn(["/bin/sleep", "2"], env, d, 30.0,
+                                  os.path.join(d, "vm"))
+            self.assertEqual(rc, 0)
+            self.assertGreater(vm, 0)
+
+    def test_sampler_zero_for_gone_pid(self):
+        import threading as _threading
+        import time as _time
+
+        from frigate_xdna.compiler.launcher import sample_vm_peak
+        stop = _threading.Event()
+        seen = []
+        t = _threading.Thread(
+            target=lambda: seen.append(sample_vm_peak(2 ** 30, stop,
+                                                      0.05)))
+        t.start()
+        _time.sleep(0.3)
+        stop.set()
+        t.join(timeout=10.0)
+        # PID that cannot exist: open fails every poll -> 0
+        self.assertEqual(seen, [0])
+
+    def test_sampler_tracks_live_process(self):
+        import subprocess as _sp
+        import threading as _threading
+        import time as _time
+
+        from frigate_xdna.compiler.launcher import sample_vm_peak
+        proc = _sp.Popen(["/bin/sleep", "30"])
+        stop = _threading.Event()
+        seen = []
+        t = _threading.Thread(
+            target=lambda: seen.append(sample_vm_peak(proc.pid, stop,
+                                                      0.05)))
+        t.start()
+        _time.sleep(0.3)
+        stop.set()
+        t.join(timeout=10.0)
+        proc.terminate()
+        proc.wait()
+        self.assertTrue(seen)
+        self.assertGreater(seen[0], 0)
 
 
 class TestOneAtATime(unittest.TestCase):

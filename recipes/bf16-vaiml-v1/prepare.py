@@ -12,7 +12,6 @@ import argparse
 import copy
 import hashlib
 import os
-import resource
 import sys
 import time
 
@@ -24,13 +23,13 @@ from quark.onnx import ModelQuantizer
 from quark.onnx.quantization.config.config import Config
 from quark.onnx.quantization.config.custom_config import get_default_config
 
-# Safe resource limits (replaces unsafe preexec_fn in launcher): 6 GiB AS.
+# No RLIMIT_AS here (or anywhere in the pipeline): an address-space cap
+# breaks large VA mappings (512 MiB ENOMEM) while RSS stays far below any
+# real limit. Memory is bounded by the container/cgroup (compose
+# mem_limit 8g); native runs without a container are the operator's
+# responsibility (e.g. systemd-run --scope -p MemoryMax=8G).
 # File-size capping is handled by parent log truncation, not RLIMIT_FSIZE,
 # so artifact writes (BF16 ONNX) are not capped at 8 MiB.
-try:
-    resource.setrlimit(resource.RLIMIT_AS, (6 * 1024 ** 3, 6 * 1024 ** 3))
-except (ValueError, OSError):
-    pass
 
 
 class PILDataReader(CalibrationDataReader):

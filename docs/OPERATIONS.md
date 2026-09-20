@@ -52,6 +52,30 @@ Prune is a dry run until `--apply`; configured/active/rollback/evidence pins sta
 
 Network/Plus unavailability must not stop cached detection. New downloads fail visibly; existing verified artifacts remain usable. `FXDNA_OFFLINE=true` makes this mode explicit.
 
+## Memory bounds
+
+Compiler-child memory is bounded by the container/cgroup (`mem_limit:
+8g` in `examples/compose.yaml`), never by `RLIMIT_AS`: an
+address-space cap breaks large VA mappings (a 512 MiB device mapping
+fails with ENOMEM) while RSS stays far below any real limit. Each
+compile phase reports VmPeak alongside RSS in the artifact's
+`compile_stats`. Native runs without a container are the operator's
+responsibility (e.g. `systemd-run --scope -p MemoryMax=8G`).
+
+## Device-memory (CMA) readings
+
+CMA counters read inside a container/LXC guest are unreliable (a
+`CmaTotal: 0 kB` view proves filtering). Record CMA only on the raw
+Proxmox host at lifecycle boundaries:
+
+```sh
+grep -E 'Cma(Total|Free)' /proc/meminfo
+```
+
+before compile, after compiler exit, and after validation. A large
+`mmap … ENOMEM` on a device mapping with healthy host CMA points at
+process address-space pressure, not device exhaustion.
+
 ## Faults and suspected host reset
 
 Read status/logs first. `doctor` is passive; do not run `doctor --hardware` while a worker owns the NPU. A native/device fault or interrupted sensitive operation may set a persistent safety inhibition.

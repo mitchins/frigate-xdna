@@ -399,6 +399,7 @@ class Supervisor:
                 "compile_stats": {
                     "wall_s": round(result.wall_s, 1),
                     "peak_rss_kb": result.peak_rss_kb,
+                    "vm_peak_kb": result.vm_peak_kb,
                     "bf16_sha256": result.bf16_sha256},
             }
         elif is_fake:

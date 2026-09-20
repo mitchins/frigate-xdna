@@ -14,17 +14,15 @@ Prints: COMPILE_OK <seconds> <rai_sha256> <rai_bytes> as the last line.
 import argparse
 import hashlib
 import os
-import resource
 import sys
 import time
 
 import onnx
 import onnxruntime as ort
 
-try:
-    resource.setrlimit(resource.RLIMIT_AS, (6 * 1024 ** 3, 6 * 1024 ** 3))
-except (ValueError, OSError):
-    pass
+# No RLIMIT_AS: an address-space cap breaks the 512 MiB device VA
+# mapping with ENOMEM even on healthy hardware (see prepare.py note).
+# Memory is bounded by the container/cgroup.
 
 
 def geometry_of(onnx_path: str) -> tuple[str, int]:

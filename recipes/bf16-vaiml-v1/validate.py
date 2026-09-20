@@ -15,8 +15,9 @@ import os
 import resource
 import sys
 
+# No RLIMIT_AS (see prepare.py note); the file-size cap stays: it
+# bounds artifact writes, not address space.
 try:
-    resource.setrlimit(resource.RLIMIT_AS, (6 * 1024 ** 3, 6 * 1024 ** 3))
     resource.setrlimit(resource.RLIMIT_FSIZE, (8 * 1024 * 1024, 8 * 1024 * 1024))
 except (ValueError, OSError):
     pass
