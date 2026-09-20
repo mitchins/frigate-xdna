@@ -35,8 +35,12 @@ podman build --security-opt apparmor=unconfined \
 * Required private path: `packaging/vendor-input/` (gitignored, COPY'd at
   build; verify against `packaging/vendor-files.manifest.json`).
 * Vendor manifest digest:
-  `d27035a45fbb28788343e48cc24686d48dd5ee3bcd3b6f6c6aac66ae325ffeb3`
-  (`sha256sum packaging/vendor-files.manifest.json`).
+  `5d5e7ac38b3861fac9e8a6f3588afa50c670de0a56338dc39712d93246894275`
+  (`sha256sum packaging/vendor-files.manifest.json`; +1 file vs Task 03:
+  `flexmlrt/include/FlexMLClient.h` from the audited 1.8.0 wheel, whose
+  `libflexmlrt.so` is byte-identical to the staged lib — same version,
+  same amd-eula licence, native-worker build requirement per
+  `native/CMakeLists.txt`).
 * Base: `ubuntu:24.04`. The `apparmor=unconfined` flag is a build-host
   (LXC) workaround only — runtime uses `examples/compose.yaml` without it.
 
@@ -47,7 +51,7 @@ podman build --security-opt apparmor=unconfined \
   + 12 dev/test PyPI pins (from `requirements.lock`; dev/test flagged,
   not shipped). Generated offline by `tools/gen_sbom.py`; no syft/trivy
   on the build host.
-  `sha256=df9b48f5cff66d5fc77b1bfb3bdc8bd4cabeb38d1d633ec54c138ea2a4fe0ab7`
+  `sha256=7f1981fa6cd9d42495febba81839a1464de76831862e7609af0371ef15d0a13f`
 * Licence inventory: `THIRD_PARTY_NOTICES.md` + file-level mapping
   `packaging/legal/component-map.json` (EULA flow-down notices under
   `/opt/fxdna/legal` in-image).

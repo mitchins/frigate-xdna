@@ -178,12 +178,16 @@ def main() -> int:
                                                if k != "path"}}
               for f in walk(args.xrt, XRT_ORIGINS, args.xrt)]
     if args.flexmlrt:
-        files += [{"path": "flexmlrt/" + os.path.basename(f["path"]),
+        # Preserve relative paths (include/ headers must not collapse
+        # onto the lib basename); the native worker build consumes
+        # flexmlrt/include/FlexMLClient.h from this same staging.
+        files += [{"path": "flexmlrt/" + f["path"],
                    "sha256": f["sha256"], "size_bytes": f["size_bytes"],
                    "package": "flexmlrt", "version": "1.8.0",
                    "licence": "amd-eula", "role": "standalone FlexMLRT runtime"}
                   for f in walk(args.flexmlrt, [], args.flexmlrt)
-                  if f["path"].endswith("libflexmlrt.so")]
+                  if f["path"].endswith("libflexmlrt.so")
+                  or f["path"].startswith("include/")]
     if args.calib:
         files += [{"path": "calib/" + f["path"], "sha256": f["sha256"],
                    "size_bytes": f["size_bytes"], "package": "coco-calib",

@@ -272,7 +272,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "2d332c16ee16e28aa383f5b228dbbe64c170cef62355f792dadbc13bbe00fa54"
+          "content": "7e3accf0de1baedadf9e2f52b53f1dfb5b37fa7cacfc16be5f11ac39450129e9"
         }
       ],
       "licenses": [
@@ -290,7 +290,7 @@
         },
         {
           "name": "fxdna:total_bytes",
-          "value": "12623576"
+          "value": "12672259"
         }
       ],
       "scope": "required",
@@ -698,7 +698,7 @@
     "properties": [
       {
         "name": "fxdna:component-map-sha256",
-        "value": "0da57884f7c662de60d3d43214a9107af2dead412c8a802f2a1ffcee46ad90a1"
+        "value": "341d09e66f95411da5d5aac8821bd2e03e717f440b6a36fbde03ec4bb5206d9f"
       }
     ],
     "tools": [
