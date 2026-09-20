@@ -72,8 +72,13 @@ add_executable(fxdna-worker
     src/postprocess_yolo.cpp
 )
 
+# Vendored third-party headers are SYSTEM: our -Werror policy applies
+# to first-party sources only, never to AMD's FlexMLClient.h (its
+# #pragma message diagnostics must not fail the build).
 target_include_directories(fxdna-worker PRIVATE
     include
+)
+target_include_directories(fxdna-worker SYSTEM PRIVATE
     ${FLEXMLRT_INCLUDE_DIR}
 )
 
