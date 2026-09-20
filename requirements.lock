@@ -13,6 +13,7 @@ ml_dtypes==0.6.0
 numpy==2.5.3
 onnx==1.23.0
 protobuf==7.36.2
+pyzmq==27.2.0
 requests==2.34.2
 typing_extensions==4.16.0
 urllib3==2.8.0
@@ -25,7 +26,6 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 pydantic==2.13.5
 pydantic_core==2.46.5
-pyzmq==27.2.0
 referencing==0.37.0
 rpds-py==2026.6.3
 ruff==0.16.8

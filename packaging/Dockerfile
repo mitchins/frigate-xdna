@@ -54,7 +54,7 @@ RUN python3.12 -m venv /opt/manager-venv \
  && /opt/manager-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
  && /opt/manager-venv/bin/pip install --no-cache-dir \
       -c /tmp/constraints-manager.txt \
-      requests==2.34.2 onnx==1.23.0 \
+      requests==2.34.2 onnx==1.23.0 pyzmq==27.2.0 \
  && /opt/manager-venv/bin/pip install --no-cache-dir --no-deps \
       --no-build-isolation /opt/fxdna/manager
 ENV PATH=/opt/manager-venv/bin:$PATH

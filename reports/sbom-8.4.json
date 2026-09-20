@@ -117,7 +117,7 @@
       "bom-ref": "pypi:pyzmq@27.2.0",
       "name": "pyzmq",
       "purl": "pkg:pypi/pyzmq@27.2.0",
-      "scope": "dev-test",
+      "scope": "runtime",
       "type": "library",
       "version": "27.2.0"
     },
@@ -693,7 +693,7 @@
       "bom-ref": "ghcr.io/mitchins/frigate-xdna",
       "name": "ghcr.io/mitchins/frigate-xdna",
       "type": "container",
-      "version": "5e94a3835e00f92cefc722d3a52c1631b9c1accfcb7662bf4da2c98f420cef53"
+      "version": "87eb25630d440c9c2317c7375c115a12bca972ed36783badd92004f0f96ee893"
     },
     "properties": [
       {
