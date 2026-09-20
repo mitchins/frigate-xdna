@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 
 from . import __version__
@@ -31,15 +32,19 @@ from .compiler.real import BACKEND_ID as REAL_BACKEND_ID
 from .config import Config
 from .errors import (
     CACHE_CORRUPT,
+    DEVICE_UNAVAILABLE,
     INVALID_ARGS,
     NOT_READY,
     OWNERSHIP_CONFLICT,
     UNSUPPORTED_CONTRACT,
+    VALIDATION_FAILED,
     FxdnaError,
 )
 from .models import inspect as _inspect
 from .models.refs import parse_ref, wire_alias
 from .plus.client import PlusClient
+from .runtime import native as _native
+from .runtime.safety import inhibit as _inhibit
 
 # Compiler backend identity for cache validity (SF3). The fake Task-02
 # backend and the audited Task-03 backend produce different bytes for the
@@ -99,7 +104,9 @@ class Supervisor:
                  plus_allow_private_hosts: tuple[str, ...] = (),
                  compiler_backend_id: str | None = None,
                  compiler_prefixes=None,
-                 compiler_timeout_s: float = 2700.0):
+                 compiler_timeout_s: float = 2700.0,
+                 worker_factory=None,
+                 worker_bin: str | None = None):
         # Auto-detect the audited appliance prefixes when running inside
         # the image (real backend) vs host dev (fake). Explicit args win;
         # otherwise probe the image layout. Keeps host tests fake without
@@ -148,6 +155,15 @@ class Supervisor:
         # Test-only affordance for loopback fake Plus servers. Production
         # default is empty: only public https download targets are allowed.
         self._plus_allow_private = tuple(plus_allow_private_hosts)
+        # Worker supervision: one resident child per active model.
+        # worker_factory is the control-plane seam (tests inject a fake);
+        # production default spawns the audited fxdna-worker binary.
+        self._worker_factory = worker_factory
+        self._worker_bin = worker_bin or _native.worker_binary()
+        self._worker = None
+        self._worker_generation = 0
+        self._worker_compile_key: str | None = None
+        self._worker_lock = threading.Lock()
         self._server: AdminServer | None = None
         recover(self.data_dir, self.registry)
 
@@ -179,6 +195,14 @@ class Supervisor:
         self._server.start()
 
     def stop(self):
+        with self._worker_lock:
+            worker, self._worker = self._worker, None
+            self._worker_compile_key = None
+            if worker is not None:
+                try:
+                    worker.retire()
+                except Exception:
+                    pass
         if self._server is not None:
             self._server.stop()
             self._server.join(timeout=5)
@@ -657,9 +681,169 @@ class Supervisor:
         )
 
     def activate(self, ref: str, maintenance: bool = False) -> dict:
-        raise FxdnaError(NOT_READY, "ACTIVATION_UNAVAILABLE",
-                         "native activation arrives with the Task 04 worker; "
-                         "preparation state is queryable via status")
+        """Activate a PREPARED ref: spawn the resident worker on its
+        artifact (A→B: the new child LOADs and verifies before the old
+        one retires; a failed B never becomes active)."""
+        parsed = parse_ref(ref)
+        row = self.registry.query(
+            "SELECT compile_key FROM jobs WHERE ref=? AND compile_key"
+            " IS NOT NULL AND stage NOT IN"
+            " ('FAILED','CANCELLED','EXHAUSTED') ORDER BY updated_at DESC"
+            " LIMIT 1", (parsed["ref"],))
+        if not row:
+            raise FxdnaError(NOT_READY, "NOT_PREPARED",
+                             f"no prepared artifact for {parsed['ref']}")
+        compile_key = row[0][0]
+        if not self.activate_worker(compile_key):
+            raise FxdnaError(DEVICE_UNAVAILABLE, "ACTIVATION_FAILED",
+                             f"worker refused artifact for {parsed['ref']};"
+                             " see inhibition record")
+        return {"ref": parsed["ref"], "compile_key": compile_key,
+                "worker_generation": self._worker_generation,
+                "state": "ACTIVE"}
+
+    def _inspect_activation(self, compile_key: str) -> dict:
+        """Content-bound activation inputs for an artifact.
+
+        Re-inspects the stored source ONNX (never trusts a label count
+        from metadata alone): contract profile, class count, serving
+        digest and artifact path. Raises FxdnaError on any mismatch.
+        """
+        art = self.registry.get_artifact(compile_key)
+        if art is None:
+            raise FxdnaError(NOT_READY, "NOT_PREPARED",
+                             f"unknown artifact {compile_key[:12]}…")
+        source_sha = art["source_sha256"] or ""
+        src_path = os.path.join(self.data_dir, "sources", source_sha,
+                                "model.onnx")
+        try:
+            with open(src_path, "rb") as f:
+                data = f.read(_inspect.MAX_ONNX_BYTES + 1)
+        except OSError as e:
+            raise FxdnaError(NOT_READY, "CACHE_CORRUPT",
+                             f"source bytes missing for {compile_key[:12]}…"
+                             f": {e}") from e
+        try:
+            model, _digest = _inspect.load_graph_bytes(data)
+            inspected = _inspect.inspect_model(model)
+            cls = _inspect.classify_output(inspected["outputs"])
+        except FxdnaError:
+            raise
+        except Exception as e:
+            raise FxdnaError(VALIDATION_FAILED, "VALIDATION_FAILED",
+                             f"source re-inspection failed: {e}") from e
+        if cls.get("profile") != "yolo-raw":
+            raise FxdnaError(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                             f"activation supports yolo-raw only:"
+                             f" {cls.get('error')}")
+        class_count = int(cls["channels"]) - 4
+        if class_count <= 0:
+            raise FxdnaError(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                             "activation needs at least one class")
+        rai_path = os.path.join(self.data_dir, "artifacts", compile_key,
+                                "model.rai")
+        if not os.path.isfile(rai_path):
+            raise FxdnaError(NOT_READY, "NOT_PREPARED",
+                             f"artifact bytes missing for {compile_key[:12]}…")
+        return {"rai_path": rai_path,
+                "serving_digest": _serving_digest(compile_key, inspected),
+                "class_count": class_count,
+                "input_shape": inspected["input_shape"]}
+
+    def _spawn_worker(self):
+        if self._worker_factory is not None:
+            return self._worker_factory()
+        return _native.NativeWorker.spawn(self._worker_bin,
+                                          _native.worker_lib_dirs())
+
+    def _ref_for_artifact(self, compile_key: str) -> str:
+        row = self.registry.query(
+            "SELECT ref FROM jobs WHERE compile_key=? ORDER BY updated_at"
+            " DESC LIMIT 1", (compile_key,))
+        return row[0][0] if row else compile_key
+
+    def activate_worker(self, compile_key: str) -> bool:
+        """Swap the resident worker to an artifact. Serialized; the old
+        child retires only after the new one LOADs clean. Any failure
+        inhibits (explicit recover) and never respawns: no autoloop."""
+        with self._worker_lock:
+            try:
+                spec = self._inspect_activation(compile_key)
+            except FxdnaError:
+                return False
+            generation = self._worker_generation + 1
+            try:
+                worker = self._spawn_worker()
+            except _native.WorkerError:
+                _inhibit(self.data_dir, self.registry, "WORKER_SPAWN",
+                         self._ref_for_artifact(compile_key))
+                return False
+            try:
+                worker.load(spec["rai_path"], generation,
+                            spec["serving_digest"], spec["class_count"])
+            except _native.WorkerError as e:
+                try:
+                    worker.retire()
+                except Exception:
+                    pass
+                _inhibit(self.data_dir, self.registry,
+                         f"WORKER_LOAD:{e.code}",
+                         self._ref_for_artifact(compile_key))
+                return False
+            old = self._worker
+            self._worker = worker
+            self._worker_generation = generation
+            self._worker_compile_key = compile_key
+            self.registry.set_state("active",
+                                    {"compile_key": compile_key,
+                                     "worker_generation": generation,
+                                     "serving_digest":
+                                     spec["serving_digest"]})
+            if old is not None:
+                try:
+                    old.retire()
+                except Exception:
+                    pass
+            return True
+
+    def _drop_worker(self, reason: str) -> None:
+        """Retire + forget the worker after death/fault, then inhibit."""
+        worker, self._worker = self._worker, None
+        compile_key, self._worker_compile_key = self._worker_compile_key, None
+        if worker is not None:
+            try:
+                worker.retire()
+            except Exception:
+                pass
+        ref = (self._ref_for_artifact(compile_key)
+               if compile_key else "active")
+        _inhibit(self.data_dir, self.registry, reason, ref)
+
+    def worker_infer(self, payload: bytes, shape: list[int],
+                     timeout_s: float) -> tuple[str, bytes]:
+        """Forward one bounded INFER to the resident worker.
+
+        Returns ("ok", 480B) | ("no_worker", b"") | ("failed", b"").
+        Transport death, device faults and timeouts inhibit (explicit
+        recover, never respawn); validation refusals fail the request
+        only — a bad tensor is client error, not a device fault.
+        """
+        with self._worker_lock:
+            worker = self._worker
+            if worker is None or not getattr(worker, "loaded", False):
+                return ("no_worker", b"")
+            if not worker.alive():
+                self._drop_worker("WORKER_DIED")
+                return ("failed", b"")
+            try:
+                out = worker.infer(payload, shape,
+                                   worker.generation, timeout_s)
+            except _native.WorkerError as e:
+                if e.code in ("DEVICE_FAULT", "WORKER_DEAD", "WORKER_IO",
+                              "INFER_SHORT", "WORKER_SPAWN"):
+                    self._drop_worker(f"WORKER_{e.code}")
+                return ("failed", b"")
+            return ("ok", out)
 
     def recover_ref(self, ref: str) -> dict:
         parsed = parse_ref(ref)

@@ -18,11 +18,18 @@ from frigate_xdna.transport import frigate_zmq as fz
 from frigate_xdna.transport.frigate_zmq import ZERO_FRAME, FrigateZmqFrontend
 
 
-def _sup(tmp):
-    return SimpleNamespace(
+def _sup(tmp, worker="no_worker", activate=True):
+    sup = SimpleNamespace(
         data_dir=tmp,
         config=SimpleNamespace(allow_uploads=True),
     )
+    # Worker seam: ("ok", 480B) | ("no_worker", b"") | ("failed", b"").
+    payload = bytes(480) if worker == "ok" else b""
+    sup.worker_infer = (  # type: ignore[method-assign]
+        lambda data, shape, timeout: (worker, payload))
+    sup.activate_worker = (  # type: ignore[method-assign]
+        lambda ck: activate)
+    return sup
 
 
 class FrontendCase(unittest.IsolatedAsyncioTestCase):
@@ -176,6 +183,42 @@ class DispatchCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.fe._task.done())
         self.assertTrue(self.fe._worker.done())
         self.assertIsNone(self.fe.sock)
+
+    async def test_infer_forwards_to_worker(self):
+        self.fe.sup.worker_infer = lambda d, s, t: ("ok", bytes(480))
+        ident = b"w-ok"
+        shape = [1, 3, 2, 2]
+        payload = bytes(1 * 3 * 2 * 2 * 4)
+        self.fe.sessions.bind(ident, "sha", "srv", "ck", 0)
+        dl = asyncio.get_event_loop().time() + 25.0
+        await self.fe._handle_infer(
+            ident, {"shape": shape, "dtype": "float32"}, payload, dl)
+        self.assertEqual(self.fe.counters["success"], 1)
+        self.assertEqual(self.fe.counters["zero"], 0)
+
+    async def test_infer_worker_failure_rejects(self):
+        self.fe.sup.worker_infer = lambda d, s, t: ("failed", b"")
+        ident = b"w-bad"
+        shape = [1, 3, 2, 2]
+        payload = bytes(1 * 3 * 2 * 2 * 4)
+        self.fe.sessions.bind(ident, "sha", "srv", "ck", 0)
+        dl = asyncio.get_event_loop().time() + 25.0
+        await self.fe._handle_infer(
+            ident, {"shape": shape, "dtype": "float32"}, payload, dl)
+        self.assertEqual(self.fe.counters["rejected"], 1)
+        self.assertEqual(self.fe.counters["success"], 0)
+
+    async def test_refused_artifact_activates_nothing(self):
+        art = os.path.join(self.tmp.name, "artifacts")
+        os.makedirs(os.path.join(art, "ck-ref"), exist_ok=True)
+        with open(os.path.join(art, "ck-ref", "model.rai"), "wb") as f:
+            f.write(b"REAL")
+        with open(os.path.join(art, "ck-ref", "artifact.json"),
+                  "w") as f:
+            json.dump({"backend": "bf16-vaiml-v1"}, f)
+        self.fe.sup.activate_worker = lambda ck: False
+        self.assertFalse(await self.fe._try_activate("ck-ref"))
+        self.assertIsNone(self.fe._active_artifact)
 
 
 class ActivationMatrixCase(unittest.IsolatedAsyncioTestCase):

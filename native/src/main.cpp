@@ -41,8 +41,8 @@ int main(int argc, char** argv){
     std::string serving_digest;
     Model model;
     YoloConfig yolo_cfg;
-    yolo_cfg.image_w = 320; yolo_cfg.image_h = 320; // YOLOv9s-320 base
-    yolo_cfg.class_count = 80;
+    yolo_cfg.image_w = 320; yolo_cfg.image_h = 320;
+    yolo_cfg.class_count = 0; // unset until LOAD supplies inspected count
     // generation derived from supervisor LOAD; native independently validates generation per INFER
     std::fprintf(stderr, "fxdna-worker: starting on private fd %d\n", fd);
 
@@ -93,6 +93,16 @@ int main(int argc, char** argv){
                 std::string se; send_message(fd,rep,nullptr,0,se);
                 continue;
             }
+            // class_count is supervisor-inspected from the source graph;
+            // a missing/zero count would misindex the output tensor, so
+            // LOAD fails loudly instead of assuming COCO-80.
+            if(hdr.class_count <= 0 || hdr.class_count > 4096){
+                Header rep; rep.protocol_version=PROTOCOL_VERSION; rep.message_type=MessageType::STATUS;
+                rep.request_id=hdr.request_id; rep.worker_generation=hdr.worker_generation;
+                rep.error_code="INVALID_ARGS"; rep.error_message="LOAD requires inspected class_count"; rep.payload_length=0;
+                std::string se; send_message(fd,rep,nullptr,0,se);
+                continue;
+            }
             std::string load_err;
             if(!model.load(hdr.artifact_path, load_err)){
                 Header rep; rep.protocol_version=PROTOCOL_VERSION; rep.message_type=MessageType::STATUS;
@@ -101,15 +111,28 @@ int main(int argc, char** argv){
                 std::string se; send_message(fd,rep,nullptr,0,se);
                 continue;
             }
-            worker_generation = hdr.worker_generation;
-            serving_digest = hdr.serving_digest;
             // Derive geometry from model output if available
             size_t cols = model.output_cols();
             if(cols==2100){ yolo_cfg.image_w=320; yolo_cfg.image_h=320; }
             else if(cols==8400){ yolo_cfg.image_w=640; yolo_cfg.image_h=640; }
             else if(cols) { /* keep 320 default, but log */ std::fprintf(stderr,"fxdna-worker: unexpected cols %zu\n",cols); }
             size_t out_elems = model.output_elements();
+            // Permanent OOB guard: the postprocessor indexes rows
+            // [4, 4+class_count); the loaded tensor must contain them.
+            // Checked BEFORE generation advances: a rejected LOAD must
+            // neither claim its generation nor leave a usable model.
+            if(!cols || (size_t)hdr.class_count + 4 > out_elems / cols){
+                model.unload();
+                Header rep; rep.protocol_version=PROTOCOL_VERSION; rep.message_type=MessageType::STATUS;
+                rep.request_id=hdr.request_id; rep.worker_generation=hdr.worker_generation;
+                rep.error_code="INVALID_MODEL"; rep.error_message="class_count exceeds tensor channels"; rep.payload_length=0;
+                std::string se; send_message(fd,rep,nullptr,0,se);
+                continue;
+            }
             outbuf.assign(out_elems, 0.0f);
+            worker_generation = hdr.worker_generation;
+            serving_digest = hdr.serving_digest;
+            yolo_cfg.class_count = hdr.class_count;
             // Update yolo_cfg from serving_digest if provided (score_threshold/nms kept as defaults; real contract passed via load)
             Header rep; rep.protocol_version=PROTOCOL_VERSION; rep.message_type=MessageType::STATUS;
             rep.request_id=hdr.request_id; rep.worker_generation=worker_generation; rep.payload_length=0;

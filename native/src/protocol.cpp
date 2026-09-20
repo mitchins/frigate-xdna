@@ -69,6 +69,7 @@ std::string header_to_json(const Header& h) {
         oss << "}";
     }
     oss << ",\"payload_length\":" << h.payload_length;
+    oss << ",\"class_count\":" << h.class_count;
     if (!h.error_code.empty()) oss << ",\"error_code\":\"" << json_escape(h.error_code) << "\"";
     if (!h.error_message.empty()) oss << ",\"error_message\":\"" << json_escape(h.error_message) << "\"";
     oss << "}";
@@ -127,6 +128,9 @@ bool json_to_header(const std::string& js, Header& h, std::string& err) {
     uint64_t pl=0;
     if (extract_uint64(js,"payload_length",pl)) h.payload_length=(size_t)pl;
     else h.payload_length=0;
+    int64_t cc=0;
+    if (extract_int64(js,"class_count",cc)) h.class_count=(int)cc;
+    else h.class_count=0;
 
     // tensor_spec nested
     h.tensor_spec.shape.clear();
