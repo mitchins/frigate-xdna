@@ -128,6 +128,17 @@ class TestRedact(unittest.TestCase):
             self.assertIn(want, text)
             self.assertIn(want, bundle_text(out2))
 
+    def test_status_dict_active_passes_through(self):
+        # activate() publishes a machine struct, not a ref string;
+        # status/diagnose must not crash on it in either mode.
+        from frigate_xdna.cli import _StatusView
+        view = _StatusView(False, b"0" * 32)
+        doc = {"compile_key": "ab" * 32, "worker_generation": 1,
+               "serving_digest": "cd" * 32}
+        self.assertEqual(view.active(doc), doc)
+        raw = _StatusView(True, None).active(doc)
+        self.assertEqual(raw, doc)
+
     def test_show_identifiers_reveals_raw_on_owner_machine(self):
         with tempfile.TemporaryDirectory() as d:
             plant_state(d)

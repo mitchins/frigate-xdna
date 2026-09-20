@@ -191,6 +191,16 @@ def spawn(argv: list[str], env: dict[str, str], cwd: str,
     return rc, time.monotonic() - t0, peak[0] if peak else 0
 
 
+def _parse_digest_token(line: str) -> str:
+    """First 64-hex token of a marker line (OK lines may carry trailing
+    key=value fields); never the line tail blindly."""
+    for token in (line or "").split():
+        if len(token) == 64 and all(
+                c in "0123456789abcdef" for c in token.lower()):
+            return token.lower()
+    return ""
+
+
 def _tail_line(path: str, marker: str) -> str:
     try:
         with open(path, "rb") as f:
@@ -365,7 +375,7 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
                              vm_peak_kb=vm_peak)
     line = _tail_line(os.path.join(workdir, "phase1-quant.stdout.log"),
                       "BF16_PREPARE_OK")
-    bf16_sha = line.rsplit(" ", 1)[-1] if line else ""
+    bf16_sha = _parse_digest_token(line)
 
     phase2 = _run_vaiml_phase(prefixes, bf16_path, workdir, cache_key,
                               deadline, t_all)

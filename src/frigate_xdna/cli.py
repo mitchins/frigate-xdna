@@ -189,8 +189,12 @@ class _StatusView:
                 "source_sha256": abbreviate_digest(source_sha or ""),
                 "state": state}
 
-    def active(self, value: str | None) -> str | None:
-        from .observability.redact import sanitize_ref
+    def active(self, value) -> object:
+        from .observability.redact import sanitize_obj, sanitize_ref
+        if isinstance(value, dict):
+            # Machine struct {compile_key, worker_generation,
+            # serving_digest}: content hashes, no Plus IDs to redact.
+            return value if self.show else sanitize_obj(value, self.key)
         if value and not self.show:
             assert self.key is not None
             return sanitize_ref(value, self.key)

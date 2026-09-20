@@ -227,6 +227,17 @@ class TestVmPeak(unittest.TestCase):
         self.assertGreater(seen[0], 0)
 
 
+class TestDigestToken(unittest.TestCase):
+    def test_digest_with_trailing_fields(self):
+        from frigate_xdna.compiler.launcher import _parse_digest_token
+        sha = "a" * 64
+        self.assertEqual(
+            _parse_digest_token(f"BF16_PREPARE_OK 5.6s {sha} collapsed=1"),
+            sha)
+        self.assertEqual(_parse_digest_token("BF16_PREPARE_OK 5.6s"), "")
+        self.assertEqual(_parse_digest_token(""), "")
+
+
 class TestOneAtATime(unittest.TestCase):
     def test_concurrent_run_compile_serialized(self):
         import frigate_xdna.compiler.launcher as mod
