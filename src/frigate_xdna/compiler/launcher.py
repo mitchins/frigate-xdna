@@ -176,10 +176,59 @@ def _tail_line(path: str, marker: str) -> str:
     return ""
 
 
+def probe_artifact(data_dir: str, rai_path: str, class_count: int,
+                   shape: list[int], worker_factory=None,
+                   timeout_s: float = 180.0) -> tuple[str, str]:
+    """Out-of-child zeros probe through the real resident worker path.
+
+    Spawns the audited worker (or the injected factory in tests), LOADs
+    the published .rai, runs one zeros INFER and checks for a finite
+    480-byte frame. Returns ("ok"|"failed"|"skipped", detail). Skips
+    without blocking when the device lease is held (e.g. background
+    recompile while serving): activation LOAD validates later, and no
+    second NPU client ever polls.
+    """
+    from ..runtime import native as _native
+    from ..runtime.device_lease import DeviceLease
+    elems = 1
+    for d in shape:
+        elems *= int(d)
+    lease = DeviceLease(data_dir)
+    if not lease.try_acquire():
+        return ("skipped", "device busy; activation LOAD validates")
+    try:
+        worker = (worker_factory() if worker_factory is not None
+                  else _native.NativeWorker.spawn(
+                      _native.worker_binary(), _native.worker_lib_dirs()))
+        try:
+            worker.load(rai_path, 1, "probe", class_count,
+                        timeout_s=min(25.0, timeout_s))
+            out = worker.infer(b"\x00" * (elems * 4), list(shape), 1,
+                               timeout_s=timeout_s)
+        except _native.WorkerError as e:
+            return ("failed", f"{e.code}: {e}")
+        finally:
+            try:
+                worker.retire()
+            except Exception:
+                pass
+        if len(out) != _native.RESULT_BYTES:
+            return ("failed", f"short frame {len(out)}")
+        import math as _math
+        import struct as _st
+        vals = _st.unpack(f"<{len(out) // 4}f", out)
+        if not all(_math.isfinite(v) for v in vals):
+            return ("failed", "non-finite probe output")
+        return ("ok", "")
+    finally:
+        lease.release()
+
+
 def run_compile(prefixes: CompilerPrefixes, source_onnx: str, workdir: str,
                 cache_key: str, timeout_s: float = COMPILE_TIMEOUT_S,
+                data_dir: str | None = None, worker_factory=None,
                 ) -> CompileResult:
-    """Execute prepare -> compile -> validate. One compile at a time."""
+    """Execute prepare -> compile -> probe -> validate. One at a time."""
     t_all = time.monotonic()
     acquired = _compile_lock.acquire(blocking=False)
     if not acquired:
@@ -187,13 +236,13 @@ def run_compile(prefixes: CompilerPrefixes, source_onnx: str, workdir: str,
                              error="another compile owns the launcher lock")
     try:
         return _run_locked(prefixes, source_onnx, workdir, cache_key,
-                           timeout_s, t_all)
+                           timeout_s, t_all, data_dir, worker_factory)
     finally:
         _compile_lock.release()
 
 
 def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
-                t_all) -> CompileResult:
+                t_all, data_dir=None, worker_factory=None) -> CompileResult:
     for sub in ("in", "home", "tmp", "cache"):
         os.makedirs(os.path.join(workdir, sub), exist_ok=True)
     model_in = os.path.join(workdir, "in", "model.onnx")
@@ -243,6 +292,29 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
             rai_sha, rai_bytes = parts[1], int(parts[2])
     rai_path = os.path.join(workdir, "cache", cache_key, f"{cache_key}.rai")
 
+    # Out-of-child probe through the real worker path (fresh process;
+    # the in-compile probe cannot map device memory under the child's
+    # address-space cap). Skipped when the device is busy serving.
+    if data_dir is not None and os.path.isfile(rai_path):
+        try:
+            from ..models import inspect as _inspect
+            _model, _digest = _inspect.load_graph_bytes(
+                open(source_onnx, "rb").read())
+            _inspected = _inspect.inspect_model(_model)
+            _cls = _inspect.classify_output(_inspected["outputs"])
+            _cc = int(_cls["channels"]) - 4
+            _shape = _inspected["input_shape"]
+        except Exception as e:
+            return CompileResult(7, time.monotonic() - t_all,
+                                 _child_peak_rss(),
+                                 error=f"probe inspection failed: {e}")
+        _status, _detail = probe_artifact(
+            data_dir, rai_path, _cc, _shape,
+            worker_factory=worker_factory, timeout_s=180.0)
+        if _status == "failed":
+            return CompileResult(7, time.monotonic() - t_all,
+                                 _child_peak_rss(),
+                                 error=f"probe failed: {_detail}")
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return CompileResult(124, time.monotonic() - t_all,

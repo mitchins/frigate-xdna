@@ -25,7 +25,8 @@ class RealCompileJob:
 
     def __init__(self, source_sha256: str, compile_key: str,
                  source_path: str, workdir: str, prefixes: CompilerPrefixes,
-                 timeout_s: float = 2700.0, **ignored):
+                 timeout_s: float = 2700.0, data_dir: str | None = None,
+                 worker_factory=None, **ignored):
         self.source_sha256 = source_sha256
         self.compile_key = compile_key
         self._source_path = source_path
@@ -38,11 +39,15 @@ class RealCompileJob:
         self.log: list[str] = []
         self._thread: threading.Thread | None = None
         self._t0 = 0.0
+        self._data_dir = data_dir
+        self._worker_factory = worker_factory
 
     def _run(self):
         self.result = run_compile(
             self._prefixes, self._source_path, self._workdir,
-            self.compile_key, timeout_s=self._timeout_s)
+            self.compile_key, timeout_s=self._timeout_s,
+            data_dir=self._data_dir,
+            worker_factory=self._worker_factory)
 
     def poll(self, dt_s: float) -> str:
         if self.state in ("PREPARED", "COMPILE_FAILED", "RESOURCE_EXCEEDED",

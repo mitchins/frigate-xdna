@@ -180,7 +180,9 @@ class Supervisor:
                 workdir=os.path.join(self.data_dir, "work",
                                      kw.get("job_uuid", "nojobs")),
                 prefixes=self.compiler_prefixes,
-                timeout_s=self.compiler_timeout_s)
+                timeout_s=self.compiler_timeout_s,
+                data_dir=self.data_dir,
+                worker_factory=self._worker_factory)
         from .compiler.fake import FakeCompileJob
         params = {k: v for k, v in kw.items() if k in (
             "source_sha256", "compile_key", "duration_s", "succeed",

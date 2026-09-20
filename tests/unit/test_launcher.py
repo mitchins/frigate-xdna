@@ -103,6 +103,81 @@ class TestSpawn(unittest.TestCase):
             self.assertEqual(rc, 127)
 
 
+class FakeProbeChild:
+    """Minimal NativeWorker interface for probe tests."""
+
+    def __init__(self, fail=None, short=False):
+        self.fail = fail
+        self.short = short
+        self.loaded = False
+        self.generation = 0
+        self.retired = False
+
+    def alive(self):
+        return not self.retired
+
+    def load(self, artifact_path, generation, serving_digest,
+             class_count, timeout_s=25.0):
+        if self.fail is not None and self.fail[0] == "load":
+            from frigate_xdna.runtime.native import WorkerError
+            raise WorkerError(*self.fail[1:])
+        self.loaded = True
+        self.generation = generation
+
+    def infer(self, payload, shape, generation, timeout_s):
+        if self.fail is not None and self.fail[0] == "infer":
+            from frigate_xdna.runtime.native import WorkerError
+            raise WorkerError(*self.fail[1:])
+        from frigate_xdna.runtime.native import RESULT_BYTES
+        return bytes(10) if self.short else bytes(RESULT_BYTES)
+
+    def retire(self):
+        self.retired = True
+        self.loaded = False
+
+
+class TestProbeArtifact(unittest.TestCase):
+    def test_probe_ok(self):
+        from frigate_xdna.compiler.launcher import probe_artifact
+        kids = []
+        with tempfile.TemporaryDirectory() as d:
+            status, _detail = probe_artifact(
+                d, "/nonexistent.rai", 2, [1, 3, 2, 2],
+                worker_factory=lambda: kids.append(FakeProbeChild())
+                or kids[-1])
+            self.assertEqual(status, "ok")
+            self.assertTrue(kids[0].retired)
+
+    def test_probe_failed_retires(self):
+        from frigate_xdna.compiler.launcher import probe_artifact
+        kids = []
+        def factory():
+            kids.append(FakeProbeChild(fail=("infer", "DEVICE_FAULT",
+                                             "gone")))
+            return kids[-1]
+        with tempfile.TemporaryDirectory() as d:
+            status, detail = probe_artifact(
+                d, "/nonexistent.rai", 2, [1, 3, 2, 2],
+                worker_factory=factory)
+            self.assertEqual(status, "failed")
+            self.assertIn("DEVICE_FAULT", detail)
+            self.assertTrue(kids[0].retired)
+
+    def test_probe_skipped_when_device_busy(self):
+        from frigate_xdna.compiler.launcher import probe_artifact
+        from frigate_xdna.runtime.device_lease import DeviceLease
+        with tempfile.TemporaryDirectory() as d:
+            lease = DeviceLease(d)
+            self.assertTrue(lease.try_acquire())
+            try:
+                status, _detail = probe_artifact(
+                    d, "/nonexistent.rai", 2, [1, 3, 2, 2],
+                    worker_factory=FakeProbeChild)
+                self.assertEqual(status, "skipped")
+            finally:
+                lease.release()
+
+
 class TestOneAtATime(unittest.TestCase):
     def test_concurrent_run_compile_serialized(self):
         import frigate_xdna.compiler.launcher as mod
