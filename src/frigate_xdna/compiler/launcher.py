@@ -245,6 +245,18 @@ def compile_in_flight() -> bool:
     return False
 
 
+def _probe_spec(source_onnx: str) -> tuple[int, list[int]]:
+    """(class_count, input_shape) re-inspected from the source ONNX."""
+    from ..models import inspect as _inspect
+    with open(source_onnx, "rb") as f:
+        _model, _digest = _inspect.load_graph_bytes(f.read())
+    _inspected = _inspect.inspect_model(_model)
+    _cls = _inspect.classify_output(_inspected["outputs"])
+    if _cls.get("profile") != "yolo-raw":
+        raise ValueError(f"unsupported profile: {_cls.get('error')}")
+    return int(_cls["channels"]) - 4, _inspected["input_shape"]
+
+
 def run_compile(prefixes: CompilerPrefixes, source_onnx: str, workdir: str,
                 cache_key: str, timeout_s: float = COMPILE_TIMEOUT_S,
                 data_dir: str | None = None, worker_factory=None,
@@ -318,19 +330,13 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     # address-space cap). Skipped when the device is busy serving.
     if data_dir is not None and os.path.isfile(rai_path):
         try:
-            from ..models import inspect as _inspect
-            _model, _digest = _inspect.load_graph_bytes(
-                open(source_onnx, "rb").read())
-            _inspected = _inspect.inspect_model(_model)
-            _cls = _inspect.classify_output(_inspected["outputs"])
-            _cc = int(_cls["channels"]) - 4
-            _shape = _inspected["input_shape"]
+            spec = _probe_spec(source_onnx)
         except Exception as e:
             return CompileResult(7, time.monotonic() - t_all,
                                  _child_peak_rss(),
                                  error=f"probe inspection failed: {e}")
         _status, _detail = probe_artifact(
-            data_dir, rai_path, _cc, _shape,
+            data_dir, rai_path, spec[0], spec[1],
             worker_factory=worker_factory, timeout_s=180.0)
         if _status == "failed":
             return CompileResult(7, time.monotonic() - t_all,

@@ -108,18 +108,17 @@ def _prune_dead_edge_nodes(model):
     nodes = list(model.graph.node)
     graph_outputs = {o.name for o in model.graph.output}
     keep = set(range(len(nodes)))
-    changed = True
-    while changed:
-        changed = False
+    while True:
         live_inputs = set()
         for i in keep:
             live_inputs.update(nodes[i].input)
-        for i in list(keep):
-            if nodes[i].op_type in EDGE_OPS and not any(
-                    o in live_inputs or o in graph_outputs
-                    for o in nodes[i].output):
-                keep.discard(i)
-                changed = True
+        doomed = [i for i in keep
+                  if nodes[i].op_type in EDGE_OPS and not any(
+                      o in live_inputs or o in graph_outputs
+                      for o in nodes[i].output)]
+        if not doomed:
+            break
+        keep.difference_update(doomed)
     kept = [nodes[i] for i in range(len(nodes)) if i in keep]
     del model.graph.node[:]
     model.graph.node.extend(kept)

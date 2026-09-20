@@ -101,18 +101,13 @@ class TestNativeWorker(unittest.TestCase):
         w.retire()  # safe on a dead child
 
     def test_paths_and_lib_dirs(self):
+        from unittest import mock
         self.assertTrue(worker_binary().endswith("fxdna-worker"))
         self.assertIn("/opt/xilinx-xrt/lib", worker_lib_dirs())
         self.assertEqual(worker_xrt_root(), "/opt/xilinx-xrt")
-        old = os.environ.get("FXDNA_XRT_ROOT")
-        os.environ["FXDNA_XRT_ROOT"] = "/tmp/xrt-test"
-        try:
+        with mock.patch.dict(os.environ,
+                             {"FXDNA_XRT_ROOT": "/tmp/xrt-test"}):
             self.assertEqual(worker_xrt_root(), "/tmp/xrt-test")
-        finally:
-            if old is None:
-                del os.environ["FXDNA_XRT_ROOT"]
-            else:
-                os.environ["FXDNA_XRT_ROOT"] = old
 
 
 if __name__ == "__main__":
