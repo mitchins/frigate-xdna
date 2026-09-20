@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass
 
 COMPILE_TIMEOUT_S = 2700.0  # SPEC §9: 45-minute compiler timeout
+_TIMEOUT_ERROR = "compile timeout"
 COMPILER_THREADS = 4  # SPEC §9: four compiler threads
 MEM_LIMIT_BYTES = 6 * 1024 ** 3  # SPEC §9: 6 GiB compiler-child allowance
 MAX_LOG_BYTES = 8 * 1024 * 1024
@@ -283,7 +284,7 @@ def _run_vaiml_phase(prefixes, bf16_path: str, workdir: str,
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return CompileResult(124, wall(), _child_peak_rss(),
-                             error="compile timeout")
+                             error=_TIMEOUT_ERROR)
     rc, _ = spawn(
         [prefixes.compile_python,
          os.path.join(prefixes.recipe_dir, "compile.py"),
@@ -318,7 +319,7 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return CompileResult(124, time.monotonic() - t_all,
-                             _child_peak_rss(), error="compile timeout")
+                             _child_peak_rss(), error=_TIMEOUT_ERROR)
     rc, _ = spawn(
         [prefixes.quant_python,
          os.path.join(prefixes.recipe_dir, "prepare.py"),
@@ -359,7 +360,7 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return CompileResult(124, time.monotonic() - t_all,
-                             _child_peak_rss(), error="compile timeout")
+                             _child_peak_rss(), error=_TIMEOUT_ERROR)
     rc, _ = spawn(
         [prefixes.compile_python,
          os.path.join(prefixes.recipe_dir, "validate.py"),
