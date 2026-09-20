@@ -15,18 +15,25 @@ only: this file + `reports/sbom-8.4.json` + the digests below.
 | Field | Value |
 |---|---|
 | Local reference | `localhost/frigate-xdna:0.1-dev` |
-| Image ID | `5e94a3835e00f92cefc722d3a52c1631b9c1accfcb7662bf4da2c98f420cef53` |
-| Content digest (local) | `sha256:04d2c9172ea32d4528d1ecb8d51f01f3ebf563b0a86ec9535683e248eb3408ec` |
-| Uncompressed size | 4120097569 B (3.84 GiB) |
-| Compressed size | 1235358289 B gzip (`podman save … \| gzip`, measured 2026-09-19) |
-| Built | 2026-09-19T05:12:59Z (Task 03 appliance) |
-| Registry digest | none — never pushed; the `sha256:04d2…` digest is local content only |
+| Image ID | `e25f65776232205bf9801fc60dbdeffcdfdfb60f8adfc55aac99b4fef55e3f0a` |
+| Content digest (local) | `sha256:8099dc3d5081bae695ca85f41a95096a0405a6468609595f655c34de5f5e7493` |
+| Uncompressed size | 4109545242 B (3.83 GiB) |
+| Registry digest | none — never pushed; the digest above is local content only |
+| Built | 2026-09-20 (Task 8.4, branch `feature/task-05-acceptance`) |
+
+This image is the first that actually contains the inference path:
+`/opt/fxdna/native/fxdna-worker` (previously missing — the Task-04
+native stage never built successfully), the supervision + activation
+code, `pyzmq` in the manager venv, and the repaired recipe. ldd census:
+only libflexmlrt/XRT/system libs (no ORT/VOE/VAIML/xcompiler/
+pyflexmlrt in NEEDED).
 
 ## 2. Reproducing the build (private inputs stay private)
 
 ```sh
 tools/prepare_vendor_input.py --payload-src <audited site-packages> \
     --xrt-src <audited xrt> --flexmlrt-lib <standalone lib> \
+    --flexmlrt-include <audited wheel flexmlrt/include> \
     --legal-src <licence texts> --calib-src <calib dir>
 podman build --security-opt apparmor=unconfined \
     -f packaging/Dockerfile -t frigate-xdna:0.1-dev .
@@ -39,19 +46,19 @@ podman build --security-opt apparmor=unconfined \
   (`sha256sum packaging/vendor-files.manifest.json`; +1 file vs Task 03:
   `flexmlrt/include/FlexMLClient.h` from the audited 1.8.0 wheel, whose
   `libflexmlrt.so` is byte-identical to the staged lib — same version,
-  same amd-eula licence, native-worker build requirement per
-  `native/CMakeLists.txt`).
+  same amd-eula licence, native-worker build requirement; flagged for
+  maintainer component review).
 * Base: `ubuntu:24.04`. The `apparmor=unconfined` flag is a build-host
   (LXC) workaround only — runtime uses `examples/compose.yaml` without it.
 
 ## 3. SBOM / licences / provenance
 
 * `reports/sbom-8.4.json` (CycloneDX 1.5): 17 audited vendor components
-  (hashes + licence IDs from `packaging/vendor.lock.json`) + 10 runtime
-  + 12 dev/test PyPI pins (from `requirements.lock`; dev/test flagged,
-  not shipped). Generated offline by `tools/gen_sbom.py`; no syft/trivy
-  on the build host.
-  `sha256=7f1981fa6cd9d42495febba81839a1464de76831862e7609af0371ef15d0a13f`
+  (hashes + licence IDs from `packaging/vendor.lock.json`) + 11 runtime
+  + 11 dev/test PyPI pins (from `requirements.lock`; dev/test flagged,
+  not shipped; pyzmq correctly scoped runtime). Generated offline by
+  `tools/gen_sbom.py`; no syft/trivy on the build host.
+  `sha256=0f682c4a3f0a511eada1c92c2170b5f9ec31e7ee924636e1d2fb6fdb7a281d2c`
 * Licence inventory: `THIRD_PARTY_NOTICES.md` + file-level mapping
   `packaging/legal/component-map.json` (EULA flow-down notices under
   `/opt/fxdna/legal` in-image).
@@ -68,35 +75,74 @@ podman build --security-opt apparmor=unconfined \
 * Liveness `fxdna health`; model readiness is separate (never inferred
   from `service_healthy`). Secrets via `PLUS_API_KEY_FILE` mount.
 * Known-good Compose: `examples/compose.yaml` (+ `compose.plus.yaml`
-  overlay for Frigate+ models). Named volume `frigate-xdna-data` owned
-  by image-init; bind mounts are never recursively chowned.
-* End-user needs: NPU host, `/data` volume, model refs — no SDK, AMD
-  account, activation, or maintainer precompile.
+  overlay for Frigate+ models). Named volume owned by image-init.
+* LXC deviations recorded (test-host only, never for end users):
+  `--security-opt apparmor=unconfined` (no profile in LXC),
+  `--group-add 0` (host accel node is root-owned; production hosts use
+  a dedicated NPU group), podman tmpfs accepts no uid/gid options
+  (`/run` mode 0755 instead of 0700+uid).
+* Observed defect: serve ignores SIGTERM past the 60 s grace twice
+  (SIGKILL fallback, exit 137). Shutdown path needs a fix before release.
 
 ## 5. Acceptance evidence (Task 8.4)
 
-| Gate (`docs/ACCEPTANCE.md`) | Status |
+Real Plus model: private yolov9s-320 (source `db3cfb8c…`, 320×320,
+nchw/rgb/float, yolo-generic, zmq-capable, 46 labels, trained
+2026-09-17). Model ID used exactly internally, withheld everywhere
+else per the redaction policy.
+
+| Gate (`docs/ACCEPTANCE.md`) | Status + evidence |
 |---|---|
-| §1 non-hardware CI | PASS — 202 hardware-free tests + ruff + Sonar gate OK (PR branch CI) |
-| §1 Plus stub layer | PASS — `FakePlus` + 23 client tests incl. republish (same-ID new bytes) and A+B coexistence; bearer never reaches download host |
-| §1 external-observability privacy | PASS — `fxdna diagnose` bundle + 5 sentinel tests: no raw IDs/tokens/URLs/bytes/DB/key; HMAC aliases stable; `--show-identifiers` opt-in |
-| §2 compiler appliance | BANKED (Task 03 proofs) — re-run on the release candidate pending |
-| §3 native runtime | BANKED bounded proofs — full gate pending device window |
-| §4 full Frigate replay | HARNESS READY, RUN PENDING — `tests/fixtures/replay/` + `tools/replay_acceptance.py`; deterministic clip not yet acquired; Frigate rc2 image not yet pulled |
-| §4 real Plus model (fetch→compile→activate→replay) | BLOCKED — operator key present (`/root/.env`), no model ID supplied yet |
-| §5 A→B update / offline / failure | PROCEDURE READY (stub paths green), hardware run pending |
-| §6 24 h soak | NOT STARTED — needs an authorised quiet-host window after the above |
+| §1 non-hardware CI | PASS — 225 hardware-free tests + ruff + Sonar gate OK (PR #5 CI) |
+| §1 Plus stub layer | PASS — `FakePlus` + 25 client tests incl. republish (same-ID new bytes) and A+B coexistence; bearer never reaches download host |
+| §1 external-observability privacy | PASS — `fxdna diagnose` bundle + 5 sentinel unit tests AND a real-data proof (bundle over the live sidecar registry: raw ID absent, HMAC alias present, no key/DB/bytes) |
+| §2 compiler appliance | PARTIAL — fetch→quant→VAIML verified end to end on the real model (deterministic bf16 digest `9290cf47…`, 17 MB `.rai` produced); job reports COMPILE_FAILED only at the trailing HW-runner mapping (see §6 blocker 1) |
+| §3 native runtime | PARTIAL — LOAD_OK + RUN_OK proven on the produced `.rai` (gen 1, cols 2100, 46-class geometry accepted, zeros → finite 480 B) via bounded out-of-band driver; in-product activation blocked by §6.1 |
+| §4 full Frigate replay | PLUMBING PASS — stock rc2 (`80825459`) + deterministic COCO clip (`777e3f9b…`, manifest `runs[0]`, evidence `fa1c83cc…`): 9 detector stat samples, config + events API reachable, 5 fps camera, 10 ms not-ready round-trip; 0 tracked objects (sidecar not-ready), zero device FDs held |
+| §4 real Plus model | FETCH+CACHE PASS, ACTIVATE BLOCKED — metadata/labels preserved through stock Frigate (46 labels + logo attributes visible in `/api/config`); activation awaits §6.1 |
+| §5 A→B update / offline / failure | STUB GREEN (client layers), hardware runs blocked by §6.1 |
+| §6 24 h soak | NOT STARTED — needs quiet host after §6 |
 | §7 release gate | THIS FILE — inputs complete, publication explicitly withheld |
+
+Fixes landed during Task 8.4 (all committed on the branch):
+
+* Real-Plus contract: `inputShape: "nchw"` layout tag accepted (was
+  int-list-only); width/height remain the numeric claim.
+* Recipe: `EnableVaimlBF16` + `restore_float_inputs` (BF16-fed Cast
+  graphs load; numerically exact, checker-verified, no-op otherwise).
+* Worker: `class_count` in LOAD (required, OOB-guarded, generation
+  never advances on refusal) + channel-agnostic geometry (was COCO-84).
+* Supervision: spawn/LOAD/INFER/retire, activate/activate_worker,
+  inhibition on death/fault (never respawn), `XILINX_XRT` child env.
+* Image: native stage actually builds (linker symlinks, SYSTEM
+  third-party includes, `-Werror` first-party fix), flexmlrt headers
+  staged, pyzmq shipped, staged-verify SKIP semantics restored.
+* Tooling: `diagnose` bundle, HMAC pseudonyms, replay harness + clip,
+  offline SBOM generator, Sonar triage to gate OK.
 
 ## 6. Verdict
 
 **BLOCKERS before Task 8.5** (i.e. NOT `RELEASE_AUTOMATION_READY`):
 
-1. Real Plus model ID not supplied — fetch/compile/activate proof ungated.
-2. Full-app replay not executed — clip + `ghcr.io/blakeblackshear/frigate:0.18.0-rc2` pull + device window outstanding.
-3. A→B / offline / failure-matrix runs outstanding (same window as 2).
-4. 24 h service soak not started (needs quiet host after 1–3).
-5. Compiler-appliance re-run on the exact release candidate outstanding.
+1. **Device CMA exhaustion (new, stops hardware work).** The NPU
+   backing store cannot satisfy the 512 MB HW-runner mapping
+   (`mmap_range … failed (err=-12)`; CmaFree observed falling
+   373 MB → 318 MB across the session, need 512 MB), and ORT session
+   init segfaults intermittently — a progressive degradation pattern
+   consistent with un-reclaimed device memory from crashed VAIML
+   sessions. Per stop policy: no further device sessions, no reset
+   attempted. Owner action: host reboot to reclaim CMA, then re-run
+   compile→probe→activate→replay→A→B→offline→soak on a quiet host.
+   Evidence preserved under `/mnt/downloads/fxdna-084/` (phase logs,
+   workdirs, sidecar volume `frigate-xdna-084d`, replay evidence).
+2. Full-app detection + A→B + offline + soak runs outstanding (same
+   rebooted window as 1).
+3. Serve SIGTERM handling (exit 137 twice) must be fixed.
+4. Component review renewal: +1 header file (same amd-eula 1.8.0;
+   digests above) + recipe behavior change (documented in
+   `recipes/bf16-vaiml-v1/recipe.json`).
+5. Compiler-appliance re-run on the exact release candidate outstanding
+   (blocked by 1).
 
 When 1–5 close, the release workflow (Task 8.5) may: rebuild with the
 pinned inputs above, `podman push ghcr.io/mitchins/frigate-xdna:<version>`,
