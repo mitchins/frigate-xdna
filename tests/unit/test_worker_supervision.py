@@ -385,6 +385,28 @@ class TestWorkerSupervision(unittest.TestCase):
         finally:
             sup.stop()
 
+    def test_cache_hit_ref_activates_by_ref(self):
+        # A repeated prepare is a cache hit (no compile, no job_uuid
+        # reported) but still records a provenance row, so the ref is
+        # activatable like any other.
+        sup = self._sup()
+        try:
+            path = os.path.join(sup.data_dir, "h.onnx")
+            make_raw_yolo(path, res=320, classes=46, seed=31)
+            first = sup.prepare(path)
+            self.assertIn("job_uuid", first)
+            sup.pump(5.0)
+            self.assertEqual(
+                sup.registry.get_ref(path)["state"], "PREPARED")
+            second = sup.prepare(path)
+            self.assertTrue(second.get("cache_hit"))
+            self.assertNotIn("job_uuid", second)
+            doc = sup.activate(path)
+            self.assertEqual(doc["state"], "ACTIVE")
+            self.assertEqual(doc["compile_key"], first["compile_key"])
+        finally:
+            sup.stop()
+
     def test_activate_ref_and_unknown_ref(self):
         sup = self._sup()
         try:

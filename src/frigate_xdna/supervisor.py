@@ -9,6 +9,7 @@ import json
 import os
 import threading
 import time
+import uuid
 
 from . import __version__
 from .admin import AdminServer
@@ -515,6 +516,15 @@ class Supervisor:
                 # and compile fresh instead of trusting foreign bytes (SF3).
                 self._invalidate_artifact(ckey)
             else:
+                # Record the hit as a provenance row (no compile
+                # launched, so no job_uuid is reported): every PREPARED
+                # ref traces to a job row, which activate-by-ref
+                # requires (a ref with no job row could never be
+                # activated). Terminal rows are inert to pump/GC.
+                hit_uuid = uuid.uuid4().hex
+                self.registry.create_job(hit_uuid, ref, ckey,
+                                         boot_token())
+                self.registry.set_job(hit_uuid, "PREPARED")
                 self.registry.set_ref_state(ref, "PREPARED")
                 return {"ref": ref, "source_sha256": digest,
                         "compile_key": ckey, "serving_digest": sdigest,
