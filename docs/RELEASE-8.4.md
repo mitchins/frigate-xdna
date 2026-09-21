@@ -133,29 +133,64 @@ Fixes landed during Task 8.4 (all committed on the branch):
 * Tooling: `diagnose` bundle, HMAC pseudonyms, replay harness + clip,
   offline SBOM generator, Sonar triage to gate OK.
 
+## 5b. Acceptance run 2026-09-20/21 (branch, post-rlimit-fix)
+
+- Fresh empty-volume compile (vol `frigate-xdna-087`): fetch →
+  source validation → BF16 prep (deterministic `9290cf47…`,
+  `collapsed_inputs=1`) → VAIML 525.8 s → 17 MB `.rai` →
+  out-of-child probe → validate → PUBLISHED `PREPARED`.
+  `compile_stats`: wall 544 s, peak_rss 1.87 GB, **vm_peak 6.39 GB**
+  (print: AS cap would have killed this; RSS never near any limit).
+- Real-Plus contract fix verified live (`inputShape: nchw` accepted).
+- Activation through product supervisor: ACTIVE, worker gen 1→2→3→2
+  across restart/switch cycles, finite outputs, no inhibition.
+- Full replay: stock rc2 + walk2 clip → **person tracks @0.78**
+  (evidence `/mnt/downloads/fxdna-087-replay-evidence.json`: 22 events;
+  B-replay 10 events; A-replay 8 events). Steady 10–18 ms inference.
+- A→B with one artifact (local alias A shares Plus B's bytes — no
+  second model exists): gens advanced, old worker reaped (PID gone),
+  sessions rebound, replay continuity on both sides. Documented limit:
+  same-bytes switch proves lifecycle mechanics, not cross-model
+  isolation (covered structurally by generation guards + unit tests).
+- Restart: both containers exit clean (sidecar **0** in ~1 s —
+  SIGTERM fix proven twice); artifact reused, zero new compiles,
+  fresh worker, replay passes.
+- Offline (no key, `FXDNA_OFFLINE`): startup honestly refuses
+  acquisition; activate/replay from cache (8 person events);
+  **zero Plus packets** (empty pcap); no jobs beyond handshake
+  provenance rows.
+- Harness lessons (fixture/test-side, not product): file inputs need
+  `input_args` override (rc2 `user_agent` default breaks them);
+  DB event inserts require snapshots or clips enabled;
+  `detect.enabled` defaults false in rc2 config surface used here.
+- Product bugs found+fixed in-run: real-backend publish identity
+  (`BACKEND_ID` class attr — real publish NEVER worked before),
+  status dict-active crash, bf16 digest parse, cache-hit provenance
+  rows for activate-by-ref. All with regression tests (250 green).
+
 ## 6. Verdict
 
 **BLOCKERS before Task 8.5** (i.e. NOT `RELEASE_AUTOMATION_READY`):
 
-1. **Validate the rlimit fix, then re-run.** The 512 MB mapping
-   failure is now attributed to the removed `RLIMIT_AS=6GiB` cap, but
-   that attribution itself needs a hardware proof run: one fresh
-   product compile with per-phase VmPeak recorded, then
-   compile→probe→activate→replay→A→B→offline→soak on a quiet host.
-   Container-view CMA numbers are NOT evidence either way; record
-   host-side CMA at every boundary (see `docs/OPERATIONS.md`). The
-   intermittent pre-reboot session segfaults remain unexplained —
-   treat any recurrence as a stop event, not background noise.
-   Evidence preserved under `/mnt/downloads/fxdna-084/` (phase logs,
-   workdirs, sidecar volumes, replay evidence).
-2. Full-app detection + A→B + offline + soak runs outstanding (same
-   rebooted window as 1).
-3. Serve SIGTERM handling (exit 137 twice) must be fixed.
+1. **Rlimit attribution: PROVEN.** VmPeak 6.39 GB vs RSS 1.87 GB
+   on the clean post-fix compile — the old 6 GiB AS cap would have
+   killed exactly this mapping. No mmap failure, no segfaults in the
+   full product run since.
+2. **24 h soak outstanding (running).** Started 2026-09-21T06:13:47Z
+   on the exact state above (offline B active gen 2, replay
+   looping, 200 ms detector timeout, production thresholds);
+   baseline in `/mnt/downloads/fxdna-087-soak-baseline.json`.
+   Verdict flips to `RELEASE_AUTOMATION_READY` only when the soak
+   closes with full accounting and no stop events.
+3. **30-min confidence: PASSED 06:09Z.** +26k requests, zero errors
+   of any kind, worker RSS byte-flat (208860 kB ×4 samples),
+   same worker/gen throughout, tracks flowing.
 4. Component review renewal: +1 header file (same amd-eula 1.8.0;
    digests above) + recipe behavior change (documented in
-   `recipes/bf16-vaiml-v1/recipe.json`).
-5. Compiler-appliance re-run on the exact release candidate outstanding
-   (blocked by 1).
+   `recipes/bf16-vaiml-v1/recipe.json`) + cache-hit provenance rows
+   + BACKEND_ID class attr (all committed, all tested).
+5. Pre-reboot session segfaults remain unexplained — any recurrence
+   during soak is a stop event, not background noise.
 
 When 1–5 close, the release workflow (Task 8.5) may: rebuild with the
 pinned inputs above, `podman push ghcr.io/mitchins/frigate-xdna:<version>`,
