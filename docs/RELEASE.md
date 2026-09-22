@@ -1,36 +1,34 @@
 # Release process (Task 8.5)
 
 One automated path from approved source to GHCR — no manual image
-handling. The owner merges to `main`, then pushes a version tag; the
-`Release` workflow does everything else on the trusted self-hosted
-builder, including creating the GitHub Release with SBOM + manifest.
-There is exactly one publication trigger (a pushed `v*` tag), so a
-version builds exactly once. Manual dispatch is dry-run only by
-construction and can never publish. This PR only adds the automation;
-**no tag has been created and nothing has been pushed**.
+handling, no self-hosted runners. The owner merges to `main`, then
+pushes a version tag; the `Release` workflow runs on stock
+`ubuntu-latest` runners and does everything else, including creating
+the GitHub Release with SBOM + manifest. There is exactly one
+publication trigger (a pushed `v*` tag), so a version builds exactly
+once. Manual dispatch is dry-run only by construction and can never
+publish.
+
+The audited vendor payload is not in the repo and never enters CI
+artifacts: it ships as a content-pinned tarball in a PRIVATE Backblaze
+B2 bucket (`packaging/vendor-bundle.json` records bucket, bundle name
+and sha256 — no secrets). The job downloads it by the exact filename
+derived from the in-tree manifest, verifies its sha256 against the
+committed receipt, extracts it, and verifies every file with
+`verify_payload` plus a `vendor.lock.json` consistency check before
+building. Staged input is deleted in an `always()` cleanup step.
 
 ## One-time owner setup (all required before first use)
 
-1. **Runner.** Register exactly one repo-scoped self-hosted x86_64
-   runner with labels `self-hosted, Linux, X64, frigate-xdna-release`
-   on the trusted build host (the host holding the audited payload).
-   The workflow pins that label set so a missing runner queues
-   instead of landing on an untrusted host. The runner needs:
-   `podman`, `python3` (stdlib only), `gh`, `git`; it must NOT need
-   `/dev/accel` (release building is hardware-free).
-2. **Vendor sources.** Set these repository *Variables* (not secrets;
-   they are paths, and values appear in logs) to the canonical
-   audited payload directories on the build host:
-   `VENDOR_PAYLOAD_SRC`, `VENDOR_XRT_SRC`, `VENDOR_FLEXMLRT_LIB`,
-   `VENDOR_FLEXMLRT_INCLUDE`, `VENDOR_LEGAL_SRC`, `VENDOR_CALIB_SRC`.
-   The workflow fails closed if any is unset or not a directory, then
-   stages `packaging/vendor-input/` locally and verifies every file
-   against `packaging/vendor-files.manifest.json` plus a
-   `vendor.lock.json` consistency check. Staged input is deleted in an
-   `always()` cleanup step.
-3. **Environment.** Create the `release` environment with required
+1. **Backblaze B2.** Keep `B2_APP_KEY` (repository secret) and
+   `B2_KEY_ID` (repository variable) set. The key is restricted to
+   the private vendor bucket; it can only read the pinned bundle.
+2. **Environment.** Create the `release` environment with required
    owner approval. Publishing, attestation and release uploads all run
    under it.
+3. Nothing else: stock runners provide `docker`, `python3`, `git`
+   and `gh`. No `/dev/accel` needed (release building is
+   hardware-free), no self-hosted runner to maintain.
 
 ## Cutting a release
 

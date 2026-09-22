@@ -1,8 +1,14 @@
-# Release — Frigate-XDNA appliance (Task 8.5).
+# Release — Frigate-XDNA appliance (Task 8.5, B2-backed).
 #
-# Trusted self-hosted builder only. NEVER runs on pull_request.
-# No NPU tests run here (no device needed to build); no vendor payload,
-# private model, or credential ever enters artifacts, caches or releases.
+# GitHub-hosted runners only. No self-hosted runners, no NPU tests here
+# (no device needed to build); no vendor payload, private model, or
+# credential ever enters artifacts, caches or releases.
+#
+# The audited vendor payload lives as a content-pinned tarball in a
+# PRIVATE Backblaze B2 bucket (see packaging/vendor-bundle.json). The
+# job downloads it by the exact filename derived from the in-tree
+# manifest, verifies its sha256 against the committed receipt, then
+# verifies every file with verify_payload before building.
 #
 # Single publication trigger: a pushed v* tag publishes. Manual dispatch
 # is dry-run only by construction (it cannot publish, so a requested
@@ -11,19 +17,15 @@
 # the GitHub Release and attaches SBOM + manifest afterwards.
 #
 # Flow: approved manual release
-#   -> verify pinned inputs (tag SHA, canonical vendor payload, manifests)
-#   -> pinned, auditable podman build (linux/amd64, packaging/Dockerfile)
-#       (base digest pinned; apt layer recorded, not frozen — see inventory)
-#   -> SBOM + release manifest + base package inventory from release inputs
+#   -> verify pinned inputs (tag SHA, B2 bundle bytes, manifests)
+#   -> pinned, auditable docker build (linux/amd64, packaging/Dockerfile)
+#   -> SBOM + release manifest + base inventory from release inputs
 #   -> push pinned tags to GHCR -> attest (OIDC) -> pull-by-digest sanity
 #   -> create GitHub Release (prerelease for RCs) with SBOM + manifest
 #
 # First use requires the owner to (see docs/RELEASE.md):
-#   1. register ONE repo-scoped self-hosted x86_64 runner with the
-#      `frigate-xdna-release` label on the trusted build host,
-#   2. set the VENDOR_* repository variables to the canonical audited
-#      payload directories on that host,
-#   3. create the protected `release` environment (owner approval).
+#   1. keep B2_APP_KEY (secret) + B2_KEY_ID (variable) set,
+#   2. create the protected `release` environment (owner approval).
 name: Release
 on:
   workflow_dispatch:
@@ -51,10 +53,7 @@ env:
 jobs:
   release-build:
     name: Verify, build, SBOM, push, attest
-    # Dedicated trusted builder (see docs/RELEASE.md). The custom label
-    # is intentional: without exactly this runner the job stays queued
-    # instead of landing on an untrusted host.
-    runs-on: [self-hosted, Linux, X64, frigate-xdna-release]
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     environment: release
     # Publish needs packages:write, attestations need id-token/attestations.
@@ -89,9 +88,7 @@ jobs:
         id: tags
         run: |
           set -eu
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          elif [ "${{ github.event_name }}" = "push" ]; then
+          if [ "${{ github.event_name }}" = "push" ]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
             TAG="${{ inputs.version_tag }}"
@@ -131,38 +128,32 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "tag=$TAG stable=$STABLE push=$PUSH tags=[$TAGS]"
 
-      - name: Materialize audited vendor payload (fail-closed)
-        # Repository vars.* are NOT auto-exported to the shell; without
-        # this mapping the preflight below would always see empties and
-        # abort even a correctly configured runner.
+      - name: Fetch audited vendor bundle from private B2 (fail-closed)
         env:
-          VENDOR_PAYLOAD_SRC: ${{ vars.VENDOR_PAYLOAD_SRC }}
-          VENDOR_XRT_SRC: ${{ vars.VENDOR_XRT_SRC }}
-          VENDOR_FLEXMLRT_LIB: ${{ vars.VENDOR_FLEXMLRT_LIB }}
-          VENDOR_FLEXMLRT_INCLUDE: ${{ vars.VENDOR_FLEXMLRT_INCLUDE }}
-          VENDOR_LEGAL_SRC: ${{ vars.VENDOR_LEGAL_SRC }}
-          VENDOR_CALIB_SRC: ${{ vars.VENDOR_CALIB_SRC }}
+          B2_APP_KEY: ${{ secrets.B2_APP_KEY }}
+          B2_KEY_ID: ${{ vars.B2_KEY_ID }}
         run: |
           set -eu
-          for v in VENDOR_PAYLOAD_SRC VENDOR_XRT_SRC VENDOR_FLEXMLRT_LIB \
-                   VENDOR_FLEXMLRT_INCLUDE VENDOR_LEGAL_SRC VENDOR_CALIB_SRC; do
-            eval "val=\${$v:-}"
-            if [ -z "$val" ]; then
-              echo "refusing release: repository variable $v is not set"
-              exit 1
-            fi
-            if [ ! -d "$val" ]; then
-              echo "refusing release: $v=$val is not a directory"
-              exit 1
-            fi
-          done
-          python3 tools/prepare_vendor_input.py \
-            --payload-src "${{ vars.VENDOR_PAYLOAD_SRC }}" \
-            --xrt-src "${{ vars.VENDOR_XRT_SRC }}" \
-            --flexmlrt-lib "${{ vars.VENDOR_FLEXMLRT_LIB }}" \
-            --flexmlrt-include "${{ vars.VENDOR_FLEXMLRT_INCLUDE }}" \
-            --legal-src "${{ vars.VENDOR_LEGAL_SRC }}" \
-            --calib-src "${{ vars.VENDOR_CALIB_SRC }}"
+          test -n "${B2_APP_KEY:-}" || {
+            echo "refusing release: B2_APP_KEY secret is not set"; exit 1; }
+          test -n "${B2_KEY_ID:-}" || {
+            echo "refusing release: B2_KEY_ID variable is not set"; exit 1; }
+          pip install --quiet --user b2
+          export PATH="$HOME/.local/bin:$PATH"
+          MANIFEST_SHA="$(sha256sum packaging/vendor-files.manifest.json | cut -d" " -f1)"
+          BUNDLE="vendor-input-${MANIFEST_SHA:0:12}.tar.gz"
+          RECEIPT_BUNDLE="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['bundle'])")"
+          test "$BUNDLE" = "$RECEIPT_BUNDLE" || {
+            echo "receipt names $RECEIPT_BUNDLE but tree pins $BUNDLE"; exit 1; }
+          RECEIPT_SHA="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['sha256'])")"
+          BUCKET="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['bucket'])")"
+          b2 authorize-account "$B2_KEY_ID" "$B2_APP_KEY"
+          b2 download-file-by-name "$BUCKET" "$BUNDLE" /tmp/vendor-bundle.tar.gz
+          echo "$RECEIPT_SHA  /tmp/vendor-bundle.tar.gz" | sha256sum -c -
+          rm -rf packaging/vendor-input
+          mkdir -p packaging/vendor-input
+          tar -xzf /tmp/vendor-bundle.tar.gz -C packaging/
+          rm -f /tmp/vendor-bundle.tar.gz
 
       - name: Verify vendor payload against manifests (fail-closed)
         run: |
@@ -204,8 +195,7 @@ jobs:
           CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "CREATED=$CREATED" >> "$GITHUB_ENV"
           # shellcheck disable=SC2086
-          podman build --security-opt apparmor=unconfined \
-            --platform linux/amd64 \
+          docker buildx build --platform linux/amd64 \
             --label "org.opencontainers.image.source=https://github.com/mitchins/frigate-xdna" \
             --label "org.opencontainers.image.revision=${{ steps.source.outputs.sha }}" \
             --label "org.opencontainers.image.version=${{ steps.tags.outputs.version }}" \
@@ -213,6 +203,16 @@ jobs:
             --label "org.opencontainers.image.licenses=MIT for project source; incorporated AMD/vendor binaries under AMD-EULA and third-party terms, see /opt/fxdna/legal" \
             -f packaging/Dockerfile \
             -t "frigate-xdna:release-${{ steps.tags.outputs.version }}" .
+
+      - name: Pre-push sanity on local image (gate before any tag)
+        # Same gate as post-push validation: a bad image must fail here,
+        # before :latest (or any tag) can be published.
+        run: |
+          set -eu
+          MANIFEST="$(sha256sum packaging/vendor-files.manifest.json | cut -d" " -f1)"
+          CONTAINER_RUNTIME=docker bash tools/release_sanity.sh \
+            "frigate-xdna:release-${{ steps.tags.outputs.version }}" \
+            "$MANIFEST"
 
       - name: Record installed package inventory (finished image)
         run: |
@@ -222,7 +222,7 @@ jobs:
           set -euo pipefail
           # Explicit entrypoint: the image ENTRYPOINTs fxdna, so a bare
           # command would run as `fxdna dpkg-query ...`.
-          podman run --rm --security-opt apparmor=unconfined \
+          docker run --rm \
             --entrypoint /usr/bin/dpkg-query \
             "frigate-xdna:release-${{ steps.tags.outputs.version }}" \
             -W -f='${Package} ${Version} ${Architecture}\n' \
@@ -232,7 +232,6 @@ jobs:
       - name: Generate SBOM + release manifest from release source
         run: |
           set -eu
-          mkdir -p release-out
           SHORT="$(git rev-parse --short HEAD)"
           python3 tools/gen_sbom.py \
             --out release-out/sbom.json \
@@ -249,6 +248,8 @@ jobs:
               "tag": "${{ steps.tags.outputs.tag }}",
               "stable": "${{ steps.tags.outputs.stable }}" == "true",
               "source_sha": "${{ steps.source.outputs.sha }}",
+              "vendor_bundle": json.load(
+                  open("packaging/vendor-bundle.json"))["bundle"],
               "vendor_manifest_sha256": hashlib.sha256(
                   open("packaging/vendor-files.manifest.json", "rb").read()
               ).hexdigest(),
@@ -257,7 +258,7 @@ jobs:
               "base_digest": "sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3",
               "base_packages": "release-out/base-packages.txt",
               "built_at": os.environ["CREATED"],
-              "builder": "self-hosted trusted release runner",
+              "builder": "github-hosted release runner",
           }
           manifest["source_short"] = manifest["source_sha"][:12]
           with open("release-out/release-manifest.json", "w") as f:
@@ -265,30 +266,22 @@ jobs:
           print(json.dumps(manifest, indent=2, sort_keys=True))
           EOF
 
-      - name: Pre-push sanity on local image (gate before any tag)
-        # Same gate as post-push validation: a bad image must fail here,
-        # before :latest (or any tag) can be published.
-        run: |
-          set -eu
-          MANIFEST="$(sha256sum packaging/vendor-files.manifest.json | cut -d" " -f1)"
-          bash tools/release_sanity.sh \
-            "frigate-xdna:release-${{ steps.tags.outputs.version }}" \
-            "$MANIFEST"
-
       - name: Push pinned tags to GHCR
         id: push
         if: ${{ steps.tags.outputs.push == 'true' }}
         run: |
           set -eu
           echo "${{ secrets.GITHUB_TOKEN }}" | \
-            podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+            docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           DIGEST=""
           # shellcheck disable=SC2086
           for t in ${{ steps.tags.outputs.tags }}; do
-            podman tag "frigate-xdna:release-${{ steps.tags.outputs.version }}" \
+            docker tag "frigate-xdna:release-${{ steps.tags.outputs.version }}" \
               "$IMAGE:$t"
-            podman push --digestfile /tmp/digest.txt "$IMAGE:$t"
-            D="$(cat /tmp/digest.txt)"
+            OUT="$(docker push "$IMAGE:$t" 2>&1)"
+            echo "$OUT" | tail -2
+            D="$(echo "$OUT" | grep -oE 'digest:[[:space:]]*sha256:[0-9a-f]+' | tail -1 | grep -oE 'sha256:[0-9a-f]+')"
+            test -n "$D" || { echo "no digest in push output"; exit 1; }
             echo "pushed $IMAGE:$t -> $D"
             if [ -z "$DIGEST" ]; then
               DIGEST="$D"
@@ -329,19 +322,19 @@ jobs:
       - name: Cleanup (always)
         if: always()
         run: |
-          rm -rf packaging/vendor-input release-out /tmp/digest.txt || true
-          podman logout ghcr.io 2>/dev/null || true
+          rm -rf packaging/vendor-input release-out /tmp/vendor-bundle.tar.gz || true
+          docker logout ghcr.io 2>/dev/null || true
       - name: Drop local release tag (pushed flow only; dry-run keeps it
           for the validate job)
         if: always() && steps.tags.outputs.push == 'true'
         run: |
-          podman rmi -f "frigate-xdna:release-${{ steps.tags.outputs.version }}" 2>/dev/null || true
+          docker rmi "frigate-xdna:release-${{ steps.tags.outputs.version }}" 2>/dev/null || true
 
   release-validate:
     name: Pull-by-digest sanity (hardware-free)
     needs: release-build
     if: ${{ needs.release-build.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, frigate-xdna-release]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
@@ -362,8 +355,8 @@ jobs:
           set -eu
           if [ "${{ needs.release-build.outputs.pushed }}" = "true" ]; then
             echo "${{ secrets.GITHUB_TOKEN }}" | \
-              podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-            podman pull "$IMAGE@${{ needs.release-build.outputs.digest }}"
+              docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            docker pull "$IMAGE@${{ needs.release-build.outputs.digest }}"
             IMG="$IMAGE@${{ needs.release-build.outputs.digest }}"
           else
             echo "dry run: validating the locally built image"
@@ -376,19 +369,20 @@ jobs:
         run: |
           set -eu
           MANIFEST="$(python3 -c "import json; print(json.load(open('release-out/release-manifest.json'))['vendor_manifest_sha256'])")"
-          bash tools/release_sanity.sh "${{ env.IMG }}" "$MANIFEST"
+          CONTAINER_RUNTIME=docker bash tools/release_sanity.sh \
+            "${{ env.IMG }}" "$MANIFEST"
 
       - name: Cleanup (always)
         if: always()
         run: |
-          podman logout ghcr.io 2>/dev/null || true
-          podman rmi -f "${{ env.IMG }}" 2>/dev/null || true
+          docker logout ghcr.io 2>/dev/null || true
+          docker rmi "${{ env.IMG }}" 2>/dev/null || true
 
   release-assets:
     name: Create GitHub Release with SBOM + manifest
     needs: [release-build, release-validate]
     if: ${{ github.ref_type == 'tag' && needs.release-build.outputs.pushed == 'true' }}
-    runs-on: [self-hosted, Linux, X64, frigate-xdna-release]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
     permissions:
@@ -403,9 +397,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          command -v gh >/dev/null || {
-            echo "gh CLI missing on release runner (see docs/RELEASE.md)";
-            exit 1; }
           ls release-out/sbom.json release-out/release-manifest.json \
             release-out/base-packages.txt
           FLAGS=""
