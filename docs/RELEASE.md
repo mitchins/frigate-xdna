@@ -46,9 +46,9 @@ construction and can never publish. This PR only adds the automation;
   attests and uploads nothing. Dispatch can never publish, so the
   requested version cannot diverge from the built SHA.
 - **Pinned inputs.** The base image is digest-pinned
-  (`ubuntu:24.04@sha256:008173c2…`; bump deliberately with a fresh
-  `base-packages.txt` inventory, which the workflow records per
-  release). Build-tool versions are pinned in `packaging/Dockerfile`
+  (digest-only `ubuntu@sha256:008173c2…`, i.e. docker.io 24.04;
+  bump deliberately with a fresh `base-packages.txt` inventory,
+  which the workflow records per release). Build-tool versions are pinned in `packaging/Dockerfile`
   (`pip`/`setuptools`/`wheel`); runtime/test pins live in
   `requirements.lock` and `packaging/constraints-*.txt`. No floating
   `--upgrade` remains on the release path.

@@ -25,12 +25,12 @@
 #   /opt/fxdna/recipes       pinned recipe + manifests
 #   /data                     persistent registry/cache/work (volume)
 
-# Pinned base (2026-09-22, current 24.04): the tag alone would let
-# Ubuntu packages drift between release builds. Bump deliberately with
-# a recorded package inventory (see release workflow base-packages.txt).
-ARG UBUNTU_TAG=24.04
+# Pinned base digest (2026-09-22; docker.io/library/ubuntu 24.04).
+# Digest-only (no floating tag): a tag would let Ubuntu packages drift
+# between release builds. Bump deliberately with a recorded package
+# inventory (see release workflow base-packages.txt).
 ARG UBUNTU_DIGEST=sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
-FROM ubuntu:${UBUNTU_TAG}@${UBUNTU_DIGEST} AS base
+FROM ubuntu@${UBUNTU_DIGEST} AS base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
