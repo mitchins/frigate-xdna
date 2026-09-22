@@ -132,6 +132,16 @@ jobs:
           echo "tag=$TAG stable=$STABLE push=$PUSH tags=[$TAGS]"
 
       - name: Materialize audited vendor payload (fail-closed)
+        # Repository vars.* are NOT auto-exported to the shell; without
+        # this mapping the preflight below would always see empties and
+        # abort even a correctly configured runner.
+        env:
+          VENDOR_PAYLOAD_SRC: ${{ vars.VENDOR_PAYLOAD_SRC }}
+          VENDOR_XRT_SRC: ${{ vars.VENDOR_XRT_SRC }}
+          VENDOR_FLEXMLRT_LIB: ${{ vars.VENDOR_FLEXMLRT_LIB }}
+          VENDOR_FLEXMLRT_INCLUDE: ${{ vars.VENDOR_FLEXMLRT_INCLUDE }}
+          VENDOR_LEGAL_SRC: ${{ vars.VENDOR_LEGAL_SRC }}
+          VENDOR_CALIB_SRC: ${{ vars.VENDOR_CALIB_SRC }}
         run: |
           set -eu
           for v in VENDOR_PAYLOAD_SRC VENDOR_XRT_SRC VENDOR_FLEXMLRT_LIB \
@@ -210,9 +220,12 @@ jobs:
           # inventory describes the finished image — never the pristine
           # base. Honest name: pinned and auditable, not byte-reproducible.
           set -euo pipefail
+          # Explicit entrypoint: the image ENTRYPOINTs fxdna, so a bare
+          # command would run as `fxdna dpkg-query ...`.
           podman run --rm --security-opt apparmor=unconfined \
+            --entrypoint /usr/bin/dpkg-query \
             "frigate-xdna:release-${{ steps.tags.outputs.version }}" \
-            dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' \
+            -W -f='${Package} ${Version} ${Architecture}\n' \
             | sort > release-out/base-packages.txt
           wc -l release-out/base-packages.txt
 
@@ -251,6 +264,16 @@ jobs:
               json.dump(manifest, f, indent=2, sort_keys=True)
           print(json.dumps(manifest, indent=2, sort_keys=True))
           EOF
+
+      - name: Pre-push sanity on local image (gate before any tag)
+        # Same gate as post-push validation: a bad image must fail here,
+        # before :latest (or any tag) can be published.
+        run: |
+          set -eu
+          MANIFEST="$(sha256sum packaging/vendor-files.manifest.json | cut -d" " -f1)"
+          bash tools/release_sanity.sh \
+            "frigate-xdna:release-${{ steps.tags.outputs.version }}" \
+            "$MANIFEST"
 
       - name: Push pinned tags to GHCR
         id: push
@@ -349,49 +372,11 @@ jobs:
           echo "IMG=$IMG" >> "$GITHUB_ENV"
 
       - name: Hardware-free image checks (no NPU, no secrets)
+        # Same gate as pre-push, now against the pulled-by-digest bytes.
         run: |
           set -eu
-          IMG="${{ env.IMG }}"
-          podman run --rm --security-opt apparmor=unconfined \
-            --entrypoint fxdna "$IMG" --help > /dev/null
-          podman run --rm --security-opt apparmor=unconfined \
-            --user 10001:10001 --read-only \
-            --entrypoint fxdna "$IMG" health
-          podman run --rm --security-opt apparmor=unconfined \
-            --entrypoint sh "$IMG" -c '
-            set -eu
-            test -x /opt/fxdna/native/fxdna-worker
-            if ldd /opt/fxdna/native/fxdna-worker | grep -iE "onnxruntime|/voe/|vaiml|xcompiler|pyflexmlrt"; then
-              echo "forbidden linkage in native worker"; exit 1
-            fi
-            test -f /opt/fxdna/legal/component-map.json
-            test -f /opt/fxdna/legal/THIRD_PARTY_NOTICES.md
-            # No model bytes except upstream ORT's own tiny test
-            # fixtures (onnxruntime/datasets, public, non-weights).
-            FOUND=$(find /opt /usr/local /root \( -name "*.onnx" -o \
-              -name "*.rai" \) 2>/dev/null | \
-              grep -v "onnxruntime/datasets/" || true)
-            if [ -n "$FOUND" ]; then
-              echo "$FOUND"
-              echo "unexpected model bytes in image"; exit 1
-            fi
-            if grep -rIlE "PLUS_API_KEY=.{4,}|ghp_|github_pat_|xox[bap]-" /opt/fxdna/manager 2>/dev/null | grep .; then
-              echo "credential material in image"; exit 1
-            fi
-            sha256sum /opt/fxdna/recipes/vendor-files.manifest.json
-          '
-          echo "image checks passed"
-
-      - name: Vendor manifest inside image matches release record
-        run: |
-          set -eu
-          IN_IMAGE="$(podman run --rm --security-opt apparmor=unconfined \
-            --entrypoint sha256sum "$IMG" \
-            /opt/fxdna/recipes/vendor-files.manifest.json | cut -d" " -f1)"
-          RECORDED="$(python3 -c "import json; print(json.load(open('release-out/release-manifest.json'))['vendor_manifest_sha256'])")"
-          test "$IN_IMAGE" = "$RECORDED" || {
-            echo "in-image manifest $IN_IMAGE != record $RECORDED"; exit 1; }
-          echo "manifest match: $IN_IMAGE"
+          MANIFEST="$(python3 -c "import json; print(json.load(open('release-out/release-manifest.json'))['vendor_manifest_sha256'])")"
+          bash tools/release_sanity.sh "${{ env.IMG }}" "$MANIFEST"
 
       - name: Cleanup (always)
         if: always()

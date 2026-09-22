@@ -46,6 +46,16 @@ releases.
 Minimal Compose — replace `NPU_GID` with the numeric group owning
 `/dev/accel/accel0` on the Docker host:
 
+Create the Plus secret file first (the overlay mounts it read-only):
+
+```sh
+mkdir -p examples/secrets
+printf '%s\n' 'YOUR_PLUS_KEY' > examples/secrets/PLUS_API_KEY
+chmod 600 examples/secrets/PLUS_API_KEY
+```
+
+Then start the sidecar:
+
 ```sh
 NPU_GID=$(stat -c %g /dev/accel/accel0) \
 FXDNA_IMAGE=ghcr.io/mitchins/frigate-xdna:0.1.0-rc.1 \
