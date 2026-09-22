@@ -35,15 +35,15 @@ echo "== $IMG: no model bytes, no credentials =="
 FOUND=$($RUN --entrypoint sh "$IMG" -c '
   find /opt /usr/local /root \( -name "*.onnx" -o -name "*.rai" \) 2>/dev/null | grep -v "onnxruntime/datasets/" | grep -v "onnx/backend/test/" || true')
 # shellcheck disable=SC2086
-test -z "$FOUND" || { echo "$FOUND"; echo "unexpected model bytes"; exit 1; }
+[[ -z "$FOUND" ]] || { echo "$FOUND"; echo "unexpected model bytes"; exit 1; }
 CREDS=$($RUN --entrypoint sh "$IMG" -c '
   grep -rIlE "PLUS_API_KEY=.{4,}|ghp_|github_pat_|xox[bap]-" /opt/fxdna/manager 2>/dev/null || true')
-test -z "$CREDS" || { echo "$CREDS"; echo "credential material"; exit 1; }
+[[ -z "$CREDS" ]] || { echo "$CREDS"; echo "credential material"; exit 1; }
 
 echo "== $IMG: vendor manifest matches release record =="
 GOT=$($RUN --entrypoint sha256sum "$IMG" \
   /opt/fxdna/recipes/vendor-files.manifest.json | cut -d" " -f1)
-test "$GOT" = "$WANT_MANIFEST" || {
+[[ "$GOT" == "$WANT_MANIFEST" ]] || {
   echo "in-image $GOT != record $WANT_MANIFEST"; exit 1; }
 echo "manifest match: $GOT"
 echo "SANITY PASS: $IMG"
