@@ -26,6 +26,33 @@ fxdna status --json                   # after pip install -e .
 Dev venv (pinned test deps): `/mnt/downloads/frigate-xdna-venvs/dev`
 (CI: create a venv and install `requirements.lock` dev pins).
 
+## Install (release image)
+
+```sh
+docker pull ghcr.io/mitchins/frigate-xdna:0.1
+```
+
+Run with the shipped Compose (see `docs/OPERATIONS.md` for the full
+procedure). Replace `NPU_GID` with the numeric group owning
+`/dev/accel/accel0` on the Docker host, provide a `/data` volume and
+a Plus secret only if you use Frigate+ models:
+
+```sh
+NPU_GID=$(stat -c %g /dev/accel/accel0) \
+FXDNA_MODELS="plus://<model-id>" \
+docker compose -f examples/compose.yaml up -d
+# With the sidecar on the xdna-net network, point stock Frigate at it:
+# detectors: {xdna: {type: zmq, endpoint: tcp://xdna:5555}}
+```
+
+Requirements: `/dev/accel/accel0` passthrough, `NPU_GID` group access,
+a persistent `/data` volume, `PLUS_API_KEY_FILE` secret mount for
+Frigate+ models (local-only deployments need no secret), and stock
+Frigate `v0.18.0-rc2` joining the same network (no published ZMQ port
+needed). Certified: Ryzen AI Max 300 / Strix Halo, as recorded in
+`docs/RELEASE-8.4.md`; other XDNA2 platforms are not yet certified.
+Release automation, SBOM/provenance and tag policy: `docs/RELEASE.md`.
+
 ## Layout
 
 * `src/frigate_xdna/` — CLI/config, Plus client, tensor contracts, cache,
