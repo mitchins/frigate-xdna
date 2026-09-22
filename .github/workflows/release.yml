@@ -333,7 +333,10 @@ jobs:
   release-validate:
     name: Pull-by-digest sanity (hardware-free)
     needs: release-build
-    if: ${{ needs.release-build.result == 'success' }}
+    # Pushed flow only: each job runs on a fresh runner with no shared
+    # image store, so dry runs cannot validate across jobs (the pre-push
+    # gate in the build job already covers the local image instead).
+    if: ${{ needs.release-build.result == 'success' && needs.release-build.outputs.pushed == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -353,15 +356,10 @@ jobs:
       - name: Pull by digest into a clean environment
         run: |
           set -eu
-          if [ "${{ needs.release-build.outputs.pushed }}" = "true" ]; then
-            echo "${{ secrets.GITHUB_TOKEN }}" | \
-              docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-            docker pull "$IMAGE@${{ needs.release-build.outputs.digest }}"
-            IMG="$IMAGE@${{ needs.release-build.outputs.digest }}"
-          else
-            echo "dry run: validating the locally built image"
-            IMG="frigate-xdna:release-${{ needs.release-build.outputs.version }}"
-          fi
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE@${{ needs.release-build.outputs.digest }}"
+          IMG="$IMAGE@${{ needs.release-build.outputs.digest }}"
           echo "IMG=$IMG" >> "$GITHUB_ENV"
 
       - name: Hardware-free image checks (no NPU, no secrets)

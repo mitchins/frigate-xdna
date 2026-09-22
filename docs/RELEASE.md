@@ -40,9 +40,11 @@ building. Staged input is deleted in an `always()` cleanup step.
   resolve to one digest (asserted in the job; divergence fails).
 - **Dry run** (recommended first): Actions → Release → Run workflow
   (optionally with a `version_tag`). Builds, generates SBOM/manifest
-  and runs the pull-by-digest sanity against the local image; pushes,
-  attests and uploads nothing. Dispatch can never publish, so the
-  requested version cannot diverge from the built SHA.
+  and runs the image sanity gate against the local image; pushes,
+  attests and uploads nothing (each job runs on a fresh runner with
+  no shared image store, so cross-job validation only applies to
+  pushed digests). Dispatch can never publish, so the requested
+  version cannot diverge from the built SHA.
 - **Pinned inputs.** The base image is digest-pinned
   (digest-only `ubuntu@sha256:008173c2…`, i.e. docker.io 24.04;
   bump deliberately with a fresh `base-packages.txt` inventory,
