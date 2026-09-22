@@ -170,19 +170,30 @@ Fixes landed during Task 8.4 (all committed on the branch):
 
 ## 6. Verdict
 
-**BLOCKERS before Task 8.5** (i.e. NOT `RELEASE_AUTOMATION_READY`):
+**RELEASE_AUTOMATION_READY.**
+
+Residual non-blocking items for Task 8.5 / later (none gates release
+automation):
 
 1. **Rlimit attribution: PROVEN.** VmPeak 6.39 GB vs RSS 1.87 GB
    on the clean post-fix compile — the old 6 GiB AS cap would have
    killed exactly this mapping. No mmap failure, no segfaults in the
    full product run since.
-2. **24 h soak outstanding (running).** Started 2026-09-21T06:13:47Z
-   on the exact state above (offline B active gen 2, replay
-   looping, 200 ms detector timeout, production thresholds);
-   baseline in `/mnt/downloads/fxdna-087-soak-baseline.json`.
-   Verdict flips to `RELEASE_AUTOMATION_READY` only when the soak
-   closes with full accounting and no stop events.
-3. **30-min confidence: PASSED 06:09Z.** +26k requests, zero errors
+2. **24 h soak CLOSED 2026-09-22T06:23:04Z (24h09m).**
+   Offered/accepted/completed/delivered **1,234,208 / 0 rejected /
+   0 timeout / 0 late-discard / 0 zero-frames**; no timeout windows
+   to attribute. Same worker (PID 28, gen 2, 25 h lifetime, zero
+   switches); RSS 208860 → 151252 kB (shrinks, never grows);
+   24 m 18 s CPU for 1.23 M inferences (NPU offload confirmed).
+   Frigate side: 4,069 person tracks, zero other labels, replay
+   looping throughout. No inhibition, no device fault, no host
+   reset (boot token unchanged), no wrong-model. Baseline/close in
+   `/mnt/downloads/fxdna-087-soak-{baseline,close}.json`. Known gaps:
+   p50/p95/p99 not instrumented (mean 10–18 ms observed); no
+   second-client hardware accounting per the no-polling rule.
+   Frigate harness itself bloated (~10 GB, its own managers) without
+   affecting product accounting; host never OOM'd.
+3. **30-min confidence: PASSED.** +26k requests, zero errors
    of any kind, worker RSS byte-flat (208860 kB ×4 samples),
    same worker/gen throughout, tracks flowing.
 4. Component review renewal: +1 header file (same amd-eula 1.8.0;
