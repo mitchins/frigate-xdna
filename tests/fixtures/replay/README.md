@@ -1,6 +1,6 @@
 # Replay fixture (Task 05 full-app acceptance)
 
-Deterministic local moving video + stock Frigate `v0.18.0-rc2` Debug Replay
+Deterministic local moving video + stock Frigate `v0.18.0` Debug Replay
 path, exercising the whole chain rather than pushing prepared tensors:
 
 ```text
@@ -35,7 +35,7 @@ ZMQ -> sidecar accounting) but NOT for detection evidence: record
 
 ## Frigate side (operator, gated run)
 
-1. Pull the pinned image: `ghcr.io/blakeblackshear/frigate:0.18.0-rc2`.
+1. Pull the pinned image: `ghcr.io/blakeblackshear/frigate:0.18.0`.
 2. Mount the clip read-only into the Frigate container and configure a
    replay camera whose input is the file, carrying across the production
    camera's detect config (detect resolution, object filters, zones,

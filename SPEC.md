@@ -22,7 +22,7 @@ Public precompiled model catalogues and future Frigate+-side RAI generation are 
 
 * Linux x86-64; Ubuntu 24.04 userspace inside the appliance; Python 3.12 for orchestration; C++17 for FlexML inference.
 * First certified device: the proven Strix Halo XDNA2/AIE2P target. Other Ryzen AI NPUs require explicit compatibility testing; do not infer support from `/dev/accel/accel0` existing.
-* Compatibility anchor: unmodified Frigate `v0.18.0-rc2`. Pin the actual source and image digests in tests rather than following `dev`.
+* Compatibility anchor: unmodified Frigate `v0.18.0`. Pin the actual source and image digests in tests rather than following `dev`.
 * Primary model contract: batch-one, static-shape, three-channel YOLO-style object detection, initially the YOLOv9s-320 input/output family. The banked YOLOv8n artifact remains a test fixture.
 * Frigate+ YOLOv9 t/s and private fine-tunes are product targets, but each claimed contract must pass on the **actual Plus ONNX**, not merely a similarly named public YOLO export. The earlier v9t NaN result remains a real validation issue until resolved for the relevant graph.
 * 320 and 640 are supported geometries where a compiled and validated model supports them. No silent spatial resizing of a model graph.

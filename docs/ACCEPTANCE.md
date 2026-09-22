@@ -51,7 +51,7 @@ Do not reuse quarantined v8l or interrupted suspect artifacts as test fixtures.
 
 ## 4. Full Frigate application gate
 
-Run a separate, pinned Frigate 0.18.0-rc2 image with a deterministic local moving video and MQTT disabled or isolated. No production cameras/recording volumes/credentials are required for the first test.
+Run a separate, pinned Frigate 0.18.0 image with a deterministic local moving video and MQTT disabled or isolated. No production cameras/recording volumes/credentials are required for the first test.
 
 Prove:
 

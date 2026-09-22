@@ -2,6 +2,8 @@
 
 Byte-identical Frigate `v0.18.0-rc2` files (verified by `git hash-object`
 against the blobs in `upstream.lock.json`) plus minimal test shims.
+All pinned blobs verified identical at upstream tag `v0.18.0`
+(see `upstream.lock.json`), so the fixtures certify both tags.
 
 Pinned-verbatim (assert byte-identical in `tests/contract/test_pinned.py`):
 * `frigate/detectors/plugins/zmq_ipc.py` — the stock plugin under test.

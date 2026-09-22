@@ -1,10 +1,13 @@
 # Release process (Task 8.5)
 
 One automated path from approved source to GHCR — no manual image
-handling. The owner merges to `main`, then either pushes a version tag
-or publishes a GitHub Release; the `Release` workflow does everything
-else on the trusted self-hosted builder. This PR only adds the
-automation; **no tag has been created and nothing has been pushed**.
+handling. The owner merges to `main`, then pushes a version tag; the
+`Release` workflow does everything else on the trusted self-hosted
+builder, including creating the GitHub Release with SBOM + manifest.
+There is exactly one publication trigger (a pushed `v*` tag), so a
+version builds exactly once. Manual dispatch is dry-run only by
+construction and can never publish. This PR only adds the automation;
+**no tag has been created and nothing has been pushed**.
 
 ## One-time owner setup (all required before first use)
 
@@ -38,9 +41,17 @@ automation; **no tag has been created and nothing has been pushed**.
   `:0.1.0`, `:0.1`, `:0`, `:latest` and `:sha-<short>` — all tags
   resolve to one digest (asserted in the job; divergence fails).
 - **Dry run** (recommended first): Actions → Release → Run workflow
-  with `dry_run: true` (default). Builds, generates SBOM/manifest and
-  runs the pull-by-digest sanity against the local image; pushes,
-  attests and uploads nothing.
+  (optionally with a `version_tag`). Builds, generates SBOM/manifest
+  and runs the pull-by-digest sanity against the local image; pushes,
+  attests and uploads nothing. Dispatch can never publish, so the
+  requested version cannot diverge from the built SHA.
+- **Pinned inputs.** The base image is digest-pinned
+  (`ubuntu:24.04@sha256:008173c2…`; bump deliberately with a fresh
+  `base-packages.txt` inventory, which the workflow records per
+  release). Build-tool versions are pinned in `packaging/Dockerfile`
+  (`pip`/`setuptools`/`wheel`); runtime/test pins live in
+  `requirements.lock` and `packaging/constraints-*.txt`. No floating
+  `--upgrade` remains on the release path.
 
 ## What the workflow proves per release
 

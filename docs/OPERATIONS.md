@@ -38,7 +38,7 @@ Once B is prepared, update Frigate's model ID and reinitialize through its norma
 
 ## Unexpected cold miss
 
-The model can be saved and prepared, but stock rc2 initial model failure is not auto-polled. After `wait` reports prepared, restart/reinitialize Frigate's detector via normal configuration/service behaviour. Do not modify the plugin, lie about readiness, or stretch inference timeouts to minutes.
+The model can be saved and prepared, but stock 0.18.0 initial model failure is not auto-polled. After `wait` reports prepared, restart/reinitialize Frigate's detector via normal configuration/service behaviour. Do not modify the plugin, lie about readiness, or stretch inference timeouts to minutes.
 
 ## Status, cache and offline operation
 

@@ -12,7 +12,7 @@ no architecture changes, no AMD-stack upgrades, no hardware experiments.
 | `tools/**`, `recipes/**` | Analysis, no import coverage | Operator-run offline scripts, verified by execution (`--help` smoke + appliance build), not by import |
 | `native/**` (C++) | Analysis, no line coverage | Covered by contract/hardware tests (§4), never faked into Python-style numbers |
 | `native/reference/**` | Excluded | Byte-identical Phase-5/7 proof sources, retained for provenance (`native/reference/README.md`); not compiled (`CMakeLists.txt` builds only `native/src/*`), not shipped; must not be modified |
-| `tests/upstream/**` | Excluded | Pinned stock Frigate `v0.18.0-rc2` sources (`LICENSE`, `NOTICES.md`, `upstream.lock.json`); third-party, must not be reformatted |
+| `tests/upstream/**` | Excluded | Pinned stock Frigate sources (rc2 fetch, blobs verified identical in `v0.18.0`) (`LICENSE`, `NOTICES.md`, `upstream.lock.json`); third-party, must not be reformatted |
 | `tests/**` | Test scope | S8997/S5778 style rules assume pytest; suite is unittest — documented residual, not churned |
 | `packaging/vendor-input/**`, `packaging/vendor-files.manifest.json`, `**/__pycache__/**` | Excluded | Staged binary payload input / generated manifest / bytecode |
 | `tests/fixtures/**` | Duplication-excluded | Binary/text evidence fixtures |
