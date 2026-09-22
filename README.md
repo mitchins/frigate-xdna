@@ -48,14 +48,15 @@ Minimal Compose — replace `NPU_GID` with the numeric group owning
 
 ```sh
 NPU_GID=$(stat -c %g /dev/accel/accel0) \
+FXDNA_IMAGE=ghcr.io/mitchins/frigate-xdna:0.1.0-rc.1 \
 FXDNA_MODELS="plus://<model-id>" \
-docker compose -f examples/compose.yaml up -d
+docker compose -f examples/compose.yaml -f examples/compose.plus.yaml up -d
 ```
 
-Local-only deployments need no Plus secret; add the Plus overlay for
-Frigate+ models (see `examples/compose.plus.yaml` and
-`docs/OPERATIONS.md`). The sidecar needs no published ZMQ port —
-stock Frigate joins the same network.
+Local-only deployments omit the Plus overlay and need no Plus secret
+(see `examples/compose.plus.yaml` and `docs/OPERATIONS.md`). The
+sidecar needs no published ZMQ port — stock Frigate joins the same
+network.
 
 ## Frigate config
 

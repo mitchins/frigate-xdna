@@ -12,7 +12,8 @@
 #
 # Flow: approved manual release
 #   -> verify pinned inputs (tag SHA, canonical vendor payload, manifests)
-#   -> reproducible podman build (linux/amd64, packaging/Dockerfile)
+#   -> pinned, auditable podman build (linux/amd64, packaging/Dockerfile)
+#       (base digest pinned; apt layer recorded, not frozen — see inventory)
 #   -> SBOM + release manifest + base package inventory from release inputs
 #   -> push pinned tags to GHCR -> attest (OIDC) -> pull-by-digest sanity
 #   -> create GitHub Release (prerelease for RCs) with SBOM + manifest
@@ -35,13 +36,9 @@ on:
     tags:
       - "v*"
 
-# Least privilege; jobs add only what they use. Publish needs
-# packages:write, attestations need id-token/attestations.
+# Least privilege; jobs add only what they use.
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
 
 # A release must never be cancelled or overlapped mid-push.
 concurrency:
@@ -60,6 +57,12 @@ jobs:
     runs-on: [self-hosted, Linux, X64, frigate-xdna-release]
     timeout-minutes: 120
     environment: release
+    # Publish needs packages:write, attestations need id-token/attestations.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     outputs:
       digest: ${{ steps.push.outputs.digest }}
       version: ${{ steps.tags.outputs.version }}
@@ -187,21 +190,6 @@ jobs:
       - name: Build appliance (linux/amd64, pinned inputs)
         run: |
           set -eu
-          CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "CREATED=$CREATED" >> "$GITHUB_ENV"
-      - name: Record base package inventory (pinned digest)
-        run: |
-          set -eu
-          podman pull "ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3"
-          podman run --rm --security-opt apparmor=unconfined \
-            "ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3" \
-            dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' \
-            | sort > release-out/base-packages.txt
-          wc -l release-out/base-packages.txt
-
-      - name: Build appliance (linux/amd64, pinned inputs)
-        run: |
-          set -eu
           mkdir -p release-out
           CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "CREATED=$CREATED" >> "$GITHUB_ENV"
@@ -215,6 +203,18 @@ jobs:
             --label "org.opencontainers.image.licenses=MIT for project source; incorporated AMD/vendor binaries under AMD-EULA and third-party terms, see /opt/fxdna/legal" \
             -f packaging/Dockerfile \
             -t "frigate-xdna:release-${{ steps.tags.outputs.version }}" .
+
+      - name: Record installed package inventory (finished image)
+        run: |
+          # The base digest is pinned but apt packages still float, so the
+          # inventory describes the finished image — never the pristine
+          # base. Honest name: pinned and auditable, not byte-reproducible.
+          set -euo pipefail
+          podman run --rm --security-opt apparmor=unconfined \
+            "frigate-xdna:release-${{ steps.tags.outputs.version }}" \
+            dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' \
+            | sort > release-out/base-packages.txt
+          wc -l release-out/base-packages.txt
 
       - name: Generate SBOM + release manifest from release source
         run: |
@@ -241,6 +241,8 @@ jobs:
               ).hexdigest(),
               "recipe_id": "bf16-vaiml-v1",
               "base_image": "ubuntu:24.04",
+              "base_digest": "sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3",
+              "base_packages": "release-out/base-packages.txt",
               "built_at": os.environ["CREATED"],
               "builder": "self-hosted trusted release runner",
           }
