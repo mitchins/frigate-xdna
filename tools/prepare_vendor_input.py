@@ -42,6 +42,10 @@ def main() -> int:
     ap.add_argument("--payload-src", required=True)
     ap.add_argument("--xrt-src", required=True)
     ap.add_argument("--flexmlrt-lib", required=True)
+    ap.add_argument("--flexmlrt-include", required=False, default=None,
+                    help="Directory with FlexMLRT C++ headers (e.g. the "
+                         "audited wheel's flexmlrt/include); staged to "
+                         "flexmlrt/include for the native worker build.")
     ap.add_argument("--legal-src", required=True)
     ap.add_argument("--calib-src", required=True)
     ap.add_argument("--out", default=DEFAULT_OUT)
@@ -56,6 +60,9 @@ def main() -> int:
     for fn in ("libflexmlrt.so",):
         shutil.copy2(os.path.join(args.flexmlrt_lib, fn),
                      os.path.join(args.out, "flexmlrt", fn))
+    if args.flexmlrt_include:
+        copy_tree(args.flexmlrt_include,
+                  os.path.join(args.out, "flexmlrt", "include"))
     copy_tree(args.legal_src, os.path.join(args.out, "legal"))
     # Calibration images: the exact 32 COCO images from the audited proof
     # (public ultralytics COCO128 assets, 1.9 MB). Same bytes => same BF16.

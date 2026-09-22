@@ -12,7 +12,6 @@ import argparse
 import copy
 import hashlib
 import os
-import resource
 import sys
 import time
 
@@ -24,13 +23,13 @@ from quark.onnx import ModelQuantizer
 from quark.onnx.quantization.config.config import Config
 from quark.onnx.quantization.config.custom_config import get_default_config
 
-# Safe resource limits (replaces unsafe preexec_fn in launcher): 6 GiB AS.
+# No RLIMIT_AS here (or anywhere in the pipeline): an address-space cap
+# breaks large VA mappings (512 MiB ENOMEM) while RSS stays far below any
+# real limit. Memory is bounded by the container/cgroup (compose
+# mem_limit 8g); native runs without a container are the operator's
+# responsibility (e.g. systemd-run --scope -p MemoryMax=8G).
 # File-size capping is handled by parent log truncation, not RLIMIT_FSIZE,
 # so artifact writes (BF16 ONNX) are not capped at 8 MiB.
-try:
-    resource.setrlimit(resource.RLIMIT_AS, (6 * 1024 ** 3, 6 * 1024 ** 3))
-except (ValueError, OSError):
-    pass
 
 
 class PILDataReader(CalibrationDataReader):
@@ -71,6 +70,99 @@ def geometry_of(onnx_path: str) -> tuple[str, int]:
     return model.graph.input[0].name, shape[2]
 
 
+EDGE_OPS = frozenset({"QuantizeLinear", "DequantizeLinear", "Cast"})
+
+
+def _consumers(nodes):
+    cons = {}
+    for n in nodes:
+        for i in n.input:
+            cons.setdefault(i, []).append(n)
+    return cons
+
+
+def _input_chain(nodes, graph_input):
+    """Single-consumer edge-op chain from a graph input to its tail."""
+    cons = _consumers(nodes)
+    chain, cur = [], graph_input
+    while True:
+        users = cons.get(cur, [])
+        if len(users) != 1:
+            break
+        nxt = users[0]
+        if nxt.op_type not in EDGE_OPS or len(nxt.output) != 1:
+            break
+        chain.append(nxt)
+        cur = nxt.output[0]
+    if not chain or not cons.get(cur):
+        return None
+    return cur
+
+
+def _prune_dead_edge_nodes(model):
+    """Drop edge-op nodes no kept node consumes (cascading), then prune
+    orphaned initializers/value_info. Index-based: protobuf node
+    wrappers have unstable id(). Non-edge nodes and graph outputs are
+    never touched."""
+    nodes = list(model.graph.node)
+    graph_outputs = {o.name for o in model.graph.output}
+    keep = set(range(len(nodes)))
+    while True:
+        live_inputs = set()
+        for i in keep:
+            live_inputs.update(nodes[i].input)
+        doomed = [i for i in keep
+                  if nodes[i].op_type in EDGE_OPS and not any(
+                      o in live_inputs or o in graph_outputs
+                      for o in nodes[i].output)]
+        if not doomed:
+            break
+        keep.difference_update(doomed)
+    kept = [nodes[i] for i in range(len(nodes)) if i in keep]
+    del model.graph.node[:]
+    model.graph.node.extend(kept)
+    refd = {o.name for o in model.graph.output}
+    for n in model.graph.node:
+        refd.update(n.input)
+    kept_init = [t for t in model.graph.initializer if t.name in refd]
+    del model.graph.initializer[:]
+    model.graph.initializer.extend(kept_init)
+    kept_vi = [v for v in model.graph.value_info if v.name in refd]
+    del model.graph.value_info[:]
+    model.graph.value_info.extend(kept_vi)
+
+
+def restore_float_inputs(path: str) -> int:
+    """Collapse input quantization chains back to float graph inputs.
+
+    Quark's BF16QDQToCast conversion can leave Cast nodes with BF16
+    inputs (e.g. on the images edge) that onnxruntime-vitisai refuses
+    to load. Walk each graph input through single-consumer
+    QuantizeLinear/DequantizeLinear/Cast nodes, rewire the first real
+    consumer back to the graph input, and drop the orphaned chain.
+    Numerically exact: restores the original float32 input edge (the
+    compile probe feeds float32). Model-agnostic: graphs without such
+    chains are byte-unchanged apart from a checker pass. Returns the
+    number of collapsed chains.
+    """
+    model = onnx.load(path)
+    collapsed = 0
+    for gi in sorted(i.name for i in model.graph.input):
+        tail = _input_chain(list(model.graph.node), gi)
+        if tail is None:
+            continue
+        for n in model.graph.node:
+            for idx, inp in enumerate(n.input):
+                if inp == tail:
+                    n.input[idx] = gi
+        collapsed += 1
+    _prune_dead_edge_nodes(model)
+    onnx.checker.check_model(model, full_check=False)
+    with open(path, "wb") as f:
+        f.write(model.SerializeToString())
+    return collapsed
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--onnx", required=True)
@@ -80,12 +172,17 @@ def main() -> int:
     input_name, geom = geometry_of(args.onnx)
     qc = get_default_config("BF16")
     qc.extra_options["BF16QDQToCast"] = True
+    # Quark's own VAIML-targeted repair: removes BF16 Cast couples and
+    # converts stray BF16 weights to float32 (see remove_bf16_cast).
+    qc.extra_options["EnableVaimlBF16"] = True
     t0 = time.time()
     ModelQuantizer(Config(global_quant_config=copy.deepcopy(qc))).quantize_model(
         args.onnx, args.out,
         PILDataReader(args.calib, input_name, geom, 32))
+    collapsed = restore_float_inputs(args.out)
     digest = hashlib.sha256(open(args.out, "rb").read()).hexdigest()
-    print(f"BF16_PREPARE_OK {time.time() - t0:.1f}s {digest}", flush=True)
+    print(f"BF16_PREPARE_OK {time.time() - t0:.1f}s {digest}"
+          f" collapsed_inputs={collapsed}", flush=True)
     return 0
 
 

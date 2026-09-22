@@ -13,6 +13,7 @@ license = { text = "MIT" }
 dependencies = [
     "requests==2.34.2",
     "onnx==1.23.0",
+    "pyzmq==27.2.0",
 ]
 
 [project.scripts]

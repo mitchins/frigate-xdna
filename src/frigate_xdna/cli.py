@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
+import threading
 import time
 
 from . import __version__
@@ -28,7 +30,7 @@ from .supervisor import Supervisor
 
 COMMANDS = (
     "serve", "prepare", "status", "wait", "activate", "cache",
-    "doctor", "health", "recover",
+    "doctor", "health", "recover", "diagnose",
 )
 
 
@@ -55,6 +57,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("status", help="Show model/job/service state (no NPU).")
     sp.add_argument("ref", nargs="?", default=None)
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--show-identifiers", action="store_true",
+                    help="Reveal raw Plus IDs/full digests (owning machine "
+                         "only; default is pseudonymized).")
+
+    dp_diag = sub.add_parser(
+        "diagnose",
+        help="Export a redacted support bundle (no keys/IDs/URLs/bytes).")
+    dp_diag.add_argument("--out", required=True,
+                         help="Destination directory (created if missing).")
+    dp_diag.add_argument("--show-identifiers", action="store_true",
+                         help="Reveal raw Plus IDs/full digests (owning "
+                              "machine only; default is pseudonymized).")
+    dp_diag.add_argument("--history-lines", type=int, default=200,
+                         help="Journal history tail lines to include.")
 
     wp = sub.add_parser("wait", help="Wait for a model state via admin socket.")
     wp.add_argument("ref")
@@ -106,10 +122,13 @@ def _daemon_alive(data_dir: str, timeout_s: float = 2.0) -> bool:
         s.close()
 
 
-def _read_status(config, ref=None) -> dict:
+def _read_status(config, ref=None, show_identifiers: bool = False) -> dict:
     """Read-only status: no lock, no NPU, works with or without a daemon.
 
-    Never creates state: a missing registry means STARTING, not an error.
+    Never creates state: a missing registry means STARTING, not an error
+    (the redaction key is only ensured once a registry exists). By
+    default Plus IDs are HMAC pseudonyms and digests abbreviated;
+    --show-identifiers reveals raw values on the owning machine only.
     """
     db = os.path.join(config.data_dir, "registry.sqlite3")
     if not os.path.isfile(db):
@@ -117,6 +136,9 @@ def _read_status(config, ref=None) -> dict:
                 "version": __version__, "state": "STARTING",
                 "active": None, "models": [],
                 "note": "no registry yet; daemon not started"}
+    from .observability.redact import load_or_create_key
+    key = None if show_identifiers else load_or_create_key(config.data_dir)
+    view = _StatusView(show_identifiers, key)
     # SERVING is reported only when a live manager owns the directory;
     # otherwise STARTING (or INHIBITED) — never inference readiness (B2).
     daemon = _daemon_alive(config.data_dir)
@@ -125,23 +147,183 @@ def _read_status(config, ref=None) -> dict:
         if ref:
             from .models.refs import parse_ref
             rec = reg.get_ref(parse_ref(ref)["ref"])
-            models = [{"ref": rec["ref"],
-                       "source_sha256": rec.get("source_sha256") or "",
-                       "state": rec.get("state") or "NEW"}] if rec else []
+            models = [view.model(rec)] if rec else []
         else:
-            models = [{"ref": r[0], "source_sha256": r[3] or "",
-                       "state": r[5]} for r in reg.query(
+            models = [view.row(r) for r in reg.query(
                 "SELECT ref, kind, model_id, source_sha256,"
                 " metadata_sha256, state FROM model_refs")]
         inhibition = reg.get_state("inhibition")
         state = "SERVING" if daemon else (
             "INHIBITED" if inhibition else "STARTING")
+        active = view.active(reg.get_state("active"))
         return {"schema_version": 1, "service": "frigate-xdna",
                 "version": __version__, "state": state,
-                "active": reg.get_state("active"), "models": models,
+                "active": active, "models": models,
                 "inhibition": inhibition}
     finally:
         reg.close()
+
+
+class _StatusView:
+    """Raw-or-redacted projection for status output (one policy object)."""
+
+    def __init__(self, show_identifiers: bool, key: bytes | None):
+        self.show = show_identifiers
+        self.key = key
+
+    def model(self, rec: dict) -> dict:
+        return self.triple(rec["ref"], rec.get("source_sha256"),
+                           rec.get("state") or "NEW")
+
+    def row(self, r: tuple) -> dict:
+        return self.triple(r[0], r[3] or "", r[5])
+
+    def triple(self, raw_ref: str, source_sha: str | None, state: str,
+               ) -> dict:
+        from .observability.redact import abbreviate_digest, sanitize_ref
+        if self.show:
+            return {"ref": raw_ref, "source_sha256": source_sha or "",
+                    "state": state}
+        assert self.key is not None
+        return {"ref": sanitize_ref(raw_ref, self.key),
+                "source_sha256": abbreviate_digest(source_sha or ""),
+                "state": state}
+
+    def active(self, value) -> object:
+        from .observability.redact import sanitize_obj, sanitize_ref
+        if isinstance(value, dict):
+            # Machine struct {compile_key, worker_generation,
+            # serving_digest}: content hashes, no Plus IDs to redact.
+            return value if self.show else sanitize_obj(value, self.key)
+        if value and not self.show:
+            assert self.key is not None
+            return sanitize_ref(value, self.key)
+        return value
+
+
+def cmd_diagnose(config, args) -> int:
+    """Export a redacted support bundle (Task 05 external-privacy gate).
+
+    Collects status/config/journal/registry-inventory through the
+    sanitizer. NEVER includes: redaction.key, the raw registry DB, model
+    bytes (.rai/.onnx), key/secret material, bearer tokens, signed URLs.
+    Raw Plus IDs appear only with --show-identifiers (owning machine).
+    """
+    from .observability.redact import load_or_create_key, sanitize_obj
+    # Canonicalize the operator-chosen directory (no symlink surprises);
+    # writing where the local operator points is the command's purpose.
+    out = os.path.realpath(os.path.abspath(args.out))
+    os.makedirs(out, exist_ok=True)
+    show = args.show_identifiers
+    key = None if show else load_or_create_key(config.data_dir)
+    writer = _BundleWriter(out)
+
+    doc = _read_status(config, show_identifiers=show)
+    writer.write("status.json", doc if show else sanitize_obj(doc, key))
+    writer.write("config.json", sanitize_obj(config.redacted(), key) if key
+                 else config.redacted())
+    writer.write("journal-current.json",
+                 _diagnose_current(config, show, key))
+    writer.write("journal-history.tail.jsonl",
+                 _diagnose_history(config, args.history_lines, key))
+    refs_out, arts_out = _diagnose_inventory(config, show, key)
+    writer.write("registry-refs.json", refs_out)
+    writer.write("cache-inventory.json", arts_out)
+    writer.write("manifest.json", {
+        "schema_version": 1,
+        "generator": f"fxdna {__version__} diagnose",
+        "identifiers": "raw" if show else "pseudonymized",
+        "note": "Redacted bundle: no keys/tokens/signed URLs/model "
+                "bytes/raw registry. redaction.key never exported.",
+        "files": sorted(writer.files),
+    })
+    print(json.dumps({"schema_version": 1, "out": out,
+                      "identifiers": "raw" if show else "pseudonymized",
+                      "files": sorted(
+                          writer.files + ["manifest.json"])},
+                     indent=2, sort_keys=True))
+    return SUCCESS
+
+
+class _BundleWriter:
+    """One JSON/text file writer for the diagnose bundle directory."""
+
+    def __init__(self, out: str):
+        self.out = out
+        self.files: list[str] = []
+
+    def write(self, name: str, payload) -> None:
+        path = os.path.join(self.out, name)
+        if isinstance(payload, (dict, list)):
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, sort_keys=True)
+        else:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(payload)
+        self.files.append(name)
+
+
+def _diagnose_current(config, show: bool, key: bytes | None):
+    """Sanitized journal current.json ({} when absent)."""
+    from .observability.redact import sanitize_obj
+    cur_path = os.path.join(config.data_dir, "operations", "current.json")
+    if not os.path.isfile(cur_path):
+        return {}
+    with open(cur_path, encoding="utf-8") as f:
+        cur = json.load(f)
+    return cur if show else sanitize_obj(cur, key)
+
+
+def _diagnose_history(config, history_lines: int, key: bytes | None) -> str:
+    """Bounded, line-sanitized journal history tail."""
+    from .observability.redact import sanitize_text
+    hist_path = os.path.join(config.data_dir, "operations", "history.jsonl")
+    if not os.path.isfile(hist_path):
+        return ""
+    with open(hist_path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    tail = lines[-max(history_lines, 0):]
+    if key:
+        tail = [sanitize_text(line, key) for line in tail]
+    return "\n".join(tail) + "\n" if tail else ""
+
+
+def _diagnose_inventory(config, show: bool, key: bytes | None):
+    """Sanitized (refs, artifacts) inventory: refs aliased, source
+    digests abbreviated, compile keys (content hashes) kept full."""
+    from .observability.redact import abbreviate_digest, sanitize_ref
+    refs_out: list[dict] = []
+    arts_out: list[dict] = []
+    db = os.path.join(config.data_dir, "registry.sqlite3")
+    if not os.path.isfile(db):
+        return refs_out, arts_out
+    reg = Registry(db, read_only=True)
+    try:
+        for r in reg.query("SELECT ref, kind, state FROM model_refs"):
+            refs_out.append({
+                "ref": r[0] if show else sanitize_ref(r[0], key),
+                "kind": r[1], "state": r[2]})
+        for r in reg.query(
+                "SELECT compile_key, source_sha256, artifact_size,"
+                " recipe_id FROM artifacts"):
+            arts_out.append({
+                "compile_key": r[0],
+                "source_sha256": r[1] if show else
+                abbreviate_digest(r[1] or ""),
+                "bytes": r[2], "recipe": r[3]})
+    finally:
+        reg.close()
+    return refs_out, arts_out
+
+
+def _install_serve_handlers(handler) -> None:
+    """Install SIGTERM/SIGINT serve handlers (PID-1 safe). Split out so
+    unit tests can verify registration without sending real signals."""
+    signal.signal(signal.SIGTERM, handler)
+    try:
+        signal.signal(signal.SIGINT, handler)
+    except (OSError, ValueError):
+        pass
 
 
 # Admin error_code -> CLI exit mapping (mirrors _TERMINAL_EXIT for the
@@ -204,6 +386,7 @@ def cmd_serve(config) -> int:
         from .transport.frigate_zmq import FrigateZmqFrontend
 
         zfrontend = FrigateZmqFrontend(sup, config.endpoint)
+        sup.frontend = zfrontend
         zloop = _asyncio.new_event_loop()
         ready = _thr.Event()
         exc: list[Exception] = []
@@ -253,12 +436,22 @@ def cmd_serve(config) -> int:
                   f"[{e.error_code}]", file=sys.stderr)
     print(f"fxdna: serving endpoint={config.endpoint} "
           f"data={sup.data_dir}", file=sys.stderr)
+    # Explicit handlers: as container PID 1 the default SIGTERM action
+    # is ignored by the kernel, so without these the process never
+    # stops gracefully (grace timeout -> SIGKILL -> exit 137) and the
+    # worker is never retired cleanly. Handlers only set the event;
+    # teardown stays in the finally below (bounded, ordered).
+    stop_event = threading.Event()
+
+    def _on_signal(signum, _frame):
+        print(f"fxdna: signal {signum}, stopping", file=sys.stderr)
+        stop_event.set()
+
+    _install_serve_handlers(_on_signal)
     try:
-        while True:
+        while not stop_event.is_set():
             sup.pump(0.2)
-            time.sleep(0.2)
-    except KeyboardInterrupt:
-        pass
+            stop_event.wait(0.2)
     finally:
         if zfrontend is not None and zloop is not None and zthread is not None:
             try:
@@ -359,7 +552,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "prepare":
             return cmd_prepare(config, args)
         if args.command == "status":
-            doc = _read_status(config, args.ref)
+            doc = _read_status(config, args.ref, args.show_identifiers)
             if args.json:
                 print(json.dumps(doc, indent=2, sort_keys=True))
             else:
@@ -368,6 +561,8 @@ def main(argv: list[str] | None = None) -> int:
                 if not doc.get("models"):
                     print("(no models registered)")
             return SUCCESS
+        if args.command == "diagnose":
+            return cmd_diagnose(config, args)
         if args.command == "wait":
             return cmd_wait(config, args)
         if args.command == "activate":

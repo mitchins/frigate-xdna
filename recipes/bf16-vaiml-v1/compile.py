@@ -2,8 +2,10 @@
 """bf16-vaiml-v1 step 2: VAIML compile (audited recipe).
 
 Creates the VitisAI EP session over the BF16 ONNX (compile happens inside
-session creation), runs one zeros probe, and leaves the .rai + context.json
-in the cache dir. No reusable cache: the cache dir must be empty/fresh.
+session creation) and leaves the .rai + context.json in the cache dir.
+No reusable cache: the cache dir must be empty/fresh. The zeros probe
+runs out-of-child (launcher, real worker path); see compile-probe note
+in main().
 
 Usage: compile.py --onnx BF16.onnx --config vaiml_config.json
                   --cache-dir DIR --cache-key KEY
@@ -12,18 +14,15 @@ Prints: COMPILE_OK <seconds> <rai_sha256> <rai_bytes> as the last line.
 import argparse
 import hashlib
 import os
-import resource
 import sys
 import time
 
-import numpy as np
 import onnx
 import onnxruntime as ort
 
-try:
-    resource.setrlimit(resource.RLIMIT_AS, (6 * 1024 ** 3, 6 * 1024 ** 3))
-except (ValueError, OSError):
-    pass
+# No RLIMIT_AS: an address-space cap breaks the 512 MiB device VA
+# mapping with ENOMEM even on healthy hardware (see prepare.py note).
+# Memory is bounded by the container/cgroup.
 
 
 def geometry_of(onnx_path: str) -> tuple[str, int]:
@@ -48,7 +47,7 @@ def main() -> int:
             raise SystemExit(
                 f"cache dir not empty: {args.cache_dir!r} — refusing to reuse; "
                 f"provide a fresh empty directory")
-    input_name, geom = geometry_of(args.onnx)
+    geometry_of(args.onnx)  # validates square static input; probe lives out-of-child
     os.makedirs(args.cache_dir, exist_ok=True)
     so = ort.SessionOptions()
     so.log_severity_level = 1
@@ -63,11 +62,11 @@ def main() -> int:
         print("COMPILE_FAILED: VitisAI EP unavailable (silent CPU fallback "
               "is never accepted)", flush=True)
         return 1
-    x = np.zeros((1, 3, geom, geom), dtype=np.float32)
-    out = sess.run(None, {input_name: x})[0]
-    if not np.isfinite(out).all():
-        print("COMPILE_FAILED: non-finite probe output", flush=True)
-        return 1
+    # No in-child zeros probe here: this child holds the full VAIML
+    # session, and the 512 MB device mapping for a probe run fails
+    # under the child's address-space cap even on healthy hardware.
+    # The launcher probes the published .rai out-of-child through the
+    # real resident worker path (fresh process, device lease held).
     rai_path = os.path.join(args.cache_dir, args.cache_key,
                             f"{args.cache_key}.rai")
     if not os.path.isfile(rai_path):

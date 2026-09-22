@@ -70,8 +70,8 @@ class TestSpawn(unittest.TestCase):
             os.environ["PLUS_API_KEY"] = "topsecret-value"
             with tempfile.TemporaryDirectory() as d:
                 env = build_quant_env(d)
-                rc, _ = spawn(["/usr/bin/env"], env, d, 30.0,
-                              os.path.join(d, "env"))
+                rc, _, _ = spawn(["/usr/bin/env"], env, d, 30.0,
+                                 os.path.join(d, "env"))
                 self.assertEqual(rc, 0)
                 out = open(os.path.join(d, "env.stdout.log")).read()
                 self.assertNotIn("topsecret-value", out)
@@ -83,8 +83,8 @@ class TestSpawn(unittest.TestCase):
     def test_timeout_kills_group(self):
         with tempfile.TemporaryDirectory() as d:
             env = build_quant_env(d)
-            rc, wall = spawn(["/bin/sleep", "60"], env, d, 2.0,
-                             os.path.join(d, "sleep"))
+            rc, wall, _ = spawn(["/bin/sleep", "60"], env, d, 2.0,
+                                os.path.join(d, "sleep"))
             self.assertEqual(rc, 124)
             self.assertLess(wall, 30.0)
 
@@ -98,9 +98,144 @@ class TestSpawn(unittest.TestCase):
 
     def test_missing_executable(self):
         with tempfile.TemporaryDirectory() as d:
-            rc, _ = spawn(["/nonexistent-xyz"], build_quant_env(d), d,
-                          10.0, os.path.join(d, "t"))
+            rc, _, vm = spawn(["/nonexistent-xyz"], build_quant_env(d),
+                              d, 10.0, os.path.join(d, "t"))
             self.assertEqual(rc, 127)
+            self.assertEqual(vm, 0)
+
+
+class FakeProbeChild:
+    """Minimal NativeWorker interface for probe tests."""
+
+    def __init__(self, fail=None, short=False):
+        self.fail = fail
+        self.short = short
+        self.loaded = False
+        self.generation = 0
+        self.retired = False
+
+    def alive(self):
+        return not self.retired
+
+    def load(self, artifact_path, generation, serving_digest,
+             class_count, timeout_s=25.0):
+        if self.fail is not None and self.fail[0] == "load":
+            from frigate_xdna.runtime.native import WorkerError
+            raise WorkerError(*self.fail[1:])
+        self.loaded = True
+        self.generation = generation
+
+    def infer(self, payload, shape, generation, timeout_s):
+        if self.fail is not None and self.fail[0] == "infer":
+            from frigate_xdna.runtime.native import WorkerError
+            raise WorkerError(*self.fail[1:])
+        from frigate_xdna.runtime.native import RESULT_BYTES
+        return bytes(10) if self.short else bytes(RESULT_BYTES)
+
+    def retire(self):
+        self.retired = True
+        self.loaded = False
+
+
+class TestProbeArtifact(unittest.TestCase):
+    def test_probe_ok(self):
+        from frigate_xdna.compiler.launcher import probe_artifact
+        kids = []
+        with tempfile.TemporaryDirectory() as d:
+            status, _detail = probe_artifact(
+                d, "/nonexistent.rai", 2, [1, 3, 2, 2],
+                worker_factory=lambda: kids.append(FakeProbeChild())
+                or kids[-1])
+            self.assertEqual(status, "ok")
+            self.assertTrue(kids[0].retired)
+
+    def test_probe_failed_retires(self):
+        from frigate_xdna.compiler.launcher import probe_artifact
+        kids = []
+        def factory():
+            kids.append(FakeProbeChild(fail=("infer", "DEVICE_FAULT",
+                                             "gone")))
+            return kids[-1]
+        with tempfile.TemporaryDirectory() as d:
+            status, detail = probe_artifact(
+                d, "/nonexistent.rai", 2, [1, 3, 2, 2],
+                worker_factory=factory)
+            self.assertEqual(status, "failed")
+            self.assertIn("DEVICE_FAULT", detail)
+            self.assertTrue(kids[0].retired)
+
+    def test_probe_skipped_when_device_busy(self):
+        from frigate_xdna.compiler.launcher import probe_artifact
+        from frigate_xdna.runtime.device_lease import DeviceLease
+        with tempfile.TemporaryDirectory() as d:
+            lease = DeviceLease(d)
+            self.assertTrue(lease.try_acquire())
+            try:
+                status, _detail = probe_artifact(
+                    d, "/nonexistent.rai", 2, [1, 3, 2, 2],
+                    worker_factory=FakeProbeChild)
+                self.assertEqual(status, "skipped")
+            finally:
+                lease.release()
+
+
+class TestVmPeak(unittest.TestCase):
+    def test_spawn_reports_vm_peak(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = build_quant_env(d)
+            rc, _wall, vm = spawn(["/bin/sleep", "2"], env, d, 30.0,
+                                  os.path.join(d, "vm"))
+            self.assertEqual(rc, 0)
+            self.assertGreater(vm, 0)
+
+    def test_sampler_zero_for_gone_pid(self):
+        import threading as _threading
+        import time as _time
+
+        from frigate_xdna.compiler.launcher import sample_vm_peak
+        stop = _threading.Event()
+        seen = []
+        t = _threading.Thread(
+            target=lambda: seen.append(sample_vm_peak(2 ** 30, stop,
+                                                      0.05)))
+        t.start()
+        _time.sleep(0.3)
+        stop.set()
+        t.join(timeout=10.0)
+        # PID that cannot exist: open fails every poll -> 0
+        self.assertEqual(seen, [0])
+
+    def test_sampler_tracks_live_process(self):
+        import subprocess as _sp
+        import threading as _threading
+        import time as _time
+
+        from frigate_xdna.compiler.launcher import sample_vm_peak
+        proc = _sp.Popen(["/bin/sleep", "30"])
+        stop = _threading.Event()
+        seen = []
+        t = _threading.Thread(
+            target=lambda: seen.append(sample_vm_peak(proc.pid, stop,
+                                                      0.05)))
+        t.start()
+        _time.sleep(0.3)
+        stop.set()
+        t.join(timeout=10.0)
+        proc.terminate()
+        proc.wait()
+        self.assertTrue(seen)
+        self.assertGreater(seen[0], 0)
+
+
+class TestDigestToken(unittest.TestCase):
+    def test_digest_with_trailing_fields(self):
+        from frigate_xdna.compiler.launcher import _parse_digest_token
+        sha = "a" * 64
+        self.assertEqual(
+            _parse_digest_token(f"BF16_PREPARE_OK 5.6s {sha} collapsed=1"),
+            sha)
+        self.assertEqual(_parse_digest_token("BF16_PREPARE_OK 5.6s"), "")
+        self.assertEqual(_parse_digest_token(""), "")
 
 
 class TestOneAtATime(unittest.TestCase):

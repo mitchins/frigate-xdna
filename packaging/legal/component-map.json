@@ -28,12 +28,12 @@
       "version": "1.8.0"
     },
     {
-      "file_count": 1,
-      "files_sha256": "2d332c16ee16e28aa383f5b228dbbe64c170cef62355f792dadbc13bbe00fa54",
+      "file_count": 2,
+      "files_sha256": "7e3accf0de1baedadf9e2f52b53f1dfb5b37fa7cacfc16be5f11ac39450129e9",
       "licence": "amd-eula",
       "package": "flexmlrt",
       "purpose": "standalone FlexMLRT runtime",
-      "total_bytes": 12623576,
+      "total_bytes": 12672259,
       "version": "1.8.0"
     },
     {

@@ -54,7 +54,7 @@ RUN python3.12 -m venv /opt/manager-venv \
  && /opt/manager-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
  && /opt/manager-venv/bin/pip install --no-cache-dir \
       -c /tmp/constraints-manager.txt \
-      requests==2.34.2 onnx==1.23.0 \
+      requests==2.34.2 onnx==1.23.0 pyzmq==27.2.0 \
  && /opt/manager-venv/bin/pip install --no-cache-dir --no-deps \
       --no-build-isolation /opt/fxdna/manager
 ENV PATH=/opt/manager-venv/bin:$PATH
@@ -97,11 +97,15 @@ FROM base AS native
 COPY native /tmp/native
 COPY packaging/vendor-input/flexmlrt /tmp/flexmlrt
 COPY packaging/vendor-input/xrt /tmp/xrt
+# Linker-name symlinks for the vendored XRT (find_library/link need
+# libxrt_core.so, not just the .so.2 soname links shipped upstream).
+RUN ln -sf libxrt_core.so.2.25.37 /tmp/xrt/lib/libxrt_core.so \
+ && ln -sf libxrt_coreutil.so.2.25.37 /tmp/xrt/lib/libxrt_coreutil.so
 RUN apt-get update && apt-get install -y --no-install-recommends cmake g++ pkg-config \
     && mkdir -p /tmp/native/build \
     && cmake -S /tmp/native -B /tmp/native/build \
         -DFLEXMLRT_INCLUDE_DIR=/tmp/flexmlrt/include \
-        -DFLEXMLRT_LIB=/tmp/flexmlrt/lib/libflexmlrt.so \
+        -DFLEXMLRT_LIB=/tmp/flexmlrt/libflexmlrt.so \
         -DXRT_ROOT=/tmp/xrt \
         -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /tmp/native/build -j4 \

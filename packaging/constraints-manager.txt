@@ -6,6 +6,7 @@ ml_dtypes==0.6.0
 numpy==2.5.3
 onnx==1.23.0
 protobuf==7.36.2
+pyzmq==27.2.0
 requests==2.34.2
 typing_extensions==4.16.0
 urllib3==2.8.0

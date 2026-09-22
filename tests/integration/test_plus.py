@@ -120,6 +120,45 @@ class TestModelFetch(PlusTestBase):
         data = c.download_model(url, allow_private_hosts=LOOP)
         self.assertEqual(data, b"MODEL-BYTES-1234")
 
+    def test_same_id_republished_bytes_surface_as_new_source(self):
+        # A→B update input: same Plus ID republished with new bytes must
+        # arrive as observably different content (the cache layer keys
+        # the source change off the resulting digest, never the ID).
+        import hashlib
+        c = self.client()
+        url = c.get_model_download_url("MODEL_A", allow_private_hosts=LOOP)
+        v1 = c.download_model(url, allow_private_hosts=LOOP)
+        self.dl_state.download_bodies["/m.onnx"] = b"MODEL-BYTES-5678"
+        v2 = c.download_model(url, allow_private_hosts=LOOP)
+        self.assertNotEqual(v1, v2)
+        self.assertNotEqual(hashlib.sha256(v1).hexdigest(),
+                            hashlib.sha256(v2).hexdigest())
+        # A metadata revision under the same ID is visible as well.
+        self.plus_state.models["MODEL_A"] = {
+            "id": "MODEL_A", "labelMap": {"0": "person", "1": "car"}}
+        info = c.get_model_info("MODEL_A")
+        self.assertEqual(info["labelMap"], {"0": "person", "1": "car"})
+
+    def test_two_models_fetch_independently(self):
+        # Prepare-B-while-A-active input: two IDs coexist, neither fetch
+        # disturbs the other.
+        self.dl_state.download_bodies["/n.onnx"] = b"MODEL-B-BYTES"
+        dl_b = (f"http://127.0.0.1:{self.dl.server_address[1]}/n.onnx")
+        self.plus_state.models["MODEL_B"] = {
+            "id": "MODEL_B", "labelMap": {"0": "dog"}}
+        self.plus_state.signed_urls["MODEL_B"] = dl_b
+        c = self.client()
+        a = c.download_model(
+            c.get_model_download_url("MODEL_A", allow_private_hosts=LOOP),
+            allow_private_hosts=LOOP)
+        b = c.download_model(
+            c.get_model_download_url("MODEL_B", allow_private_hosts=LOOP),
+            allow_private_hosts=LOOP)
+        self.assertEqual(a, b"MODEL-BYTES-1234")
+        self.assertEqual(b, b"MODEL-B-BYTES")
+        self.assertEqual(c.get_model_info("MODEL_A")["labelMap"],
+                         {"0": "person"})
+
     def test_no_bearer_to_download_host(self):
         c = self.client()
         url = c.get_model_download_url("MODEL_A", allow_private_hosts=LOOP)

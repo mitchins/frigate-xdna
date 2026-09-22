@@ -8,12 +8,14 @@
       "name": "bf16-prepare",
       "tool": "quark.onnx.ModelQuantizer",
       "tool_version": "amd-quark 0.12.post1",
-      "config": "get_default_config(\"BF16\") + BF16QDQToCast=true",
-      "calibration": "32 COCO128 images, PIL RGB bilinear resized to the model geometry (320x320 for 320 models, 640x640 for 640 models), /255, CHW"
+      "config": "get_default_config(\"BF16\") + BF16QDQToCast=true + EnableVaimlBF16=true, then restore_float_inputs (collapse input QDQ/Cast chains to float graph inputs; numerically exact, checker-verified)",
+      "calibration": "32 COCO128 images, PIL RGB bilinear resized to the model geometry (320x320 for 320 models, 640x640 for 640 models), /255, CHW",
+      "rationale": "Quark BF16QDQToCast leaves BF16-fed Cast nodes that onnxruntime-vitisai 1.27 refuses to load (first seen on a yolov9s-320 Plus model: inputShape nchw). EnableVaimlBF16 removes BF16 Cast couples; the input-edge repair restores the original float32 input (what the probe feeds). Graphs without such chains are unaffected."
     },
     {
-      "name": "vaiml-compile",
+      "name": "vaiml-compile (no in-child probe)",
       "tool": "onnxruntime-vitisai 1.27.0 VitisAIExecutionProvider",
+      "probe_note": "The zeros probe runs out-of-child via the launcher through the real resident worker path (fresh process, device lease held): the 512 MB probe mapping fails inside the compile child under its address-space cap even for valid artifacts.",
       "provider_options": {
         "config_file": "<vaiml_config.json sha256:4d17acd4393356ff447ba6a91939ef3f0b4fb675bc97a2c4457ed74d894f5782>",
         "cache_key": "<job>",

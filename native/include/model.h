@@ -35,7 +35,8 @@ public:
     size_t input_elements() const;
     std::vector<uint32_t> input_shape() const;
     size_t output_elements() const;
-    size_t output_cols() const; // N for (84,N) raw layout
+    size_t output_cols() const; // N for [C,N] / [1,C,N] raw layout (0 if unknown)
+    size_t output_channels() const; // C for [C,N] / [1,C,N] (0 if unknown)
 
 private:
     static bool map_rai(const char* path, uint8_t** buf, size_t* size);

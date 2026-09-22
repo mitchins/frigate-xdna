@@ -157,6 +157,21 @@ def _strict_int_list(values, what: str) -> list[int]:
     return out
 
 
+def _check_layout_tag(key: str, claimed: str) -> None:
+    """Validate a string layout claim (real Frigate+ inputShape "nchw").
+
+    Numeric geometry comes from width/height in that case. Accept NCHW
+    (our only serving layout), reject anything else explicitly. Every
+    present key is checked: a contradicting pair cannot hide behind
+    key order.
+    """
+    if claimed.lower() != "nchw":
+        raise _fail(
+            UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+            f"unsupported metadata {key} layout {claimed!r}:"
+            " only NCHW is served")
+
+
 def compare_plus_metadata(info: dict, inspected: dict) -> None:
     """Fail on metadata-vs-graph conflicts (SPEC §5.3).
 
@@ -164,21 +179,9 @@ def compare_plus_metadata(info: dict, inspected: dict) -> None:
     it (common keys width/height, input_shape, ...); absent fields are
     recorded, never guessed. Raises UNSUPPORTED_CONTRACT on conflict.
     """
-    want = None
-    for key in ("input_shape", "inputShape", "dimensions", "input_dims"):
-        if key in info:
-            want = _strict_int_list(info[key], f"metadata {key}")
-            break
-    if want is None and ("width" in info or "height" in info):
-        # Present-but-invalid geometry is malformed metadata, not an
-        # absent claim: fail instead of silently skipping the comparison.
-        w, h = info.get("width"), info.get("height")
-        for v in (w, h):
-            if isinstance(v, bool) or not isinstance(v, int):
-                raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
-                            f"invalid metadata geometry value {v!r}:"
-                            " integers only")
-        want = [1, 3, h, w]
+    want = _want_from_lists(info)
+    if want is None:
+        want = _want_from_wh(info)
     if want is None:
         return  # metadata carries no geometry claim; nothing to conflict
     got = inspected["input_shape"]
@@ -186,3 +189,31 @@ def compare_plus_metadata(info: dict, inspected: dict) -> None:
         raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
                     f"Plus metadata geometry {want} conflicts with ONNX "
                     f"graph input {got}")
+
+
+def _want_from_lists(info: dict) -> list[int] | None:
+    """First int-list geometry claim (string layouts checked, not used)."""
+    want = None
+    for key in ("input_shape", "inputShape", "dimensions", "input_dims"):
+        if key not in info:
+            continue
+        claimed = info[key]
+        if isinstance(claimed, str):
+            _check_layout_tag(key, claimed)
+            continue
+        if want is None:
+            want = _strict_int_list(claimed, f"metadata {key}")
+    return want
+
+
+def _want_from_wh(info: dict) -> list[int] | None:
+    """[1,3,h,w] from width/height; present-but-invalid is malformed."""
+    if "width" not in info and "height" not in info:
+        return None
+    w, h = info.get("width"), info.get("height")
+    for v in (w, h):
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                        f"invalid metadata geometry value {v!r}:"
+                        " integers only")
+    return [1, 3, h, w]

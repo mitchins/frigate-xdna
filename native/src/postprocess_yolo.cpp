@@ -12,8 +12,7 @@ int postprocess_yolo_raw(const float* raw, size_t cols, const YoloConfig& cfg, f
     dets.reserve(cols);
 
     const int C = cfg.class_count;
-    const int rows = 4 + C;
-    // raw layout is [rows, cols] row-major: raw[r*cols + c]
+    // raw layout is [4+C, cols] row-major: raw[r*cols + c]
     for (size_t c=0;c<cols;++c) {
         float best = 0; int best_cls = -1;
         for (int k=0;k<C;++k) {

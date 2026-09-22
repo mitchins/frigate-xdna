@@ -68,6 +68,13 @@ class FrigateZmqFrontend:
             "late_discard": 0,
         }
 
+    def get_stats(self) -> dict:
+        """Request accounting snapshot (soak/ops observability)."""
+        return {"counters": dict(self.counters),
+                "frontend_generation": self._generation,
+                "active_artifact": self._active_artifact,
+                "bound_sessions": self.sessions.count()}
+
     async def start(self) -> None:
         self.sock = self.ctx.socket(zmq.ROUTER)
         # ROUTER must preserve envelope exactly
@@ -322,7 +329,19 @@ class FrigateZmqFrontend:
                 _artifact_usable, self.sup.data_dir, compile_key)
             if not usable:
                 return False
-            # Simulated native LOAD (would use runtime/ipc to send LOAD).
+            # Resident native LOAD via the supervisor: the new child
+            # LOADs and verifies before it becomes active (A->B safe).
+            # A refused artifact inhibits (explicit recover, no retry
+            # loop) and this activation reports False. An unexpected
+            # activation exception must never escape: it would kill
+            # the serve task, so it fails this activation instead.
+            try:
+                ok = await asyncio.to_thread(
+                    self.sup.activate_worker, compile_key)
+            except Exception:
+                return False
+            if not ok:
+                return False
             self._active_artifact = compile_key
             return True
         finally:
@@ -365,17 +384,29 @@ class FrigateZmqFrontend:
             await self._reply_raw(identity, ZERO_FRAME)
             self.counters["rejected"] += 1
             return
-        # One at a time: forward to native via private IPC if a worker
-        # exists. Without native, return the zero frame (explicit
-        # not-ready, never fabricated detections). A not-ready zero
-        # frame is not successful inference (INTERFACES.md deadline
-        # rules), so it counts into `zero`, never `success`.
+        # One at a time: forward to the resident worker via the
+        # supervisor (private socketpair IPC, bounded by the request's
+        # remaining budget). Without a worker, return the zero frame
+        # (explicit not-ready, never fabricated detections). A not-ready
+        # zero frame is not successful inference (INTERFACES.md deadline
+        # rules), so it counts into `zero`, never `success`; a failed
+        # worker counts into `rejected`.
+        remain = max(deadline - time.monotonic(), 0.0)
         try:
-            # A worker would receive INFER via runtime/ipc socketpair and
-            # return RESULT within the bounded budget; until the native
-            # worker lands, answer not-ready either way.
-            await self._reply_raw(identity, ZERO_FRAME)
-            self.counters["zero"] += 1
+            status, result = await asyncio.to_thread(
+                self.sup.worker_infer, data_raw, shape, remain)
+        except Exception:
+            status, result = "failed", b""
+        try:
+            if status == "ok":
+                await self._reply_raw(identity, result)
+                self.counters["success"] += 1
+            elif status == "no_worker":
+                await self._reply_raw(identity, ZERO_FRAME)
+                self.counters["zero"] += 1
+            else:
+                await self._reply_raw(identity, ZERO_FRAME)
+                self.counters["rejected"] += 1
         except Exception:
             await self._reply_raw(identity, ZERO_FRAME)
             self.counters["rejected"] += 1

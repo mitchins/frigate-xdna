@@ -125,32 +125,32 @@ size_t Model::output_elements() const {
     return n;
 }
 
+size_t Model::output_channels() const {
+    if (outputs_.empty()) return 0;
+    auto shape = outputs_[0].getMetadata().shape;
+    // Row-major [C,N] or [1,C,N]; anything else (flat, transposed)
+    // reports unknown so LOAD refuses instead of misindexing.
+    if (shape.size()==2) return shape[0];
+    if (shape.size()==3 && shape[0]==1) return shape[1];
+    return 0;
+}
+
 size_t Model::output_cols() const {
     if (outputs_.empty()) return 0;
     auto meta = outputs_[0].getMetadata();
     auto shape = meta.shape;
-    // Accept only row-major [84,N] or [1,84,N] (batch dimension documented)
     size_t cols = 0;
-    if (shape.size()==2 && shape[0]==84) cols = shape[1];
-    else if (shape.size()==3 && shape[0]==1 && shape[1]==84) cols = shape[2];
-    else if (shape.size()==1) {
-        // Fallback: derive from byte count but validate
-        size_t bytes = meta.size;
-        if (bytes < 84 * sizeof(float)) return 0;
-        size_t elems = bytes / sizeof(float);
-        if (elems % 84 != 0) return 0;
-        cols = elems / 84;
-    } else {
-        return 0; // incompatible or transposed shape
+    if (shape.size()==2) cols = shape[1];
+    else if (shape.size()==3 && shape[0]==1) cols = shape[2];
+    else {
+        return 0; // flat or transposed shape: unknown layout
     }
     // Validate byte count matches shape product
     size_t bytes = meta.size;
     size_t elems = bytes / sizeof(float);
-    if (cols==0 || elems != 84 * cols) return 0;
-    if (cols != 2100 && cols != 8400) {
-        // Allow other N but log via return 0 for unsupported? Keep 2100/8400 as proven, but accept others if validated
-    }
-    return cols; // 2100 @320, 8400 @640
+    size_t channels = output_channels();
+    if (cols==0 || channels==0 || elems != channels * cols) return 0;
+    return cols; // 2100 @320, 8400 @640 for standard YOLO
 }
 
 } // namespace fxdna

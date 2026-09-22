@@ -28,6 +28,7 @@ struct Header {
     int64_t worker_generation = 0;
     std::string artifact_path;   // LOAD only, supervisor-controlled
     std::string serving_digest;  // LOAD/INFER
+    int class_count = 0;         // LOAD only: inspected YOLO classes (>0 required)
     TensorSpec tensor_spec;      // INFER/RESULT
     size_t payload_length = 0;   // bounded length of following binary payload
     std::string error_code;      // RESULT/STATUS failures
