@@ -1,4 +1,4 @@
-# Merge into stock Frigate 0.18.0-rc2. Example only for a matching YOLO raw contract.
+# Merge into stock Frigate 0.18.0. Example only for a matching YOLO raw contract.
 # Other models must use their actual metadata/label map.
 detectors:
   xdna:

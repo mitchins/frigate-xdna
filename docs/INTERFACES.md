@@ -77,7 +77,7 @@ Never expand environment-variable content through a shell. Commas/newlines delim
 
 ## 3. Frigate 0.18-rc2 wire protocol
 
-Pin `frigate/detectors/plugins/zmq_ipc.py` blob `cc9a538c81160562184901395dafd3988559c4f1` at tag `v0.18.0-rc2`. [S1]
+Pin `frigate/detectors/plugins/zmq_ipc.py` blob `cc9a538c81160562184901395dafd3988559c4f1` at tags `v0.18.0-rc2` and `v0.18.0` (verified identical). [S1]
 
 The body below excludes ROUTER identity/delimiter frames. ROUTER must retain the exact return envelope. Each request receives exactly one reply; no unsolicited status pushes to a REQ socket.
 

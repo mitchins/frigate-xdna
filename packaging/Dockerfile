@@ -25,8 +25,12 @@
 #   /opt/fxdna/recipes       pinned recipe + manifests
 #   /data                     persistent registry/cache/work (volume)
 
-ARG UBUNTU_TAG=24.04
-FROM ubuntu:${UBUNTU_TAG} AS base
+# Pinned base digest (2026-09-22; docker.io/library/ubuntu 24.04).
+# Digest-only (no floating tag): a tag would let Ubuntu packages drift
+# between release builds. Bump deliberately with a recorded package
+# inventory (see release workflow base-packages.txt).
+ARG UBUNTU_DIGEST=sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+FROM ubuntu@${UBUNTU_DIGEST} AS base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
@@ -51,7 +55,8 @@ COPY src /opt/fxdna/manager/src
 COPY pyproject.toml /opt/fxdna/manager/
 COPY packaging/constraints-manager.txt /tmp/constraints-manager.txt
 RUN python3.12 -m venv /opt/manager-venv \
- && /opt/manager-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+  && /opt/manager-venv/bin/pip install --no-cache-dir \
+      pip==26.2.1 setuptools==84.0.0 wheel==0.48.0 \
  && /opt/manager-venv/bin/pip install --no-cache-dir \
       -c /tmp/constraints-manager.txt \
       requests==2.34.2 onnx==1.23.0 pyzmq==27.2.0 \
@@ -79,7 +84,7 @@ RUN ln -sf libxrt_core.so.2.25.37 /opt/xilinx-xrt/lib/libxrt_core.so.2 \
 FROM base AS quant
 COPY packaging/constraints-quant.txt /tmp/constraints-quant.txt
 RUN python3.12 -m venv /opt/quant-venv \
-  && /opt/quant-venv/bin/pip install --no-cache-dir --upgrade pip \
+  && /opt/quant-venv/bin/pip install --no-cache-dir pip==26.2.1 \
   && /opt/quant-venv/bin/pip install --no-cache-dir \
        --index-url https://download.pytorch.org/whl/cpu \
        -c /tmp/constraints-quant.txt torch==2.14.0+cpu \

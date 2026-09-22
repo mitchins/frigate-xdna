@@ -1,6 +1,8 @@
 # Source and evidence register
 
-Retrieved 2026-09-18. Tag-specific files are the compatibility baseline; current documentation is explanatory and must not silently override the rc2 code contract. URLs are recorded as source identifiers, not executable shell instructions.
+Retrieved 2026-09-18. Tag-specific files are the compatibility baseline; current documentation is explanatory and must not silently override the code contract. URLs are recorded as source identifiers, not executable shell instructions.
+
+2026-09-22: every pinned blob below returns the identical SHA at upstream tag `v0.18.0`; the compatibility anchor is `v0.18.0` with `v0.18.0-rc2` retained as fetch provenance.
 
 ## S1 — Stock ZMQ plugin
 

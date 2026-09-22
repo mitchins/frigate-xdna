@@ -29,9 +29,14 @@ Done:
   activation refusal, bounded HW test (LOAD_OK/RUN_OK, Err 0). Soak
   qualification from Phase 7.6 retained (67 client timeouts in one
   host stall window).
-1. **Task 05 — acceptance**: full Frigate rc2 container test, private Plus
-   model fetch (needs user-supplied key/ID at runtime, never in repo),
-   A→B update flow, 24 h service soak, SBOM, release report.
+1. **Task 05 — acceptance**: done (PR #5) — full Frigate rc2 replay
+   with tracked objects, private Plus fetch/compile/activate, A→B,
+   restart/offline gates, 24 h soak clean, SBOM, release report;
+   verdict `RELEASE_AUTOMATION_READY` in `docs/RELEASE-8.4.md`.
+2. **Task 8.5 — release automation** (this branch): GHCR workflow
+   (`.github/workflows/release.yml`), runner/release docs
+   (`docs/RELEASE.md`), README install. No tag created or pushed yet —
+   first tag (`v0.1.0-rc.1`) is an explicit owner action.
 3. **Project LICENSE owner**: done — `Copyright (c) 2026 Mitchell Currie`.
 4. **Docker availability**: podman 4.9.3 with
    --security-opt apparmor=unconfined (LXC needs the bypass; image builds

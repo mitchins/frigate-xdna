@@ -7,12 +7,13 @@ original project code only.
 ## Frigate (contract-test sources)
 
 Files under `tests/upstream/` that are byte-identical copies of Frigate
-sources at tag `v0.18.0-rc2` are MIT-licensed, copyright their respective
+sources at tag `v0.18.0` are MIT-licensed, copyright their respective
 authors. See `tests/upstream/NOTICES.md` for the full text pointer and the
 pinned blob hashes in `tests/upstream/upstream.lock.json`.
 
-Upstream: https://github.com/blakeblackshear/frigate (tag `v0.18.0-rc2`,
-licence file blob `924cb4148cda90ee9d7f7953dcbd9fea31a05874`).
+Upstream: https://github.com/blakeblackshear/frigate (tag `v0.18.0`;
+licence file blob `924cb4148cda90ee9d7f7953dcbd9fea31a05874`,
+verified identical to the `v0.18.0-rc2` pin).
 
 ## AMD Ryzen AI (appliance-incorporated binaries)
 

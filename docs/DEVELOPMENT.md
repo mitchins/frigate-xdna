@@ -14,7 +14,7 @@ Implemented in the Makefile (Tasks 01–04 landed):
 
 ```
 make test-unit                # hardware-free unit tests
-make test-contract            # stock Frigate rc2 contract tests (pinned)
+make test-contract            # stock Frigate 0.18.0 contract tests (pinned)
 make test-integration         # fake-Plus / fake-backend integration
 make test                     # all of the above, hardware-free
 make coverage                 # all suites with coverage + fail_under floor
@@ -30,7 +30,7 @@ pins: contract deps, pyzmq, coverage, ruff). `ruff check` covers
 `src recipes tools packaging tests schemas`; CI runs the same gates.
 Pin manager and compiler dependencies separately. CI must not download
 mutable `latest` dependencies or run tests from Frigate `dev` and
-describe them as rc2 compatibility.
+describe them as 0.18.0 compatibility.
 
 ## Vendor/build inputs
 

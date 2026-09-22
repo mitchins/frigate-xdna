@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Replay acceptance driver (Task 05 full-app gate, hardware-gated run).
 
-Observes a stock Frigate v0.18.0-rc2 replay camera end to end: verifies
+Observes a stock Frigate v0.18.0 replay camera end to end: verifies
 the detector is configured against the sidecar, samples detector stats
 during replay, then collects tracked-object/event evidence. Uses only
 Frigate's long-stable HTTP surface (/api/config, /api/stats,

@@ -1,4 +1,4 @@
-# Merge into stock Frigate 0.18.0-rc2. Not a complete camera configuration.
+# Merge into stock Frigate 0.18.0. Not a complete camera configuration.
 # Start/prepare the same model in the sidecar BEFORE reinitializing this detector.
 # Frigate still needs its own normal Plus API key to retrieve its model/metadata.
 detectors:

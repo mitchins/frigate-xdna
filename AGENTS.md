@@ -6,7 +6,7 @@ Implement `SPEC.md` in the bounded tasks under `agent-tasks/`. This is product e
 
 ## Non-negotiable product requirements
 
-1. Stock Frigate `v0.18.0-rc2` works without source patches or a new detector type.
+1. Stock Frigate `v0.18.0` works without source patches or a new detector type.
 2. Users can prepare a newly issued compatible Frigate+ model/fine-tune themselves; no maintainer hash catalogue or new service image for new weights.
 3. The default appliance includes the audited compile and inference payloads. No end-user AMD account, separate SDK, activation or manual conversion.
 4. Multiple cached/prepared models; one resident native model/context per NPU initially.
