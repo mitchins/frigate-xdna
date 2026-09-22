@@ -138,7 +138,7 @@ jobs:
             echo "refusing release: B2_APP_KEY secret is not set"; exit 1; }
           test -n "${B2_KEY_ID:-}" || {
             echo "refusing release: B2_KEY_ID variable is not set"; exit 1; }
-          pip install --quiet --user b2
+          pip install --quiet --user b2==5.0.0
           export PATH="$HOME/.local/bin:$PATH"
           MANIFEST_SHA="$(sha256sum packaging/vendor-files.manifest.json | cut -d" " -f1)"
           BUNDLE="vendor-input-${MANIFEST_SHA:0:12}.tar.gz"
@@ -147,8 +147,8 @@ jobs:
             echo "receipt names $RECEIPT_BUNDLE but tree pins $BUNDLE"; exit 1; }
           RECEIPT_SHA="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['sha256'])")"
           BUCKET="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['bucket'])")"
-          b2 authorize-account "$B2_KEY_ID" "$B2_APP_KEY"
-          b2 download-file-by-name "$BUCKET" "$BUNDLE" /tmp/vendor-bundle.tar.gz
+          b2 account authorize "$B2_KEY_ID" "$B2_APP_KEY" > /dev/null
+          b2 file download "b2://$BUCKET/$BUNDLE" /tmp/vendor-bundle.tar.gz
           echo "$RECEIPT_SHA  /tmp/vendor-bundle.tar.gz" | sha256sum -c -
           rm -rf packaging/vendor-input
           mkdir -p packaging/vendor-input
