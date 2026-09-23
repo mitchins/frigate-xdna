@@ -439,6 +439,10 @@ jobs:
       - name: Create release + attach SBOM + manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No checkout in this job (records only): bind every gh
+          # call to the repository explicitly (RC2 proved gh infers
+          # it from a git checkout that is not there).
+          GH_REPO: ${{ github.repository }}
         run: |
           set -eu
           ls release-out/sbom.json release-out/release-manifest.json \
