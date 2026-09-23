@@ -53,10 +53,12 @@ building. Staged input is deleted in an `always()` cleanup step.
   never publish, so the requested version cannot diverge from the
   built SHA.
 - **First publish visibility.** GHCR packages publish private by
-  default. After `v0.1.0-rc.2` first appears, switch the
-  `frigate-xdna` package to Public in its settings before the
-  anonymous-pull smoke — otherwise the pull check fails on
-  authorisation rather than proving public availability.
+  default. The package already exists from the failed `v0.1.0-rc.1`
+  attempt (pushed image, no usable release). After `v0.1.0-rc.2`
+  completes, handle/remove the failed rc.1 package version first,
+  then switch the `frigate-xdna` package to Public in its settings
+  before the anonymous-pull smoke — otherwise the pull check fails
+  on authorisation rather than proving public availability.
 - **Pinned inputs.** The base image is digest-pinned
   (digest-only `ubuntu@sha256:008173c2…`, i.e. docker.io 24.04;
   bump deliberately with a fresh `base-packages.txt` inventory,

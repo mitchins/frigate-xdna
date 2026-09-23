@@ -36,7 +36,10 @@ Done:
 2. **Task 8.5 — release automation** (this branch): GHCR workflow
    (`.github/workflows/release.yml`, stock runners + private B2 vendor
    bundle, no self-hosted runners), release docs (`docs/RELEASE.md`),
-   README install. No tag created or pushed yet — first tag
+   README install. `v0.1.0-rc.1` was the first attempted release: it
+   reached GHCR push and build-provenance attestation, then failed at
+   SBOM attestation (SBOM lacked the serialNumber the attestation
+   path requires). `v0.1.0-rc.1` is never recycled; the next candidate
    (`v0.1.0-rc.2`) is an explicit owner action.
 3. **Project LICENSE owner**: done — `Copyright (c) 2026 Mitchell Currie`.
 4. **Docker availability**: podman 4.9.3 with

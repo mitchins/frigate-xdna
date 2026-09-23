@@ -78,6 +78,41 @@ class TestLicenceRepresentation(unittest.TestCase):
             self.assertIn(label, seen)
 
 
+class TestScopeMapping(unittest.TestCase):
+    def props(self, comp):
+        return {p["name"]: p["value"]
+                for p in comp.get("properties", [])}
+
+    def test_runtime_is_required_and_dev_test_is_excluded(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "sbom.json")
+            doc = gen_sbom(out)
+        by_name = {c["name"]: c for c in doc["components"]
+                   if c["bom-ref"].startswith("pypi:")}
+        runtime = by_name["requests"]
+        self.assertEqual(runtime["scope"], "required")
+        self.assertEqual(
+            self.props(runtime)["fxdna:dependency-scope"], "runtime")
+        dev = by_name["coverage"]
+        self.assertEqual(dev["scope"], "excluded")
+        self.assertEqual(
+            self.props(dev)["fxdna:dependency-scope"], "dev-test")
+        for comp in by_name.values():
+            self.assertIn(comp["scope"], ("required", "excluded"))
+
+    def test_vendor_bom_ref_carries_licence_identity(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "sbom.json")
+            doc = gen_sbom(out)
+        refs = [c["bom-ref"] for c in doc["components"]
+                if c["bom-ref"].startswith("vendor:")]
+        self.assertTrue(refs)
+        for ref in refs:
+            _head, lic = ref.split("#", 1)
+            self.assertTrue(lic)
+        self.assertEqual(len(set(refs)), len(refs))
+
+
 class TestValidatorGate(unittest.TestCase):
     def write(self, d, name, doc):
         path = os.path.join(d, name)
@@ -165,6 +200,22 @@ class TestValidatorGate(unittest.TestCase):
     def test_rejects_duplicate_bom_ref(self):
         doc = self.valid_doc()
         doc["components"].append(dict(doc["components"][0]))
+        with tempfile.TemporaryDirectory() as d:
+            r = validate(self.write(d, "s.json", doc))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("bom-ref", r.stderr)
+
+    def test_rejects_empty_bom_ref(self):
+        doc = self.valid_doc()
+        doc["components"][0]["bom-ref"] = ""
+        with tempfile.TemporaryDirectory() as d:
+            r = validate(self.write(d, "s.json", doc))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("bom-ref", r.stderr)
+
+    def test_rejects_empty_metadata_bom_ref(self):
+        doc = self.valid_doc()
+        doc["metadata"]["component"]["bom-ref"] = ""
         with tempfile.TemporaryDirectory() as d:
             r = validate(self.write(d, "s.json", doc))
         self.assertEqual(r.returncode, 1)

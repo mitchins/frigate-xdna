@@ -87,16 +87,20 @@ def _check_licenses(comp: dict) -> str | None:
     return None
 
 
-def _seed_refs(doc: dict) -> set[str]:
-    """bom-refs already claimed by metadata.component (usually one)."""
+def _seed_refs(doc: dict) -> tuple[set[str], str | None]:
+    """bom-refs claimed by metadata.component: (refs, None) or reject."""
     metadata = doc.get("metadata")
     if not isinstance(metadata, dict):
-        return set()
+        return set(), None
     component = metadata.get("component")
     if not isinstance(component, dict):
-        return set()
+        return set(), None
+    if "bom-ref" not in component:
+        return set(), None
     ref = component.get("bom-ref")
-    return {ref} if isinstance(ref, str) else set()
+    if not isinstance(ref, str) or not ref:
+        return set(), "metadata.component bom-ref is not a non-empty string"
+    return {ref}, None
 
 
 def check_components(doc: dict) -> tuple[int | None, str | None]:
@@ -104,12 +108,17 @@ def check_components(doc: dict) -> tuple[int | None, str | None]:
     components = doc.get("components")
     if not isinstance(components, list):
         return None, "components is not an array"
-    seen = _seed_refs(doc)
+    seen, error = _seed_refs(doc)
+    if error is not None:
+        return None, error
     for index, comp in enumerate(components):
         if not isinstance(comp, dict):
             return None, f"components[{index}] is not an object"
-        ref = comp.get("bom-ref")
-        if isinstance(ref, str):
+        if "bom-ref" in comp:
+            ref = comp.get("bom-ref")
+            if not isinstance(ref, str) or not ref:
+                return None, (f"components[{index}] bom-ref is not"
+                               " a non-empty string")
             if ref in seen:
                 return None, f"duplicate bom-ref {ref!r}"
             seen.add(ref)

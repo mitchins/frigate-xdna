@@ -73,7 +73,8 @@ def main() -> int:
     for comp in vendor.get("components", []):
         components.append({
             "type": "library",
-            "bom-ref": f"vendor:{comp['package']}@{comp['version']}",
+            "bom-ref": (f"vendor:{comp['package']}@{comp['version']}"
+                        f"#{comp['licence']}"),
             "name": comp["package"],
             "version": str(comp["version"]),
             "scope": "required",
@@ -90,13 +91,19 @@ def main() -> int:
             ],
         })
     for name, ver, scope in pins:
+        # CycloneDX 1.5 scope vocabulary is closed ("required" /
+        # "optional" / "excluded"): our richer runtime/dev-test
+        # distinction is preserved verbatim as a property, never lost.
         components.append({
             "type": "library",
             "bom-ref": f"pypi:{name}@{ver}",
             "name": name,
             "version": ver,
-            "scope": scope,
+            "scope": ("required" if scope == "runtime" else "excluded"),
             "purl": f"pkg:pypi/{name}@{ver}",
+            "properties": [
+                {"name": "fxdna:dependency-scope", "value": scope},
+            ],
         })
     # Deterministic document identity: the same image identity always
     # yields the same serialNumber (required by the attestation path
