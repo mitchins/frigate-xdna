@@ -266,6 +266,58 @@ class Registry:
         return [dict(zip(("name", "kind", "target"), r)) for r in
                 self.query("SELECT name, kind, target FROM pins")]
 
+    def record_validation(self, validation_key: str, compile_key: str,
+                            serving_digest: str, passed: bool, reason: str,
+                            fixture_ids: str, runtime_json: str) -> None:
+        """Persist native-check evidence (first evidence wins; failures
+        never overwrite a pass, passes never need repeating)."""
+        self._execute(
+            "INSERT OR IGNORE INTO validations(validation_key,"
+            " compile_key, serving_digest, passed, reason, fixture_ids,"
+            " runtime_json, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (validation_key, compile_key, serving_digest,
+             1 if passed else 0, reason, fixture_ids, runtime_json,
+             time.time()))
+
+    def is_verified(self, compile_key: str) -> bool:
+        rows = self.query(
+            "SELECT 1 FROM validations WHERE compile_key=? AND passed=1"
+            " LIMIT 1", (compile_key,))
+        return bool(rows)
+
+    def verification_for(self, compile_key: str) -> dict | None:
+        rows = self.query(
+            "SELECT validation_key, serving_digest, reason, fixture_ids,"
+            " runtime_json, created_at FROM validations"
+            " WHERE compile_key=? AND passed=1"
+            " ORDER BY created_at DESC LIMIT 1", (compile_key,))
+        if not rows:
+            return None
+        return dict(zip(("validation_key", "serving_digest", "reason",
+                         "fixture_ids", "runtime_json", "created_at"),
+                        rows[0]))
+
+    def latest_job_for_ref(self, ref: str) -> dict | None:
+        """Newest job row for a ref, including alias rows."""
+        rows = self.query(
+            "SELECT uuid, ref, compile_key, stage, attempt, error_code,"
+            " progress FROM jobs WHERE ref=? OR uuid IN"
+            " (SELECT job_uuid FROM job_aliases WHERE ref=?)"
+            " ORDER BY updated_at DESC LIMIT 1", (ref, ref))
+        if not rows:
+            return None
+        return dict(zip(("uuid", "ref", "compile_key", "stage", "attempt",
+                         "error_code", "progress"), rows[0]))
+
+    def prepared_key_for_ref(self, ref: str) -> str | None:
+        """Newest PREPARED compile key reachable from a ref/alias."""
+        rows = self.query(
+            "SELECT compile_key FROM jobs WHERE stage='PREPARED' AND"
+            " compile_key IS NOT NULL AND (ref=? OR uuid IN"
+            " (SELECT job_uuid FROM job_aliases WHERE ref=?))"
+            " ORDER BY updated_at DESC LIMIT 1", (ref, ref))
+        return rows[0][0] if rows else None
+
     def set_state(self, key: str, value: dict):
         self._execute(
             "INSERT INTO service_state(key, value_json) VALUES (?,?)"

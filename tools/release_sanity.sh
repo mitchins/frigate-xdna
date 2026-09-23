@@ -20,8 +20,15 @@ fi
 
 echo "== $IMG: CLI =="
 $RUN --entrypoint fxdna "$IMG" --help > /dev/null
+# Liveness honesty: with no daemon running, health MUST fail (a
+# success-with-alive=false once masked dead daemons here).
+if $RUN --user 10001:10001 --read-only \
+  --entrypoint fxdna "$IMG" health > /dev/null 2>&1; then
+  echo "health passed with no daemon running"
+  exit 1
+fi
 $RUN --user 10001:10001 --read-only \
-  --entrypoint fxdna "$IMG" health
+  --entrypoint fxdna "$IMG" doctor > /dev/null
 
 echo "== $IMG: legal notices =="
 $RUN --entrypoint sh "$IMG" -c \

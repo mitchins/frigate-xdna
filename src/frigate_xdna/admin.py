@@ -105,10 +105,11 @@ def admin_call(data_dir: str, request: dict, timeout_s: float = 10.0) -> dict:
                 try:
                     s.connect(socket_path(data_dir))
                     break
-                except ConnectionRefusedError:
-                    # Server bound the path but is not listening yet
-                    # (bind->listen window at thread startup); retry
-                    # briefly, then report unreachable as before.
+                except (ConnectionRefusedError, FileNotFoundError):
+                    # Server thread starts asynchronously: the path may
+                    # be unbound yet, or bound but not listening
+                    # (bind->listen window). Retry briefly, then report
+                    # unreachable as before.
                     if time.monotonic() >= deadline:
                         raise
                     time.sleep(0.05)

@@ -77,13 +77,25 @@ class TestCli(unittest.TestCase):
         self.assertEqual(json.loads(out)["entries"], [])
 
     def test_health_reports_liveness_honestly(self):
+        # No daemon: liveness-false WITH a nonzero exit (D10 — success
+        # with alive=false once masked dead daemons).
         rc, out, _ = run_cli(["health"])
-        self.assertEqual(rc, SUCCESS)
+        self.assertEqual(rc, NOT_READY)
         self.assertFalse(json.loads(out)["alive"])
-        # --ready needs an ACTIVE worker: never claimed in this build
         rc, out, _ = run_cli(["health", "--ready"])
         self.assertEqual(rc, NOT_READY)
         self.assertFalse(json.loads(out)["ready"])
+
+    def test_stale_socket_is_not_alive(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "control.sock"), "w") as f:
+                f.write("not a socket")
+            with mock.patch.dict(os.environ, {"FXDNA_TEST_DATA_DIR": d}):
+                rc, out, _ = run_cli(["health"])
+        self.assertEqual(rc, NOT_READY)
+        self.assertFalse(json.loads(out)["alive"])
 
     def test_doctor_hardware_refused_without_lease(self):
         rc, _, err = run_cli(["doctor", "--hardware"])

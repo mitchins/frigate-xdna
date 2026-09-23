@@ -108,7 +108,9 @@ class Supervisor:
                  compiler_prefixes=None,
                  compiler_timeout_s: float = 2700.0,
                  worker_factory=None,
-                 worker_bin: str | None = None):
+                 worker_bin: str | None = None,
+                 reporter=None,
+                 heartbeat_s: float = 30.0):
         # Auto-detect the audited appliance prefixes when running inside
         # the image (real backend) vs host dev (fake). Explicit args win;
         # otherwise probe the image layout. Keeps host tests fake without
@@ -173,7 +175,21 @@ class Supervisor:
         # Set by serve wiring after frontend creation (None standalone).
         self.frontend = None
         self._server: AdminServer | None = None
+        # Console progress: None is silent (tests); serve passes a
+        # ConsoleReporter. Events describe real transitions only.
+        self.reporter = reporter
+        self.heartbeat_s = heartbeat_s
+        self._seen_stages: dict[str, str] = {}
+        self._seen_ref_states: dict[str, str] = {}
+        self._heartbeats: dict[str, float] = {}
+        self._last_worker_generation = 0
+        self._worker_serving_digest: str | None = None
         recover(self.data_dir, self.registry)
+
+    def emit(self, event: dict) -> None:
+        """Report one real transition; silent without a reporter."""
+        if self.reporter is not None:
+            self.reporter.emit(event)
 
     def _make_backend_job(self, **kw):
         """Job factory: real audited backend when prefixes are configured,
@@ -208,6 +224,7 @@ class Supervisor:
         with self._worker_lock:
             worker, self._worker = self._worker, None
             self._worker_compile_key = None
+            self._worker_serving_digest = None
             if worker is not None:
                 try:
                     worker.retire()
@@ -233,6 +250,8 @@ class Supervisor:
         cmd = req.get("command")
         if cmd == "status":
             return {"status": self.status(req.get("ref"))}
+        if cmd == "health":
+            return {"health": self.health()}
         if cmd == "prepare":
             job = self.prepare(req.get("ref", ""),
                                descriptor_path=req.get("descriptor"),
@@ -308,19 +327,36 @@ class Supervisor:
         if parsed["ref"] in self.config.models:
             _gc.pin_ref(self.registry, parsed["ref"], "configured")
         if parsed["kind"] == "plus":
-            data, fetched = self._fetch_plus(parsed["id"], refresh)
+            self.emit({"kind": "downloading_model", "ref": parsed["ref"]})
+            try:
+                data, fetched = self._fetch_plus(parsed["id"], refresh)
+            except FxdnaError as e:
+                self.emit({"kind": "preparation_failed",
+                           "ref": parsed["ref"], "phase": "ACQUISITION",
+                           "code": e.error_code, "reason": e.message})
+                raise
             # Plus bytes are inspected exactly like local files: metadata
             # conflicts and unsupported contracts fail here, never queue a
             # fake compile to PREPARED. (B3)
-            model, digest = _inspect.load_graph_bytes(data)
-            contract = _inspect.inspect_model(model)
-            _inspect.compare_plus_metadata(fetched["metadata"], contract)
-            cls = _inspect.classify_output(contract["outputs"])
-            if cls["profile"] is None:
-                raise FxdnaError(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
-                                 cls["error"])
+            try:
+                model, digest = _inspect.load_graph_bytes(data)
+                contract = _inspect.inspect_model(model)
+                _inspect.compare_plus_metadata(fetched["metadata"],
+                                               contract)
+                cls = _inspect.classify_output(contract["outputs"])
+                if cls["profile"] is None:
+                    raise FxdnaError(UNSUPPORTED_CONTRACT,
+                                     "UNSUPPORTED_CONTRACT", cls["error"])
+            except FxdnaError as e:
+                self.emit({"kind": "preparation_failed",
+                           "ref": parsed["ref"], "phase": "INSPECTION",
+                           "code": e.error_code, "reason": e.message})
+                raise
             fetched["inspected"] = contract
             fetched["profile"] = cls["profile"]
+            self.emit({"kind": "inspection_complete", "ref": parsed["ref"],
+                       "profile": cls["profile"],
+                       "shape": contract.get("input_shape")})
             return self._ingest_source(parsed["ref"], alias, data, "plus",
                                        fetched, refresh)
         path = parsed["path"]
@@ -328,13 +364,22 @@ class Supervisor:
             raise FxdnaError(INVALID_ARGS, "INVALID_MODEL",
                              f"local file not found: {path!r}")
         if parsed["kind"] == "onnx":
-            data = _read_bounded(path, "local ONNX")
-            model, digest = _inspect.load_graph_bytes(data)
-            contract = _inspect.inspect_model(model)
-            cls = _inspect.classify_output(contract["outputs"])
-            if cls["profile"] is None:
-                raise FxdnaError(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
-                                 cls["error"])
+            try:
+                data = _read_bounded(path, "local ONNX")
+                model, digest = _inspect.load_graph_bytes(data)
+                contract = _inspect.inspect_model(model)
+                cls = _inspect.classify_output(contract["outputs"])
+                if cls["profile"] is None:
+                    raise FxdnaError(UNSUPPORTED_CONTRACT,
+                                     "UNSUPPORTED_CONTRACT", cls["error"])
+            except FxdnaError as e:
+                self.emit({"kind": "preparation_failed",
+                           "ref": parsed["ref"], "phase": "INSPECTION",
+                           "code": e.error_code, "reason": e.message})
+                raise
+            self.emit({"kind": "inspection_complete", "ref": parsed["ref"],
+                       "profile": cls["profile"],
+                       "shape": contract.get("input_shape")})
             return self._ingest_source(parsed["ref"], alias, data, "local",
                                        {"inspected": contract,
                                         "profile": cls["profile"],
@@ -444,6 +489,29 @@ class Supervisor:
         self.registry.add_artifact(
             ckey, source, sha256_bytes(rai_bytes), len(rai_bytes),
             RECIPE_ID, TARGET_PROFILE)
+        result = getattr(backend, "result", None)
+        if getattr(result, "probe", "") == "ok":
+            # Recorded native check for this runtime/target: the
+            # artifact ran a finite zeros INFER through the real
+            # worker path during compilation. Serving binding is
+            # still established at activation.
+            self._record_native_check(
+                ckey, manifest["artifact_sha256"], "",
+                "probe-zeros-finite", "incompile-probe-v1", {})
+
+    def _record_native_check(self, compile_key: str, artifact_sha256: str,
+                             serving_digest: str, reason: str, suite: str,
+                             extra: dict) -> None:
+        """Persist VERIFIED evidence for an artifact (sticky; failures
+        never clear it, passes never need repeating)."""
+        from .cache.keys import validation_key as _vkey
+        runtime = {"backend": self.compiler_backend_id,
+                   "target_profile": TARGET_PROFILE}
+        runtime.update(extra or {})
+        vkey = _vkey(artifact_sha256, serving_digest, runtime, suite)
+        self.registry.record_validation(
+            vkey, compile_key, serving_digest, True, reason, "",
+            json.dumps(runtime, sort_keys=True))
 
     def _mark_prepared_refs(self, compile_key: str) -> None:
         """All aliases sharing a compile key reach PREPARED together."""
@@ -490,6 +558,10 @@ class Supervisor:
         old_digest = (prev or {}).get("source_sha256")
         if old_digest and old_digest != digest and not refresh:
             self.registry.set_ref_state(ref, "SOURCE_CHANGED")
+            self.emit({"kind": "preparation_failed", "ref": ref,
+                       "phase": "INGEST", "code": "SOURCE_CHANGED",
+                       "reason": "source bytes changed under this ref;"
+                                 " previous artifact kept"})
             raise FxdnaError(INVALID_ARGS, "SOURCE_CHANGED",
                              f"source bytes changed under {ref}; kept "
                              f"previous artifact (use --refresh to accept)")
@@ -502,6 +574,7 @@ class Supervisor:
         meta_digest = extra.get("metadata_sha256")
         self.registry.set_ref_source(ref, digest, meta_digest, "DOWNLOADED")
         if origin == "imported-rai":
+            self.emit({"kind": "preparing_model", "ref": ref})
             return {"ref": ref, "source_sha256": digest,
                     "state": "DOWNLOADED", "note": "imported RAI recorded"}
         # Compile key over the pinned recipe identity. Geometry comes from
@@ -536,11 +609,17 @@ class Supervisor:
                                          boot_token())
                 self.registry.set_job(hit_uuid, "PREPARED")
                 self.registry.set_ref_state(ref, "PREPARED")
+                self.emit({"kind": "model_cached", "ref": ref})
                 return {"ref": ref, "source_sha256": digest,
                         "compile_key": ckey, "serving_digest": sdigest,
                         "state": "PREPARED", "cache_hit": True}
         pre = disk_preflight(self.data_dir, COMPILE_SCRATCH_NEED_BYTES)
         if not pre["ok"]:
+            self.emit({"kind": "preparation_failed", "ref": ref,
+                       "phase": "SCRATCH", "code": "RESOURCE_EXCEEDED",
+                       "reason": f"need {pre['need_bytes']} + reserve"
+                                 f" {pre['reserve_bytes']}, free"
+                                 f" {pre['free_bytes']}"})
             raise FxdnaError(6, "RESOURCE_EXCEEDED",
                              f"insufficient scratch: need "
                              f"{pre['need_bytes']} + reserve "
@@ -553,6 +632,8 @@ class Supervisor:
                        self.data_dir, "sources", digest,
                        SOURCE_ONNX_NAME if origin != "imported-rai"
                        else "model.rai")})
+        self.emit({"kind": "preparing_model", "ref": ref,
+                   "job_uuid": job.get("uuid")})
         if job["stage"] in TERMINAL_ERROR_STATES:
             # A sticky terminal failure must be visible on the ref, not
             # masked as QUEUED by a job that will never run.
@@ -563,6 +644,125 @@ class Supervisor:
                "serving_digest": sdigest, "job_uuid": job["uuid"],
                "state": job["stage"], "cache_hit": False}
         return out
+
+    def _live_worker_key(self) -> str | None:
+        """Compile key of the currently serving worker, or None.
+
+        Passive: poll() never touches the NPU. A dead or unloaded
+        worker serves nothing, so it projects nothing."""
+        worker = self._worker
+        if worker is None or not getattr(worker, "loaded", False):
+            return None
+        try:
+            if not worker.alive():
+                return None
+        except Exception:
+            return None
+        return self._worker_compile_key
+
+    def _worker_info(self) -> dict | None:
+        worker = self._worker
+        if worker is None:
+            return None
+        try:
+            alive = worker.alive()
+        except Exception:
+            alive = False
+        return {"compile_key": self._worker_compile_key,
+                "generation": self._worker_generation,
+                "serving_digest": self._worker_serving_digest,
+                "loaded": bool(getattr(worker, "loaded", False)),
+                "alive": alive}
+
+    def health(self) -> dict:
+        """Passive liveness + readiness (no NPU context, no compile,
+        no test inference)."""
+        info = self._worker_info()
+        inhibition = self.registry.get_state("inhibition")
+        ready, reason = False, "no active worker"
+        if info is not None and info["loaded"] and info["alive"]:
+            if inhibition:
+                reason = f"inhibited: {inhibition.get('reason', '?')}"
+            elif not info["compile_key"] or not self.registry.get_artifact(
+                    info["compile_key"]):
+                reason = "identity inconsistent: artifact missing"
+            else:
+                ready, reason = True, "serving"
+        elif info is not None and not info["alive"]:
+            reason = "worker not alive"
+        return {"alive": True, "ready": ready, "reason": reason,
+                "worker": info, "inhibition": inhibition}
+
+    def report_progress(self) -> None:
+        """Emit console events for transitions since the last call.
+
+        Called by the serve loop after pump(). Diff-based: repeated
+        calls with no change emit nothing except the bounded
+        heartbeat for still-running jobs."""
+        import time as _time
+        if self.reporter is None:
+            return
+        now = _time.monotonic()
+        if self._worker_generation != self._last_worker_generation:
+            self._last_worker_generation = self._worker_generation
+            if self._worker is not None:
+                self.emit({"kind": "worker_active",
+                           "generation": self._worker_generation,
+                           "compile_key": self._worker_compile_key or ""})
+        for row in self.registry.query(
+                "SELECT uuid, ref, compile_key, stage, error_code,"
+                " progress FROM jobs"):
+            uuid, ref, _ckey, stage, error_code, progress = row
+            last = self._seen_stages.get(uuid)
+            if last != stage:
+                self._seen_stages[uuid] = stage
+                self._heartbeats[uuid] = now
+                self._emit_stage(ref, uuid, stage, error_code, progress)
+            elif stage not in TERMINAL_ERROR_STATES and stage != "PREPARED":
+                last_hb = self._heartbeats.get(uuid, 0.0)
+                if now - last_hb >= self.heartbeat_s:
+                    self._heartbeats[uuid] = now
+                    self._emit_heartbeat(ref, stage, progress)
+
+    def _emit_stage(self, ref: str, uuid: str, stage: str,
+                    error_code: str | None, progress: str | None) -> None:
+        from .model_view import parse_progress
+        elapsed, sub = parse_progress(progress)
+        elapsed = elapsed or 0.0
+        if stage == "WAITING_FOR_DEVICE":
+            self.emit({"kind": "waiting_for_device", "ref": ref})
+        elif stage == "PREPARED":
+            for alias in self.registry.refs_for_job(uuid):
+                self.emit({"kind": "model_prepared", "ref": alias,
+                           "endpoint": self.config.endpoint})
+        elif stage in TERMINAL_ERROR_STATES:
+            reason = None
+            backend = self.jobs.backend_for(uuid)
+            result = getattr(backend, "result", None)
+            if result is not None and getattr(result, "detail", ""):
+                reason = result.detail
+            for alias in self.registry.refs_for_job(uuid):
+                self.emit({"kind": "preparation_failed", "ref": alias,
+                           "phase": stage,
+                           "code": error_code or stage,
+                           "reason": reason or ""})
+        elif stage == "COMPILING":
+            kind = {"PREPARING": "bf16_running",
+                    "VALIDATING": "validating"}.get(sub or "", "compiling")
+            self.emit({"kind": kind, "ref": ref, "elapsed_s": elapsed})
+
+    def _emit_heartbeat(self, ref: str, stage: str,
+                        progress: str | None) -> None:
+        from .model_view import parse_progress
+        elapsed, sub = parse_progress(progress)
+        if stage == "COMPILING":
+            phase = {"PREPARING": "BF16 preparation",
+                     "VALIDATING": "artifact validation"}.get(
+                         sub or "", "XDNA compilation")
+        else:
+            phase = stage
+        self.emit({"kind": "heartbeat", "ref": ref, "phase": phase,
+                   "elapsed_s": elapsed or 0.0})
 
     def pump(self, dt_s: float = 0.05) -> None:
         """Advance all non-terminal jobs (fake backend).
@@ -647,34 +847,44 @@ class Supervisor:
 
     # -- reads ---------------------------------------------------------
     def status(self, ref: str | None = None) -> dict:
-        """Live-manager status. State SERVING means this manager process is
-        serving the admin/queue plane; it never claims inference readiness
-        (no ACTIVE worker exists in Task 02)."""
+        """Live-manager status. State SERVING means this manager process
+        is serving the admin/queue plane. Readiness is explicit
+        (ready/reason + live worker binding); the persisted `active`
+        record is history, so `active` is the LIVE binding or null —
+        a stale record after a crash never claims readiness."""
+        from .model_view import project_ref
+        live_key = self._live_worker_key()
         if ref:
             parsed = parse_ref(ref)
             rec = self.registry.get_ref(parsed["ref"])
-            models = [self._model_view(rec)] if rec else []
+            models = [project_ref(self.registry, parsed["ref"], live_key)
+                      ] if rec else []
         else:
-            models = [self._model_view(dict(zip(
-                ("ref", "kind", "model_id", "source_sha256",
-                 "metadata_sha256", "pin", "state"), r))) for r in
-                self.registry.query(
-                    "SELECT ref, kind, model_id, source_sha256,"
-                    " metadata_sha256, pin, state FROM model_refs")]
+            models = [project_ref(self.registry, r[0], live_key)
+                      for r in self.registry.query(
+                          "SELECT ref FROM model_refs")]
+        health = self.health()
+        active = None
+        if live_key is not None:
+            active = {"compile_key": live_key,
+                      "worker_generation": self._worker_generation,
+                      "serving_digest": self._worker_serving_digest}
         build = get_build_identity()
         return {"schema_version": 1, "service": "frigate-xdna",
                 "version": build["version"], "build": build,
                 "state": "SERVING",
-                "active": self.registry.get_state("active"),
+                "active": active,
+                "worker": health["worker"],
+                "ready": health["ready"], "reason": health["reason"],
                 "models": models,
                 "inhibition": self.registry.get_state("inhibition")}
 
     def _model_view(self, rec: dict | None) -> dict:
         if rec is None:
             return {}
-        return {"ref": rec["ref"],
-                "source_sha256": rec.get("source_sha256") or "",
-                "state": rec.get("state") or "NEW"}
+        from .model_view import project_ref
+        return project_ref(self.registry, rec["ref"],
+                           self._live_worker_key())
 
     def cache_list(self) -> list[dict]:
         rows = self.registry.query(
@@ -879,9 +1089,11 @@ class Supervisor:
                 return False
             old, old_key = self._worker, self._worker_compile_key
             old_generation = self._worker_generation
+            old_digest = self._worker_serving_digest
             self._worker = worker
             self._worker_generation = generation
             self._worker_compile_key = compile_key
+            self._worker_serving_digest = spec["serving_digest"]
             try:
                 self.registry.set_state(
                     "active",
@@ -898,22 +1110,33 @@ class Supervisor:
                 self._worker = old
                 self._worker_generation = old_generation
                 self._worker_compile_key = old_key
+                self._worker_serving_digest = old_digest
                 self._inhibit_quiet("ACTIVATION_STATE",
                          self._ref_for_artifact(compile_key))
                 return False
             if old is not None:
                 self._retire_or_track(old)
+            # Recorded native check: this exact artifact LOADed clean
+            # in the child that now serves traffic.
+            art = self.registry.get_artifact(compile_key)
+            if art is not None:
+                self._record_native_check(
+                    compile_key, art["artifact_sha256"],
+                    spec["serving_digest"], "activation-load",
+                    "activation-load-v1", {"generation": generation})
             return True
 
     def _drop_worker(self, reason: str) -> None:
         """Retire + forget the worker after death/fault, then inhibit."""
         worker, self._worker = self._worker, None
         compile_key, self._worker_compile_key = self._worker_compile_key, None
+        self._worker_serving_digest = None
         if worker is not None:
             self._retire_or_track(worker)
         ref = (self._ref_for_artifact(compile_key)
                if compile_key else "active")
         self._inhibit_quiet(reason, ref)
+        self.emit({"kind": "worker_lost", "reason": reason})
 
     def worker_infer(self, payload: bytes, shape: list[int],
                      timeout_s: float) -> tuple[str, bytes]:

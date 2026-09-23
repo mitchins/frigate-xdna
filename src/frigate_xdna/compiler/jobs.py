@@ -109,10 +109,14 @@ class JobManager:
                                  f"no such job {job_uuid}")
             return job
         stage = backend.poll(dt_s)
+        phase = getattr(backend, "phase", None)
+        progress = f"elapsed={backend.elapsed_s:.1f}s"
+        if phase and phase != stage:
+            progress += f" phase={phase}"
         self.registry.set_job(
             job_uuid, stage,
             error_code=stage if stage in TERMINAL_ERROR_STATES else None,
-            progress=f"elapsed={backend.elapsed_s:.1f}s")
+            progress=progress)
         return self.registry.get_job(job_uuid)
 
     def wait(self, job_uuid: str, timeout_s: float,

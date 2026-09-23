@@ -33,6 +33,11 @@ class FakeCompileJob:
     log: list[str] = field(default_factory=list)
     job_uuid: str = ""
 
+    @property
+    def phase(self) -> str:
+        """Fake has no sub-phases: the stage is the phase."""
+        return self.state
+
     def poll(self, dt_s: float) -> str:
         """Advance the fake job by dt_s seconds. Pure function of inputs."""
         if self.state in TERMINAL_STATES:

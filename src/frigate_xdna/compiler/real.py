@@ -52,6 +52,20 @@ class RealCompileJob:
             data_dir=self._data_dir,
             worker_factory=self._worker_factory)
 
+    @property
+    def phase(self) -> str:
+        """Current sub-phase from real phase-log presence (no guessing:
+        the log file exists only once its phase spawned)."""
+        if self.state != "COMPILING":
+            return self.state
+        import os as _os
+        for log, name in (("phase3-validate.stdout.log", "VALIDATING"),
+                          ("phase2-compile.stdout.log", "COMPILING"),
+                          ("phase1-quant.stdout.log", "PREPARING")):
+            if _os.path.isfile(_os.path.join(self._workdir, log)):
+                return name
+        return "COMPILING"
+
     def poll(self, dt_s: float) -> str:
         if self.state in ("PREPARED", "COMPILE_FAILED", "RESOURCE_EXCEEDED",
                           "VALIDATION_FAILED", "INTERRUPTED"):
