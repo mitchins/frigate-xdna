@@ -40,6 +40,14 @@ Once B is prepared, update Frigate's model ID and reinitialize through its norma
 
 The model can be saved and prepared, but stock 0.18.0 initial model failure is not auto-polled. After `wait` reports prepared, restart/reinitialize Frigate's detector via normal configuration/service behaviour. Do not modify the plugin, lie about readiness, or stretch inference timeouts to minutes.
 
+## Log sharing
+
+Container logs describe real preparation phases and may contain your
+raw Plus model IDs. They stay on your machine by default. To share
+diagnostics (support, issue reports), use `fxdna diagnose --out DIR`,
+which pseudonymizes IDs and abbreviates digests — never paste raw
+container logs publicly.
+
 ## Status, cache and offline operation
 
 ```
