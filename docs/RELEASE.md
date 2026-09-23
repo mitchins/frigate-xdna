@@ -35,8 +35,8 @@ building. Staged input is deleted in an `always()` cleanup step.
 
 ## Cutting a release
 
-- **Release candidate:** `git push` tag `v0.1.0-rc.1` — only a
-  pushed `v*` tag publishes. Publishes `:0.1.0-rc.1` and
+- **Release candidate:** `git push` tag `v0.1.0-rc.2` — only a
+  pushed `v*` tag publishes. Publishes `:0.1.0-rc.2` and
   `:sha-<short>` only — never `:latest`.
 - **Stable:** `git push` tag `v0.1.0` — only a pushed `v*` tag
   publishes. Publishes `:0.1.0`, `:0.1`, `:0`, `:latest` and
@@ -53,7 +53,7 @@ building. Staged input is deleted in an `always()` cleanup step.
   never publish, so the requested version cannot diverge from the
   built SHA.
 - **First publish visibility.** GHCR packages publish private by
-  default. After `v0.1.0-rc.1` first appears, switch the
+  default. After `v0.1.0-rc.2` first appears, switch the
   `frigate-xdna` package to Public in its settings before the
   anonymous-pull smoke — otherwise the pull check fails on
   authorisation rather than proving public availability.

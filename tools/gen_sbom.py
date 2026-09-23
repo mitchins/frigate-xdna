@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import json
 import os
+import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -78,7 +79,10 @@ def main() -> int:
             "scope": "required",
             "hashes": [{"alg": "SHA-256",
                         "content": comp["files_sha256"]}],
-            "licenses": [{"license": {"id": comp["licence"]}}],
+            # Internal audited licence labels (e.g. "amd-eula") are
+            # not SPDX identifiers: CycloneDX requires license.id to
+            # be SPDX, so the verbatim label goes in license.name.
+            "licenses": [{"license": {"name": comp["licence"]}}],
             "properties": [
                 {"name": "fxdna:roles", "value": comp.get("roles", "")},
                 {"name": "fxdna:total_bytes",
@@ -94,9 +98,20 @@ def main() -> int:
             "scope": scope,
             "purl": f"pkg:pypi/{name}@{ver}",
         })
+    # Deterministic document identity: the same image identity always
+    # yields the same serialNumber (required by the attestation path
+    # alongside bomFormat/specVersion, though CycloneDX only
+    # recommends it). A changed image ID yields a new serial.
+    serial_uuid = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"https://github.com/mitchins/frigate-xdna/sbom/"
+        f"{args.image}@{args.image_id}",
+    )
     sbom = {
+        "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
+        "serialNumber": f"urn:uuid:{serial_uuid}",
         "version": 1,
         "metadata": {
             "component": {

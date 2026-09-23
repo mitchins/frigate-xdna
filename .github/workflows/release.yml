@@ -32,9 +32,9 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: "Version to dry-run build (e.g. v0.1.0-rc.1). Dispatch never publishes."
+        description: "Version to dry-run build (e.g. v0.1.0-rc.2). Dispatch never publishes."
         required: false
-        default: "v0.1.0-rc.1"
+        default: "v0.1.0-rc.2"
   push:
     tags:
       - "v*"
@@ -281,6 +281,13 @@ jobs:
           print(json.dumps(manifest, indent=2, sort_keys=True))
           EOF
 
+      - name: Validate SBOM before any push (fail-closed gate)
+        # Runs on dry-run AND publication: an SBOM the attestation
+        # path would refuse must fail here, never after `docker push`.
+        run: |
+          set -eu
+          python3 tools/validate_sbom.py release-out/sbom.json
+
       - name: Push pinned tags to GHCR
         id: push
         if: ${{ steps.tags.outputs.push == 'true' }}
@@ -336,7 +343,7 @@ jobs:
           push-to-registry: false
       - name: Attest SBOM (OIDC)
         if: ${{ steps.tags.outputs.push == 'true' }}
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
