@@ -141,19 +141,19 @@ jobs:
           pip install --quiet --user b2==5.0.0
           export PATH="$HOME/.local/bin:$PATH"
           MANIFEST_SHA="$(sha256sum packaging/vendor-files.manifest.json | cut -d" " -f1)"
-          BUNDLE="vendor-input-${MANIFEST_SHA:0:12}.tar.gz"
+          BUNDLE="vendor-input-${MANIFEST_SHA:0:12}.tar.xz"
           RECEIPT_BUNDLE="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['bundle'])")"
           test "$BUNDLE" = "$RECEIPT_BUNDLE" || {
             echo "receipt names $RECEIPT_BUNDLE but tree pins $BUNDLE"; exit 1; }
           RECEIPT_SHA="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['sha256'])")"
           BUCKET="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['bucket'])")"
           b2 account authorize "$B2_KEY_ID" "$B2_APP_KEY" > /dev/null
-          b2 file download "b2://$BUCKET/$BUNDLE" /tmp/vendor-bundle.tar.gz
-          echo "$RECEIPT_SHA  /tmp/vendor-bundle.tar.gz" | sha256sum -c -
+          b2 file download "b2://$BUCKET/$BUNDLE" /tmp/vendor-bundle.tar.xz
+          echo "$RECEIPT_SHA  /tmp/vendor-bundle.tar.xz" | sha256sum -c -
           rm -rf packaging/vendor-input
           mkdir -p packaging/vendor-input
-          tar -xzf /tmp/vendor-bundle.tar.gz -C packaging/
-          rm -f /tmp/vendor-bundle.tar.gz
+          tar -xJf /tmp/vendor-bundle.tar.xz -C packaging/
+          rm -f /tmp/vendor-bundle.tar.xz
 
       - name: Verify vendor payload against manifests (fail-closed)
         run: |
