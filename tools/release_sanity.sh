@@ -7,8 +7,14 @@
 set -euo pipefail
 
 IMG="${1:?usage: release_sanity.sh <image-ref> <manifest-sha256>}"
-WANT_MANIFEST="${2:?usage: release_sanity.sh <image-ref> <manifest-sha256>}"
-RUN="podman run --rm --security-opt apparmor=unconfined"
+WANT_MANIFEST="${2:?usage: release_sanity.sh <image-ref> <manifest-sha256}"
+# Container runtime override (podman locally, docker on stock runners).
+CR="${CONTAINER_RUNTIME:-podman}"
+if [[ "$CR" == "docker" ]]; then
+  RUN="docker run --rm"
+else
+  RUN="podman run --rm --security-opt apparmor=unconfined"
+fi
 
 echo "== $IMG: CLI =="
 $RUN --entrypoint fxdna "$IMG" --help > /dev/null

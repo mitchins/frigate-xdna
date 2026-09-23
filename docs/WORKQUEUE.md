@@ -34,9 +34,10 @@ Done:
    restart/offline gates, 24 h soak clean, SBOM, release report;
    verdict `RELEASE_AUTOMATION_READY` in `docs/RELEASE-8.4.md`.
 2. **Task 8.5 — release automation** (this branch): GHCR workflow
-   (`.github/workflows/release.yml`), runner/release docs
-   (`docs/RELEASE.md`), README install. No tag created or pushed yet —
-   first tag (`v0.1.0-rc.1`) is an explicit owner action.
+   (`.github/workflows/release.yml`, stock runners + private B2 vendor
+   bundle, no self-hosted runners), release docs (`docs/RELEASE.md`),
+   README install. No tag created or pushed yet — first tag
+   (`v0.1.0-rc.1`) is an explicit owner action.
 3. **Project LICENSE owner**: done — `Copyright (c) 2026 Mitchell Currie`.
 4. **Docker availability**: podman 4.9.3 with
    --security-opt apparmor=unconfined (LXC needs the bypass; image builds

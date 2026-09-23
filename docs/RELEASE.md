@@ -1,50 +1,62 @@
 # Release process (Task 8.5)
 
 One automated path from approved source to GHCR — no manual image
-handling. The owner merges to `main`, then pushes a version tag; the
-`Release` workflow does everything else on the trusted self-hosted
-builder, including creating the GitHub Release with SBOM + manifest.
-There is exactly one publication trigger (a pushed `v*` tag), so a
-version builds exactly once. Manual dispatch is dry-run only by
-construction and can never publish. This PR only adds the automation;
-**no tag has been created and nothing has been pushed**.
+handling, no self-hosted runners. The owner merges to `main`, then
+pushes a version tag; the `Release` workflow runs on pinned
+`ubuntu-24.04` stock runners and does everything else, including
+creating the GitHub Release with SBOM + manifest. There is exactly
+one publication trigger (a pushed `v*` tag), so a version builds
+exactly once. Manual dispatch is dry-run only by construction and
+can never publish.
+
+The audited vendor payload is not in the repo and never enters CI
+artifacts: it ships as a content-pinned tarball in a PRIVATE Backblaze
+B2 bucket (`packaging/vendor-bundle.json` records bucket, bundle name
+and sha256 — no secrets). The job downloads it by the exact filename
+derived from the in-tree manifest, verifies its sha256 against the
+committed receipt, extracts it, and verifies every file with
+`verify_payload` plus a `vendor.lock.json` consistency check before
+building. Staged input is deleted in an `always()` cleanup step.
 
 ## One-time owner setup (all required before first use)
 
-1. **Runner.** Register exactly one repo-scoped self-hosted x86_64
-   runner with labels `self-hosted, Linux, X64, frigate-xdna-release`
-   on the trusted build host (the host holding the audited payload).
-   The workflow pins that label set so a missing runner queues
-   instead of landing on an untrusted host. The runner needs:
-   `podman`, `python3` (stdlib only), `gh`, `git`; it must NOT need
-   `/dev/accel` (release building is hardware-free).
-2. **Vendor sources.** Set these repository *Variables* (not secrets;
-   they are paths, and values appear in logs) to the canonical
-   audited payload directories on the build host:
-   `VENDOR_PAYLOAD_SRC`, `VENDOR_XRT_SRC`, `VENDOR_FLEXMLRT_LIB`,
-   `VENDOR_FLEXMLRT_INCLUDE`, `VENDOR_LEGAL_SRC`, `VENDOR_CALIB_SRC`.
-   The workflow fails closed if any is unset or not a directory, then
-   stages `packaging/vendor-input/` locally and verifies every file
-   against `packaging/vendor-files.manifest.json` plus a
-   `vendor.lock.json` consistency check. Staged input is deleted in an
-   `always()` cleanup step.
-3. **Environment.** Create the `release` environment with required
-   owner approval. Publishing, attestation and release uploads all run
-   under it.
+1. **Backblaze B2.** Keep `B2_APP_KEY` (a secret of the `release`
+   environment, so it is only exposed after the approval gate) and
+   `B2_KEY_ID` (repository variable) set. The key is restricted to
+   the private vendor bucket; it can only read the pinned bundle.
+2. **Environment.** Create the `release` environment with required
+   owner approval. The build/publish/attest job runs under it; the
+   GitHub-Release job deliberately does not (it consumes no B2
+   credential, and the publication gate is already crossed), so there
+   is exactly one approval pause per release.
+3. Nothing else: stock runners provide `docker`, `python3`, `git`
+   and `gh`. No `/dev/accel` needed (release building is
+   hardware-free), no self-hosted runner to maintain.
 
 ## Cutting a release
 
-- **Release candidate:** push tag `v0.1.0-rc.1` (or publish a
-  prerelease). Publishes `:0.1.0-rc.1` and `:sha-<short>` only —
-  never `:latest`.
-- **Stable:** push tag `v0.1.0` (or publish a Release). Publishes
-  `:0.1.0`, `:0.1`, `:0`, `:latest` and `:sha-<short>` — all tags
-  resolve to one digest (asserted in the job; divergence fails).
+- **Release candidate:** `git push` tag `v0.1.0-rc.1` — only a
+  pushed `v*` tag publishes. Publishes `:0.1.0-rc.1` and
+  `:sha-<short>` only — never `:latest`.
+- **Stable:** `git push` tag `v0.1.0` — only a pushed `v*` tag
+  publishes. Publishes `:0.1.0`, `:0.1`, `:0`, `:latest` and
+  `:sha-<short>` — all tags resolve to one digest (asserted in the
+  job; divergence fails).
 - **Dry run** (recommended first): Actions → Release → Run workflow
   (optionally with a `version_tag`). Builds, generates SBOM/manifest
-  and runs the pull-by-digest sanity against the local image; pushes,
-  attests and uploads nothing. Dispatch can never publish, so the
-  requested version cannot diverge from the built SHA.
+  and runs the image sanity gate against the local image, then
+  uploads the SBOM, release manifest and package inventory as the
+  `release-records` workflow artifact. Pushes, attests and creates
+  nothing: no image push, no attestations, no GitHub Release (each
+  job runs on a fresh runner with no shared image store, so
+  cross-job validation only applies to pushed digests). Dispatch can
+  never publish, so the requested version cannot diverge from the
+  built SHA.
+- **First publish visibility.** GHCR packages publish private by
+  default. After `v0.1.0-rc.1` first appears, switch the
+  `frigate-xdna` package to Public in its settings before the
+  anonymous-pull smoke — otherwise the pull check fails on
+  authorisation rather than proving public availability.
 - **Pinned inputs.** The base image is digest-pinned
   (digest-only `ubuntu@sha256:008173c2…`, i.e. docker.io 24.04;
   bump deliberately with a fresh `base-packages.txt` inventory,
@@ -63,7 +75,9 @@ construction and can never publish. This PR only adds the automation;
   split between MIT project code and AMD-EULA/third-party terms).
 - CycloneDX SBOM + release manifest (source SHA, image digest, vendor
   manifest digest, recipe ID, base image) regenerated from release
-  inputs — never the checked-in 8.4 report.
+  inputs — never the checked-in 8.4 report. Published manifests
+carry the GHCR `image_digest`; dry-run manifests carry `null` plus
+the `local_image_id` instead.
 - OIDC build-provenance + SBOM attestations on the pushed digest.
 - Post-push pull-by-digest into a clean environment: image starts,
   `fxdna --help`/`health`, legal notices present, native worker
