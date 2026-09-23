@@ -421,17 +421,18 @@ def _terminal_exit(state: str) -> int:
 def run_preflight(config, header: bool = True) -> int | None:
     """Deployment preflight before expensive work. Returns an exit
     code when a blocking check fails, else None (servable)."""
-    from .deploy_checks import blocking_failure, run_preflight
+    from .deploy_checks import blocking_failures, run_preflight
     if header:
         print("Checking deployment requirements...", file=sys.stderr)
     checks = run_preflight(config)
-    bad = blocking_failure(checks)
-    if bad is None:
+    bad = blocking_failures(checks)
+    if not bad:
         return None
-    print(f"fxdna: requirement failed: {bad['message']}"
-          f" [{bad.get('error_code', 'ERROR')}]",
-          file=sys.stderr)
-    return bad["code"]
+    for check in bad:
+        print(f"fxdna: requirement failed: {check['message']}"
+              f" [{check.get('error_code', 'ERROR')}]",
+              file=sys.stderr)
+    return bad[0]["code"]
 
 
 def cmd_serve(config) -> int:

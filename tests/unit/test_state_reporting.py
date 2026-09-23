@@ -419,6 +419,23 @@ class TestPreflight(unittest.TestCase):
         self.assertFalse(check["ok"])
         self.assertEqual(check["code"], 4)
 
+    def test_config_error_not_masked_by_environment(self):
+        """Constrained runners (e.g. stock CI memlock) must still
+        surface the fixable credential error first, with its code."""
+        import resource
+
+        from frigate_xdna import deploy_checks
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(data_dir=d, models=("plus://abc",))
+            with mock.patch.object(
+                    resource, "getrlimit",
+                    return_value=(8 * 1024 * 1024, 8 * 1024 * 1024)):
+                checks = deploy_checks.run_preflight(cfg)
+            bad = deploy_checks.blocking_failures(checks)
+            self.assertGreaterEqual(len(bad), 2)
+            self.assertEqual(bad[0]["name"], "plus-credential")
+            self.assertEqual(bad[0]["code"], 4)
+
     def test_doctor_lists_preflight_checks(self):
         buf = io.StringIO()
         with tempfile.TemporaryDirectory() as d:

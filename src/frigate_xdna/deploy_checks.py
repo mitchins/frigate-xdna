@@ -168,19 +168,26 @@ def check_models(config) -> dict:
 
 
 def run_preflight(config, create_data_dir: bool = True) -> list[dict]:
-    """All deployment checks, in a stable order. `doctor` passes
-    create_data_dir=False to stay side-effect free."""
-    return [check_memlock(),
+    """All deployment checks, in a stable order: configuration errors
+    (key, credential) before environment limits (memlock, disk,
+    device), so a fixable config mistake is never masked by the
+    runner's own limits. `doctor` passes create_data_dir=False to
+    stay side-effect free."""
+    return [check_key_file(config.plus_api_key_file),
+            check_plus_credential(config),
+            check_memlock(),
             check_data_dir(config.data_dir, create=create_data_dir),
             check_device(config.device),
-            check_key_file(config.plus_api_key_file),
-            check_plus_credential(config),
             check_models(config)]
+
+
+def blocking_failures(checks: list[dict]) -> list[dict]:
+    """All non-advisory failing checks (every one is reported)."""
+    return [c for c in checks
+            if not c["ok"] and not c.get("advisory")]
 
 
 def blocking_failure(checks: list[dict]) -> dict | None:
     """First non-advisory failing check, or None when servable."""
-    for check in checks:
-        if not check["ok"] and not check.get("advisory"):
-            return check
-    return None
+    failures = blocking_failures(checks)
+    return failures[0] if failures else None
