@@ -246,7 +246,7 @@ jobs:
           python3 tools/gen_sbom.py \
             --out release-out/sbom.json \
             --image "$IMAGE" \
-            --image-id "$SHORT"
+            --image-id "$LOCAL_IMAGE_ID"
           python3 - <<'EOF'
           import hashlib
           import json
