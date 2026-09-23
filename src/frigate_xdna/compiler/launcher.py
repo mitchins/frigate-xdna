@@ -391,21 +391,18 @@ def _run_vaiml_phase(prefixes, bf16_path: str, workdir: str,
             vm_peak)
 
 
-def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
-                t_all, data_dir=None, worker_factory=None) -> CompileResult:
-    for sub in ("in", "home", "tmp", "cache"):
-        os.makedirs(os.path.join(workdir, sub), exist_ok=True)
-    model_in = os.path.join(workdir, "in", "model.onnx")
-    shutil.copyfile(source_onnx, model_in)
-    bf16_path = os.path.join(workdir, "in", "model-bf16.onnx")
-    deadline = t_all + timeout_s
-    vm_peak = 0
-
+def _run_prepare_phase(prefixes, model_in: str, bf16_path: str,
+                       workdir: str, deadline: float, t_all: float,
+                       vm_peak: int):
+    """Phase 1 (BF16 prepare). Returns (bf16_sha, vm_peak) or a
+    terminal CompileResult. Exit 0 without the marker proves nothing:
+    the phase must name the digest it produced."""
+    def wall() -> float:
+        return time.monotonic() - t_all
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        return CompileResult(124, time.monotonic() - t_all,
-                             _child_peak_rss(), error=_TIMEOUT_ERROR,
-                             vm_peak_kb=vm_peak)
+        return CompileResult(124, wall(), _child_peak_rss(),
+                             error=_TIMEOUT_ERROR, vm_peak_kb=vm_peak)
     rc, _, _vm = spawn(
         [prefixes.quant_python,
          os.path.join(prefixes.recipe_dir, "prepare.py"),
@@ -417,20 +414,63 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     detail = _phase_detail(workdir, "phase1-quant")
     if rc != 0:
         return CompileResult(
-            rc, time.monotonic() - t_all, _child_peak_rss(),
+            rc, wall(), _child_peak_rss(),
             error=("bf16-prepare timeout" if rc == 124
                    else "bf16-prepare failed"),
             detail=detail, vm_peak_kb=vm_peak)
-    # Exit 0 without the marker proves nothing: the phase must name
-    # the digest it produced.
     line = _tail_line(os.path.join(workdir, "phase1-quant.stdout.log"),
                       "BF16_PREPARE_OK")
     bf16_sha = _parse_digest_token(line)
     if not bf16_sha:
-        return CompileResult(1, time.monotonic() - t_all,
-                             _child_peak_rss(),
+        return CompileResult(1, wall(), _child_peak_rss(),
                              error="bf16-prepare marker missing",
                              detail=detail, vm_peak_kb=vm_peak)
+    return bf16_sha, vm_peak
+
+
+def _verify_artifact(workdir: str, rai_path: str, rai_sha: str,
+                     rai_bytes: int, t_all: float, vm_peak: int):
+    """Marker coordinates must describe a real artifact: missing,
+    truncated or hash-mismatched files fail here, never at activation
+    time. Returns None on success, else a terminal CompileResult."""
+    def fail(error: str) -> CompileResult:
+        return CompileResult(1, time.monotonic() - t_all,
+                             _child_peak_rss(), error=error,
+                             detail=_phase_detail(workdir,
+                                                  "phase2-compile"),
+                             vm_peak_kb=vm_peak)
+    try:
+        actual = os.path.getsize(rai_path)
+    except OSError:
+        return fail("vaiml-compile artifact missing")
+    if actual <= 0 or actual != rai_bytes:
+        return fail("vaiml-compile artifact truncated: "
+                    f"got {actual} want {rai_bytes}")
+    try:
+        with open(rai_path, "rb") as f:
+            file_sha = hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        file_sha = ""
+    if file_sha != rai_sha:
+        return fail("vaiml-compile artifact hash mismatch")
+    return None
+
+
+def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
+                t_all, data_dir=None, worker_factory=None) -> CompileResult:
+    for sub in ("in", "home", "tmp", "cache"):
+        os.makedirs(os.path.join(workdir, sub), exist_ok=True)
+    model_in = os.path.join(workdir, "in", "model.onnx")
+    shutil.copyfile(source_onnx, model_in)
+    bf16_path = os.path.join(workdir, "in", "model-bf16.onnx")
+    deadline = t_all + timeout_s
+    vm_peak = 0
+
+    phase1 = _run_prepare_phase(prefixes, model_in, bf16_path, workdir,
+                                deadline, t_all, vm_peak)
+    if isinstance(phase1, CompileResult):
+        return phase1
+    bf16_sha, vm_peak = phase1
 
     phase2 = _run_vaiml_phase(prefixes, bf16_path, workdir, cache_key,
                               deadline, t_all)
@@ -440,41 +480,10 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     rai_sha, rai_bytes, rai_path, _vm = phase2
     vm_peak = max(vm_peak, _vm)
 
-    # The marker coordinates must describe a real artifact: missing
-    # or truncated files fail here, never at activation time.
-    try:
-        actual = os.path.getsize(rai_path)
-    except OSError:
-        actual = -1
-    if actual < 0:
-        return CompileResult(1, time.monotonic() - t_all,
-                             _child_peak_rss(),
-                             error="vaiml-compile artifact missing",
-                             detail=_phase_detail(workdir,
-                                                  "phase2-compile"),
-                             vm_peak_kb=vm_peak)
-    if actual <= 0 or actual != rai_bytes:
-        return CompileResult(1, time.monotonic() - t_all,
-                             _child_peak_rss(),
-                             error="vaiml-compile artifact truncated: "
-                                   f"got {actual} want {rai_bytes}",
-                             detail=_phase_detail(workdir,
-                                                  "phase2-compile"),
-                             vm_peak_kb=vm_peak)
-    # The coordinates must describe these exact bytes, not just any
-    # file of the right size.
-    try:
-        with open(rai_path, "rb") as f:
-            file_sha = hashlib.sha256(f.read()).hexdigest()
-    except OSError:
-        file_sha = ""
-    if file_sha != rai_sha:
-        return CompileResult(1, time.monotonic() - t_all,
-                             _child_peak_rss(),
-                             error="vaiml-compile artifact hash mismatch",
-                             detail=_phase_detail(workdir,
-                                                  "phase2-compile"),
-                             vm_peak_kb=vm_peak)
+    failed = _verify_artifact(workdir, rai_path, rai_sha, rai_bytes,
+                              t_all, vm_peak)
+    if failed is not None:
+        return failed
 
     # Out-of-child probe through the real worker path (fresh process;
     # the in-compile probe cannot map device memory under the child's
