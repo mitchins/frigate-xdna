@@ -1,6 +1,10 @@
 # Optional override when Frigate uses host networking or lives outside this Docker network.
+# A host-networked Frigate cannot resolve the Compose service name `xdna`:
+# point it at tcp://127.0.0.1:5555 (or the FXDNA_BIND_IP address below).
+# Belonging to the same Portainer stack does NOT override `network_mode: host`.
 # Default is host loopback. Set FXDNA_BIND_IP to a trusted reachable host/LXC address
-# only when necessary, and firewall access to the Frigate client. Do not publish publicly.
+# only when necessary, and firewall access to the Frigate client. Do not publish publicly,
+# do not use a transient bridge IP, and never publish unauthenticated ZMQ to all interfaces.
 services:
   xdna:
     ports:
