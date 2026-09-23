@@ -103,3 +103,22 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4 # v8.2.2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  coderabbit:
+    name: Request CodeRabbit review
+    # Terminal job: runs only when tests + Sonar are green (needs
+    # blocks on any failure), and only on pull requests. Auto-review
+    # is disabled (.coderabbit.yaml), so this explicit comment is the
+    # single review trigger — fix pushes never restart a review.
+    needs: [test, sonarqube]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Request CodeRabbit review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr comment "$PR_URL" --body '@coderabbitai review'
