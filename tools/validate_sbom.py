@@ -5,12 +5,14 @@ Verifies the generated document is structurally the CycloneDX 1.5 the
 GitHub attestation path accepts — before any image is pushed, so an
 obviously unusable SBOM can never survive until `docker push`.
 
-Checks: JSON parses; bomFormat/specVersion/$schema pinned;
-serialNumber present and urn:uuid:<RFC-4122 UUID>; components is an
-array; every emitted licence choice carries a non-empty `name` and
-never puts our internal vendor labels through `license.id` (which
-CycloneDX reserves for SPDX identifiers).
+Checks: JSON parses to an object; bomFormat/specVersion/$schema pinned;
+serialNumber present, a string, and urn:uuid:<canonical RFC-4122 UUID>;
+components is an array of objects with unique bom-refs (including
+metadata.component); every emitted licence choice carries a non-empty
+`name` and never puts our internal vendor labels through `license.id`
+(which CycloneDX reserves for SPDX identifiers).
 
+Wrongly typed fields are rejected with REJECT, never a traceback.
 No network, no third-party SBOM package. Exit 0 on accept, 1 with a
 useful error on reject. Directly unit-tested.
 """
@@ -29,70 +31,79 @@ def fail(reason: str) -> int:
     return 1
 
 
-def load_document(path: str):
-    """Read and parse the SBOM; raises SystemExit(1) failing closed."""
+def load_document(path: str) -> tuple[dict | None, str | None]:
+    """Read and parse the SBOM: (doc, None), or (None, reason)."""
     try:
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)
     except (OSError, ValueError) as e:
-        print(f"validate_sbom: REJECT: unreadable JSON: {e}",
-              file=sys.stderr)
-        raise SystemExit(1)
+        return None, f"unreadable JSON: {e}"
     if not isinstance(doc, dict):
-        print("validate_sbom: REJECT: top-level document is not an object",
-              file=sys.stderr)
-        raise SystemExit(1)
-    return doc
+        return None, "top-level document is not an object"
+    return doc, None
 
 
-def check_identity(doc: dict) -> str:
-    """Verify CycloneDX 1.5 document identity; returns the serial."""
+def check_identity(doc: dict) -> tuple[str | None, str | None]:
+    """Verify CycloneDX 1.5 document identity: (serial, None) or reject."""
     for key, want in (("bomFormat", "CycloneDX"), ("specVersion", "1.5"),
                       ("$schema", SCHEMA_URI)):
         if doc.get(key) != want:
-            print(f"validate_sbom: REJECT: {key} is {doc.get(key)!r},"
-                  f" want {want!r}", file=sys.stderr)
-            raise SystemExit(1)
+            return None, f"{key} is {doc.get(key)!r}, want {want!r}"
     serial = doc.get("serialNumber")
-    if not serial or not serial.startswith("urn:uuid:"):
-        print(f"validate_sbom: REJECT: bad serialNumber: {serial!r}",
-              file=sys.stderr)
-        raise SystemExit(1)
+    if not isinstance(serial, str) or not serial:
+        return None, f"bad serialNumber: {serial!r}"
+    if not serial.startswith("urn:uuid:"):
+        return None, f"serialNumber is not a urn:uuid: {serial!r}"
+    body = serial[len("urn:uuid:"):]
     try:
-        parsed = uuid.UUID(serial[len("urn:uuid:"):])
+        parsed = uuid.UUID(body)
     except ValueError:
-        print(f"validate_sbom: REJECT: serialNumber is not a UUID:"
-              f" {serial!r}", file=sys.stderr)
-        raise SystemExit(1)
+        return None, f"serialNumber is not a UUID: {serial!r}"
+    if str(parsed) != body:
+        return None, f"serialNumber is not canonical: {serial!r}"
     if parsed.variant != uuid.RFC_4122:
-        print(f"validate_sbom: REJECT: serialNumber is not RFC-4122:"
-              f" {serial!r}", file=sys.stderr)
-        raise SystemExit(1)
-    return serial
+        return None, f"serialNumber is not RFC-4122: {serial!r}"
+    return serial, None
 
 
-def check_licences(doc: dict) -> int:
-    """Verify licence representation; returns the component count."""
+def check_components(doc: dict) -> tuple[int | None, str | None]:
+    """Verify components array, bom-ref uniqueness, licences: (n, None)."""
     components = doc.get("components")
     if not isinstance(components, list):
-        print("validate_sbom: REJECT: components is not an array",
-              file=sys.stderr)
-        raise SystemExit(1)
-    for comp in components:
-        for choice in comp.get("licenses", []):
-            lic = choice.get("license", {})
+        return None, "components is not an array"
+    seen: set[str] = set()
+    metadata = doc.get("metadata")
+    if isinstance(metadata, dict):
+        component = metadata.get("component")
+        if isinstance(component, dict):
+            ref = component.get("bom-ref")
+            if isinstance(ref, str):
+                seen.add(ref)
+    for index, comp in enumerate(components):
+        if not isinstance(comp, dict):
+            return None, f"components[{index}] is not an object"
+        ref = comp.get("bom-ref")
+        if isinstance(ref, str):
+            if ref in seen:
+                return None, f"duplicate bom-ref {ref!r}"
+            seen.add(ref)
+        licenses = comp.get("licenses", [])
+        if not isinstance(licenses, list):
+            return None, (f"component {comp.get('bom-ref')!r}"
+                           " licenses is not an array")
+        for choice in licenses:
+            lic = choice.get("license") if isinstance(choice, dict) else None
+            if not isinstance(lic, dict):
+                return None, (f"component {comp.get('bom-ref')!r}"
+                               " licence choice has no license object")
             if "id" in lic:
-                print(f"validate_sbom: REJECT: component"
-                      f" {comp.get('bom-ref')!r} puts {lic['id']!r}"
-                      " through license.id (SPDX-only; use name)",
-                      file=sys.stderr)
-                raise SystemExit(1)
+                return None, (f"component {comp.get('bom-ref')!r}"
+                               f" puts {lic['id']!r} through license.id"
+                               " (SPDX-only; use name)")
             if not lic.get("name"):
-                print(f"validate_sbom: REJECT: component"
-                      f" {comp.get('bom-ref')!r} licence choice"
-                      " has no non-empty name", file=sys.stderr)
-                raise SystemExit(1)
-    return len(components)
+                return None, (f"component {comp.get('bom-ref')!r}"
+                               " licence choice has no non-empty name")
+    return len(components), None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -100,12 +111,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("sbom", help="SBOM JSON path to validate")
     args = ap.parse_args(argv)
 
-    try:
-        doc = load_document(args.sbom)
-        serial = check_identity(doc)
-        count = check_licences(doc)
-    except SystemExit as e:
-        return int(e.code or 1)
+    doc, error = load_document(args.sbom)
+    if error is not None:
+        return fail(error)
+    assert doc is not None
+    serial, error = check_identity(doc)
+    if error is not None:
+        return fail(error)
+    assert serial is not None
+    count, error = check_components(doc)
+    if error is not None:
+        return fail(error)
     print(f"validate_sbom: ACCEPT components={count} serial={serial}")
     return 0
 

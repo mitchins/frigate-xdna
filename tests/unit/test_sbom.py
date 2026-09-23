@@ -138,6 +138,38 @@ class TestValidatorGate(unittest.TestCase):
             r = validate(self.write(d, "s.json", "{nope"))
         self.assertEqual(r.returncode, 1)
 
+    def test_rejects_non_string_serial(self):
+        doc = self.valid_doc()
+        doc["serialNumber"] = 12345
+        with tempfile.TemporaryDirectory() as d:
+            r = validate(self.write(d, "s.json", doc))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("serialNumber", r.stderr)
+
+    def test_rejects_non_canonical_serial(self):
+        doc = self.valid_doc()
+        body = doc["serialNumber"][len("urn:uuid:"):]
+        doc["serialNumber"] = "urn:uuid:" + body.upper()
+        with tempfile.TemporaryDirectory() as d:
+            r = validate(self.write(d, "s.json", doc))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("canonical", r.stderr)
+
+    def test_rejects_non_object_component(self):
+        doc = self.valid_doc()
+        doc["components"].append("not-an-object")
+        with tempfile.TemporaryDirectory() as d:
+            r = validate(self.write(d, "s.json", doc))
+        self.assertEqual(r.returncode, 1)
+
+    def test_rejects_duplicate_bom_ref(self):
+        doc = self.valid_doc()
+        doc["components"].append(dict(doc["components"][0]))
+        with tempfile.TemporaryDirectory() as d:
+            r = validate(self.write(d, "s.json", doc))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("bom-ref", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
