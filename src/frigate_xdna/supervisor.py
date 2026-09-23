@@ -212,9 +212,13 @@ class Supervisor:
         current = boot_token()
         base = _retry.new_record(
             "INTERRUPTED", "INTERRUPTED", "", attempt or 1)
+        # A missing row token is unproven too: legacy or partially
+        # written rows with NULL boot_token must not bypass the host
+        # reboot check just because the current token is available.
         if (self.registry.get_state("inhibition") is not None
                 or current == "unknown"
-                or (row_boot and row_boot != current)):
+                or not row_boot
+                or row_boot != current):
             base["reason"] = (
                 "interrupted with an unproven safety state"
                 f" (row boot {row_boot or '?'} vs current {current};"
@@ -1333,7 +1337,7 @@ class Supervisor:
                 if _retry.is_safety_inhibition(
                         inh.get("reason", "")):
                     return {"ref": parsed["ref"], "cleared": False,
-                            "requeued": False,
+                            "requeued": False, "refused_safety": True,
                             "note": "safety inhibition refused:"
                                     f" {inh.get('reason')}. Explicit"
                                     " operator review required; inspect"

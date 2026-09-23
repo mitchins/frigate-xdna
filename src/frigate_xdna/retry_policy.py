@@ -162,7 +162,8 @@ def _classify_permanent(stage: str, code: str) -> dict | None:
             "guidance": guidance}
 
 
-def _classify_evidence(stage: str, detail: str) -> dict | None:
+def _classify_evidence(stage: str, detail: str,
+                       error_text: str) -> dict | None:
     if _memlock_pattern(detail):
         if memlock_adequate():
             return {"kind": "unknown", "retryable": True, "auto": False,
@@ -178,7 +179,15 @@ def _classify_evidence(stage: str, detail: str) -> dict | None:
                             " (examples/compose.yaml) and recreate the"
                             " container on the same /data; preparation"
                             " resumes automatically."}
-    if stage == "COMPILE_FAILED" and "timeout" in detail.lower():
+    if "probe failed" in error_text:
+        # A suspect/nonfinite artifact must never auto-retry into
+        # publication: evidence is preserved, the row stays terminal.
+        return {"kind": "permanent", "retryable": False, "auto": False,
+                "guidance": "Native probe failed: evidence preserved;"
+                            " artifact neither published nor activated."
+                            " New source bytes start a new job; this row"
+                            " never retries."}
+    if "timeout" in detail.lower() or "timeout" in error_text.lower():
         return {"kind": "transient", "retryable": True, "auto": True,
                 "guidance": "Compile timeout: bounded automatic retry"
                             " with backoff."}
@@ -190,7 +199,7 @@ def _classify_evidence(stage: str, detail: str) -> dict | None:
 
 
 def classify(stage: str, error_code: str | None,
-             detail: str = "") -> dict:
+             detail: str = "", error_text: str = "") -> dict:
     """Classify a terminal job outcome.
 
     Returns {kind, retryable, auto, guidance} where kind is one of
@@ -198,11 +207,17 @@ def classify(stage: str, error_code: str | None,
     admits an explicit acknowledged operator retry; `auto` admits an
     automatic one (bounded, backoff). Unknown vendor crashes,
     device faults and safety stages are never automatic.
+
+    Both the vendor tail (`detail`) and the backend's own error
+    string feed classification: native probe failures and deadline
+    timeouts record primarily in `error`, which `detail` alone would
+    miss (classifying them unknown and retryable).
     """
     code = error_code or stage
     for probe in (_classify_safety(stage, code),
                   _classify_permanent(stage, code),
-                  _classify_evidence(stage, detail or "")):
+                  _classify_evidence(stage, detail or "",
+                                     error_text or "")):
         if probe is not None:
             return probe
     # A bare compile failure with no attributable evidence is not a
@@ -216,15 +231,16 @@ def classify(stage: str, error_code: str | None,
 
 def new_record(stage: str, error_code: str | None, detail: str,
                attempt: int, now: float | None = None,
-               history_base: tuple | list = ()) -> dict:
+               history_base: tuple | list = (),
+               error_text: str = "") -> dict:
     """Build the structured failure record for a terminal job."""
     now = time.time() if now is None else now
-    cls = classify(stage, error_code, detail)
+    cls = classify(stage, error_code, detail, error_text)
     history = list(history_base) + [{"attempt": attempt, "stage": stage,
                                      "code": error_code or stage,
                                      "at": now}]
     record = {"phase": stage, "code": error_code or stage,
-              "reason": (detail or "")[:500],
+              "reason": (detail or error_text or "")[:500],
               "kind": cls["kind"], "retryable": cls["retryable"],
               "guidance": cls["guidance"], "attempts": attempt,
               "not_before": now, "history": history}

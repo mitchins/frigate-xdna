@@ -615,6 +615,19 @@ def _wait_for_state(config, ref: str, want: str, timeout: float,
         time.sleep(0.5)
 
 
+def _recover_exit(resp: dict) -> int:
+    """Recover exit truthfulness: success only when something was
+    cleared or requeued. A safety refusal exits 8 (operator scripts
+    must not proceed as though the inhibition lifted); any other
+    no-op exits 3."""
+    if resp.get("cleared") or resp.get("requeued"):
+        return SUCCESS
+    if resp.get("refused_safety"):
+        from .errors import DEVICE_UNAVAILABLE
+        return DEVICE_UNAVAILABLE
+    return NOT_READY
+
+
 def _wait_live_active(sup, ref: str, timeout: float) -> int:
     """Bounded ACTIVE wait against a live standalone supervisor."""
     deadline = time.monotonic() + timeout
@@ -766,12 +779,12 @@ def main(argv: list[str] | None = None) -> int:
                                        {"command": "recover",
                                         "ref": args.ref})
                 print(json.dumps(resp, indent=2, sort_keys=True))
-                return SUCCESS
+                return _recover_exit(resp)
             sup = Supervisor(config)
             try:
-                print(json.dumps(sup.recover_ref(args.ref), indent=2,
-                                 sort_keys=True))
-                return SUCCESS
+                resp = sup.recover_ref(args.ref)
+                print(json.dumps(resp, indent=2, sort_keys=True))
+                return _recover_exit(resp)
             finally:
                 sup.stop()
         print(f"fxdna: '{args.command}' is not implemented in this build "

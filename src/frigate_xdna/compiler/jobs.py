@@ -201,6 +201,13 @@ class JobManager:
         self.registry.set_failure(
             job_uuid, {"resumed_from": prev_uuid,
                        "history": list(prev.get("history", []))})
+        if prev_uuid is not None:
+            # Joined aliases follow the retry: without them, an alias
+            # ref would report PREPARED with no reachable key after
+            # the new attempt succeeds.
+            for alias in self.registry.refs_for_job(prev_uuid):
+                if alias != ref:
+                    self.registry.add_alias(job_uuid, alias)
         kwargs = {"source_sha256": "", "compile_key": compile_key or "",
                   "duration_s": duration_s, "succeed": succeed,
                   "fail_state": fail_state,
@@ -318,7 +325,8 @@ class JobManager:
         return self.registry.get_job(job_uuid)
 
     def record_terminal(self, job_uuid: str, stage: str,
-                        error_code: str | None, detail: str = "") -> dict:
+                        error_code: str | None, detail: str = "",
+                        error_text: str = "") -> dict:
         """Write the structured failure record for a terminal job,
         preserving attempt history across retries."""
         job = self.registry.get_job(job_uuid)
@@ -328,7 +336,8 @@ class JobManager:
             job_uuid,
             _retry.new_record(stage, error_code, detail,
                               job.get("attempt", 1),
-                              history_base=prev))
+                              history_base=prev,
+                              error_text=error_text))
         row = self.registry.get_job(job_uuid)
         assert row is not None
         return row
@@ -367,14 +376,16 @@ class JobManager:
     def _finish_terminal(self, job_uuid: str, backend, job: dict) -> dict:
         """Record a fresh terminal outcome, then open a bounded retry
         when eligible (otherwise the row stays for operator review)."""
-        detail = ""
+        detail, error_text = "", ""
         result = getattr(backend, "result", None)
         if result is not None:
             detail = getattr(result, "detail", "") or ""
+            error_text = getattr(result, "error", "") or ""
         elif hasattr(backend, "detail"):
             detail = getattr(backend, "detail") or ""
         job = self.record_terminal(job_uuid, job["stage"],
-                                   job.get("error_code"), detail)
+                                   job.get("error_code"), detail,
+                                   error_text=error_text)
         resumed = self._maybe_resume(
             job["ref"], job["compile_key"], job, trigger="pump")
         return resumed if resumed is not None else job

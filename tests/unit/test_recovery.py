@@ -797,6 +797,122 @@ class TestReviewFindings(unittest.TestCase):
                 sup.stop()
 
 
+class TestCodexFindings(unittest.TestCase):
+    """Regression tests for the Codex review round."""
+
+    def test_probe_error_text_classifies_permanent(self):
+        rec = retry_policy.new_record(
+            "COMPILE_FAILED", "COMPILE_FAILED", "", 1,
+            error_text="probe failed: non-finite probe output")
+        self.assertEqual(rec["kind"], "permanent")
+        self.assertFalse(rec["retryable"])
+        self.assertIn("non-finite", rec["reason"])
+
+    def test_timeout_error_text_classifies_transient(self):
+        rec = retry_policy.new_record(
+            "COMPILE_FAILED", "COMPILE_FAILED", "", 1,
+            error_text="vaiml-compile timeout")
+        self.assertEqual(rec["kind"], "transient")
+        self.assertTrue(rec["retryable"])
+
+    def test_null_boot_token_is_unproven(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(
+                cfg, fake_compile={"device_required": True,
+                                   "device_held_by_worker": True})
+            try:
+                ref = local_onnx(d)
+                out = sup.prepare(ref)
+                sup.pump(0.05)
+                sup.registry.execute(
+                    "UPDATE jobs SET boot_token=NULL WHERE uuid=?",
+                    (out["job_uuid"],))
+                sup.stop()
+                sup2 = Supervisor(cfg)
+                try:
+                    row = sup2.registry.get_job(out["job_uuid"])
+                    self.assertEqual(row["stage"], "INTERRUPTED")
+                    self.assertEqual(row["failure"]["kind"], "unknown")
+                    out2 = sup2.prepare(ref)
+                    self.assertEqual(out2["job_uuid"], out["job_uuid"])
+                finally:
+                    sup2.stop()
+            finally:
+                try:
+                    sup.stop()
+                except Exception:
+                    pass
+
+    def test_aliases_follow_the_retry(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup1 = Supervisor(
+                cfg, fake_compile={"device_required": False,
+                                   "succeed": False,
+                                   "fail_state": "COMPILE_FAILED",
+                                   "detail": "compile timeout"})
+            try:
+                ref_a = local_onnx(d, name="a.onnx", seed=31)
+                ref_b = local_onnx(d, name="b.onnx", seed=31)
+                out_a = sup1.prepare(ref_a)
+                out_b = sup1.prepare(ref_b)
+                self.assertEqual(out_a["job_uuid"], out_b["job_uuid"])
+                pump_until(sup1, ref_a, ("COMPILE_FAILED",))
+                sup1.stop()
+                sup2 = Supervisor(cfg)
+                try:
+                    expire_all_eligible(sup2, ref_a)
+                    out2 = sup2.prepare(ref_a)
+                    pump_until(sup2, ref_a, ("PREPARED",))
+                    key = out2["compile_key"]
+                    self.assertEqual(
+                        sup2.registry.prepared_key_for_ref(ref_b), key)
+                    by_ref = {m["ref"]: m
+                              for m in sup2.status()["models"]}
+                    self.assertEqual(by_ref[ref_b]["state"], "PREPARED")
+                    self.assertEqual(by_ref[ref_b]["compile_key"], key)
+                finally:
+                    sup2.stop()
+            finally:
+                try:
+                    sup1.stop()
+                except Exception:
+                    pass
+
+    def test_recover_exit_codes(self):
+        import io as _io
+        from contextlib import redirect_stdout as _redirect
+        from unittest import mock as _mock
+
+        from frigate_xdna import cli as _cli
+        from frigate_xdna.runtime.safety import inhibit
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(cfg)
+            try:
+                ref = local_onnx(d, seed=41)
+                sup.registry.upsert_ref(ref, "onnx", None)
+                inhibit(d, sup.registry, "DEVICE_FAULT", ref)
+                sup.stop()
+                with _mock.patch.dict(os.environ,
+                                      {"FXDNA_DATA_DIR": d}):
+                    buf = _io.StringIO()
+                    with _redirect(buf):
+                        rc = _cli.main(["recover", ref, "--acknowledge"])
+                    self.assertEqual(rc, 8)
+                    buf = _io.StringIO()
+                    with _redirect(buf):
+                        rc = _cli.main(["recover", "plus://other",
+                                        "--acknowledge"])
+                    self.assertEqual(rc, 3)
+            finally:
+                try:
+                    sup.stop()
+                except Exception:
+                    pass
+
+
 class TestInterruptResume(unittest.TestCase):
     def test_restart_interrupted_resumes_with_clean_safety(self):
         with tempfile.TemporaryDirectory() as d:
