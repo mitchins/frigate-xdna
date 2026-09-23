@@ -10,7 +10,7 @@ IMG="${1:?usage: release_sanity.sh <image-ref> <manifest-sha256>}"
 WANT_MANIFEST="${2:?usage: release_sanity.sh <image-ref> <manifest-sha256}"
 # Container runtime override (podman locally, docker on stock runners).
 CR="${CONTAINER_RUNTIME:-podman}"
-if [ "$CR" = "docker" ]; then
+if [[ "$CR" == "docker" ]]; then
   RUN="docker run --rm"
 else
   RUN="podman run --rm --security-opt apparmor=unconfined"

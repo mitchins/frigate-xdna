@@ -24,7 +24,8 @@
 #   -> create GitHub Release (prerelease for RCs) with SBOM + manifest
 #
 # First use requires the owner to (see docs/RELEASE.md):
-#   1. keep B2_APP_KEY (secret) + B2_KEY_ID (variable) set,
+#   1. keep B2_APP_KEY (a `release`-environment secret) + B2_KEY_ID
+#      (repository variable) set,
 #   2. create the protected `release` environment (owner approval).
 name: Release
 on:
@@ -53,7 +54,7 @@ env:
 jobs:
   release-build:
     name: Verify, build, SBOM, push, attest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     environment: release
     # Publish needs packages:write, attestations need id-token/attestations.
@@ -130,24 +131,29 @@ jobs:
 
       - name: Fetch audited vendor bundle from private B2 (fail-closed)
         env:
-          B2_APP_KEY: ${{ secrets.B2_APP_KEY }}
-          B2_KEY_ID: ${{ vars.B2_KEY_ID }}
+          # Env-based auth: credentials never appear in command arguments
+          # or generated shell text; `authorize` reads them from the env.
+          B2_APPLICATION_KEY: ${{ secrets.B2_APP_KEY }}
+          B2_APPLICATION_KEY_ID: ${{ vars.B2_KEY_ID }}
         run: |
           set -eu
-          test -n "${B2_APP_KEY:-}" || {
+          test -n "${B2_APPLICATION_KEY:-}" || {
             echo "refusing release: B2_APP_KEY secret is not set"; exit 1; }
-          test -n "${B2_KEY_ID:-}" || {
+          test -n "${B2_APPLICATION_KEY_ID:-}" || {
             echo "refusing release: B2_KEY_ID variable is not set"; exit 1; }
           pip install --quiet --user b2==5.0.0
           export PATH="$HOME/.local/bin:$PATH"
           MANIFEST_SHA="$(sha256sum packaging/vendor-files.manifest.json | cut -d" " -f1)"
+          RECEIPT_MANIFEST_SHA="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['manifest_sha256'])")"
+          test "$MANIFEST_SHA" = "$RECEIPT_MANIFEST_SHA" || {
+            echo "vendor receipt manifest SHA does not match tree"; exit 1; }
           BUNDLE="vendor-input-${MANIFEST_SHA:0:12}.tar.xz"
           RECEIPT_BUNDLE="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['bundle'])")"
           test "$BUNDLE" = "$RECEIPT_BUNDLE" || {
             echo "receipt names $RECEIPT_BUNDLE but tree pins $BUNDLE"; exit 1; }
           RECEIPT_SHA="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['sha256'])")"
           BUCKET="$(python3 -c "import json; print(json.load(open('packaging/vendor-bundle.json'))['bucket'])")"
-          b2 account authorize "$B2_KEY_ID" "$B2_APP_KEY" > /dev/null
+          b2 account authorize > /dev/null
           b2 file download "b2://$BUCKET/$BUNDLE" /tmp/vendor-bundle.tar.xz
           echo "$RECEIPT_SHA  /tmp/vendor-bundle.tar.xz" | sha256sum -c -
           rm -rf packaging/vendor-input
@@ -194,8 +200,10 @@ jobs:
           mkdir -p release-out
           CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "CREATED=$CREATED" >> "$GITHUB_ENV"
+          # --load pins the local-image contract: downstream steps
+          # depend on the image existing in the local Docker store.
           # shellcheck disable=SC2086
-          docker buildx build --platform linux/amd64 \
+          docker buildx build --load --platform linux/amd64 \
             --label "org.opencontainers.image.source=https://github.com/mitchins/frigate-xdna" \
             --label "org.opencontainers.image.revision=${{ steps.source.outputs.sha }}" \
             --label "org.opencontainers.image.version=${{ steps.tags.outputs.version }}" \
@@ -233,6 +241,8 @@ jobs:
         run: |
           set -eu
           SHORT="$(git rev-parse --short HEAD)"
+          LOCAL_IMAGE_ID="$(docker inspect --format='{{.Id}}' "frigate-xdna:release-${{ steps.tags.outputs.version }}")"
+          export LOCAL_IMAGE_ID
           python3 tools/gen_sbom.py \
             --out release-out/sbom.json \
             --image "$IMAGE" \
@@ -244,6 +254,11 @@ jobs:
           manifest = {
               "schema_version": 1,
               "image": os.environ["IMAGE"],
+              # Null until the post-push step records the registry
+              # digest; dry runs instead carry the local image ID, so
+              # the record never pretends a registry digest exists.
+              "image_digest": None,
+              "local_image_id": os.environ["LOCAL_IMAGE_ID"],
               "version": "${{ steps.tags.outputs.version }}",
               "tag": "${{ steps.tags.outputs.tag }}",
               "stable": "${{ steps.tags.outputs.stable }}" == "true",
@@ -269,9 +284,11 @@ jobs:
       - name: Push pinned tags to GHCR
         id: push
         if: ${{ steps.tags.outputs.push == 'true' }}
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          echo "${{ secrets.GITHUB_TOKEN }}" | \
+          echo "$GHCR_TOKEN" | \
             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           DIGEST=""
           # shellcheck disable=SC2086
@@ -292,6 +309,23 @@ jobs:
           done
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Record published digest in release manifest
+        if: ${{ steps.tags.outputs.push == 'true' }}
+        run: |
+          set -eu
+          python3 - "${{ steps.push.outputs.digest }}" <<'EOF'
+          import json
+          import sys
+          path = "release-out/release-manifest.json"
+          manifest = json.load(open(path))
+          assert manifest["image_digest"] is None, (
+              "release manifest already carries an image digest")
+          manifest["image_digest"] = sys.argv[1]
+          with open(path, "w") as f:
+              json.dump(manifest, f, indent=2, sort_keys=True)
+          print("recorded image_digest:", sys.argv[1])
+          EOF
 
       - name: Attest build provenance + SBOM (OIDC)
         if: ${{ steps.tags.outputs.push == 'true' }}
@@ -322,7 +356,7 @@ jobs:
       - name: Cleanup (always)
         if: always()
         run: |
-          rm -rf packaging/vendor-input release-out /tmp/vendor-bundle.tar.gz || true
+          rm -rf packaging/vendor-input release-out /tmp/vendor-bundle.tar.xz || true
           docker logout ghcr.io 2>/dev/null || true
       - name: Drop local release tag (pushed flow only; dry-run keeps it
           for the validate job)
@@ -337,7 +371,7 @@ jobs:
     # image store, so dry runs cannot validate across jobs (the pre-push
     # gate in the build job already covers the local image instead).
     if: ${{ needs.release-build.result == 'success' && needs.release-build.outputs.pushed == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -354,9 +388,11 @@ jobs:
           path: release-out
 
       - name: Pull by digest into a clean environment
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          echo "${{ secrets.GITHUB_TOKEN }}" | \
+          echo "$GHCR_TOKEN" | \
             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker pull "$IMAGE@${{ needs.release-build.outputs.digest }}"
           IMG="$IMAGE@${{ needs.release-build.outputs.digest }}"
@@ -379,10 +415,13 @@ jobs:
   release-assets:
     name: Create GitHub Release with SBOM + manifest
     needs: [release-build, release-validate]
+    # No `release` environment here by design: it consumes no B2
+    # credential, and the publication gate was already crossed in
+    # release-build — keeping it would only add a second approval
+    # pause before creating the GitHub Release.
     if: ${{ github.ref_type == 'tag' && needs.release-build.outputs.pushed == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
-    environment: release
     permissions:
       contents: write
     steps:
