@@ -128,9 +128,10 @@ class TestIdentityInOutputs(unittest.TestCase):
         from contextlib import redirect_stdout
 
         from frigate_xdna.cli import build_parser
+        parser = build_parser()
         buf = io.StringIO()
         with self.assertRaises(SystemExit) as cm, redirect_stdout(buf):
-            build_parser().parse_args(["--version"])
+            parser.parse_args(["--version"])
         self.assertEqual(cm.exception.code, 0)
         out = buf.getvalue().strip()
         self.assertTrue(out.startswith("fxdna "))
@@ -150,6 +151,7 @@ class TestIdentityInOutputs(unittest.TestCase):
 
     def test_supervisor_status_reports_baked_identity(self):
         import tempfile
+        from unittest import mock
 
         from frigate_xdna.build_identity import IDENTITY_ENV
         from frigate_xdna.config import Config
@@ -158,15 +160,12 @@ class TestIdentityInOutputs(unittest.TestCase):
             ident_path = write_identity(
                 d, {"schema_version": 1, "version": "0.1.1-rc.2",
                     "revision": FAKE_SHA})
-            os.environ[IDENTITY_ENV] = ident_path
-            try:
+            with mock.patch.dict(os.environ, {IDENTITY_ENV: ident_path}):
                 sup = Supervisor(Config(data_dir=d))
                 try:
                     doc = sup.status()
                 finally:
                     sup.stop()
-            finally:
-                os.environ.pop(IDENTITY_ENV, None)
         self.assertEqual(doc["version"], "0.1.1-rc.2")
         self.assertEqual(doc["build"]["revision"], FAKE_SHA)
         self.assertEqual(doc["build"]["channel"], "release-candidate")
@@ -186,14 +185,13 @@ class TestCacheIdentityStable(unittest.TestCase):
               "compile_input": {"shape": [1, 3, 320, 320]}}
         before = compile_key(**kw)
         import tempfile
+        from unittest import mock
         with tempfile.TemporaryDirectory() as d:
-            os.environ[IDENTITY_ENV] = write_identity(
+            ident_path = write_identity(
                 d, {"schema_version": 1, "version": "9.9.9",
                     "revision": FAKE_SHA})
-            try:
+            with mock.patch.dict(os.environ, {IDENTITY_ENV: ident_path}):
                 after = compile_key(**kw)
-            finally:
-                os.environ.pop(IDENTITY_ENV, None)
         self.assertEqual(before, after)
 
     def test_cache_keys_never_read_build_identity(self):
