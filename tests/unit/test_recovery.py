@@ -1023,6 +1023,22 @@ class TestCoverageGaps(unittest.TestCase):
             self.assertFalse(os.path.exists(
                 os.path.join(missing, "control.sock")))
 
+    def test_admin_chmod_failure_closes_and_unlinks(self):
+        import socket as _socket
+        from unittest import mock as _mock
+
+        from frigate_xdna.admin import AdminServer, socket_path
+        with tempfile.TemporaryDirectory() as d:
+            real = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+            with _mock.patch.object(_socket, "socket",
+                                    return_value=real):
+                with _mock.patch("os.chmod",
+                                 side_effect=OSError("no chmod")):
+                    with self.assertRaises(OSError):
+                        AdminServer(d, lambda req: {})
+            self.assertFalse(os.path.exists(socket_path(d)))
+            self.assertEqual(real.fileno(), -1)
+
     def test_resolver_missing_file_raises(self):
         from frigate_xdna.errors import FxdnaError
         with tempfile.TemporaryDirectory() as d:
