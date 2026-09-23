@@ -161,8 +161,12 @@ class TestServeLoop(unittest.TestCase):
             err.errno = zmq.EAGAIN
             fe.sock = FakeSock([err])
             fe._queue = asyncio.Queue()
-            with self.assertRaises(zmq.ZMQError):
+            try:
                 asyncio.run(fe._serve_loop())
+            except zmq.ZMQError as e:
+                self.assertEqual(e.errno, zmq.EAGAIN)
+            else:
+                self.fail("expected non-terminal ZMQError to propagate")
 
     def test_full_queue_replies_resource_exceeded(self):
         with tempfile.TemporaryDirectory() as d:
