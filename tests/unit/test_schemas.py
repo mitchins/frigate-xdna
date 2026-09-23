@@ -23,9 +23,23 @@ class TestSchemas(unittest.TestCase):
     def test_status_schema_accepts_cli_document(self):
         schema = load_schema("status.schema.json")
         doc = {"schema_version": 1, "service": "frigate-xdna",
-               "version": "0.1.0.dev0", "state": "NOT_IMPLEMENTED",
+               "version": "0.1.0.dev0",
+               "build": {"version": "0.1.0.dev0",
+                         "revision": "unknown",
+                         "channel": "development"},
+               "state": "NOT_IMPLEMENTED",
                "active": None, "models": []}
         jsonschema.validate(doc, schema)
+
+    def test_status_schema_rejects_identity_without_channel(self):
+        schema = load_schema("status.schema.json")
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(
+                {"schema_version": 1, "service": "frigate-xdna",
+                 "version": "0.1.1-rc.1",
+                 "build": {"version": "0.1.1-rc.1",
+                           "revision": "abc"},
+                 "state": "SERVING"}, schema)
 
     def test_status_schema_rejects_ready_forgery(self):
         schema = load_schema("status.schema.json")

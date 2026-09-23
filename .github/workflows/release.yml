@@ -204,6 +204,8 @@ jobs:
           # depend on the image existing in the local Docker store.
           # shellcheck disable=SC2086
           docker buildx build --load --platform linux/amd64 \
+            --build-arg "FXDNA_VERSION=${{ steps.tags.outputs.version }}" \
+            --build-arg "FXDNA_REVISION=${{ steps.source.outputs.sha }}" \
             --label "org.opencontainers.image.source=https://github.com/mitchins/frigate-xdna" \
             --label "org.opencontainers.image.revision=${{ steps.source.outputs.sha }}" \
             --label "org.opencontainers.image.version=${{ steps.tags.outputs.version }}" \
@@ -220,7 +222,9 @@ jobs:
           MANIFEST="$(sha256sum packaging/vendor-files.manifest.json | cut -d" " -f1)"
           CONTAINER_RUNTIME=docker bash tools/release_sanity.sh \
             "frigate-xdna:release-${{ steps.tags.outputs.version }}" \
-            "$MANIFEST"
+            "$MANIFEST" \
+            "${{ steps.tags.outputs.version }}" \
+            "${{ steps.source.outputs.sha }}"
 
       - name: Record installed package inventory (finished image)
         run: |
@@ -410,8 +414,10 @@ jobs:
         run: |
           set -eu
           MANIFEST="$(python3 -c "import json; print(json.load(open('release-out/release-manifest.json'))['vendor_manifest_sha256'])")"
+          IDENTITY="$(python3 -c "import json; m = json.load(open('release-out/release-manifest.json')); print(m['version'] + ' ' + m['source_sha'])")"
+          # shellcheck disable=SC2086
           CONTAINER_RUNTIME=docker bash tools/release_sanity.sh \
-            "${{ env.IMG }}" "$MANIFEST"
+            "${{ env.IMG }}" "$MANIFEST" $IDENTITY
 
       - name: Cleanup (always)
         if: always()

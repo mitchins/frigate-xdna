@@ -51,8 +51,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Quark JIT custom-op build (audited Phase-7.7 requirement); no AMD fetch.
 
 FROM base AS manager
+# Build identity (v0.1.1 checkpoint 2): the release workflow passes the
+# exact tag version + source SHA; local builds keep the defaults, which
+# the application reports as an explicit development build. The app
+# never reconstructs its version from a mutable image tag at runtime.
+ARG FXDNA_VERSION=0.1.0.dev0
+ARG FXDNA_REVISION=unknown
 COPY src /opt/fxdna/manager/src
 COPY pyproject.toml /opt/fxdna/manager/
+RUN printf '{"schema_version": 1, "version": "%s", "revision": "%s"}\n' \
+      "$FXDNA_VERSION" "$FXDNA_REVISION" \
+      > /opt/fxdna/build-identity.json
 COPY packaging/constraints-manager.txt /tmp/constraints-manager.txt
 RUN python3.12 -m venv /opt/manager-venv \
   && /opt/manager-venv/bin/pip install --no-cache-dir \

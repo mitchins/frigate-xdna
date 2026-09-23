@@ -11,8 +11,8 @@ import threading
 import time
 import uuid
 
-from . import __version__
 from .admin import AdminServer
+from .build_identity import get_build_identity
 from .cache import gc as _gc
 from .cache.keys import compile_key as _compile_key
 from .cache.keys import serving_digest as _serving_digest
@@ -661,8 +661,10 @@ class Supervisor:
                 self.registry.query(
                     "SELECT ref, kind, model_id, source_sha256,"
                     " metadata_sha256, pin, state FROM model_refs")]
+        build = get_build_identity()
         return {"schema_version": 1, "service": "frigate-xdna",
-                "version": __version__, "state": "SERVING",
+                "version": build["version"], "build": build,
+                "state": "SERVING",
                 "active": self.registry.get_state("active"),
                 "models": models,
                 "inhibition": self.registry.get_state("inhibition")}

@@ -75,6 +75,13 @@ building. Staged input is deleted in an `always()` cleanup step.
 - `linux/amd64` build from `packaging/Dockerfile` + exact source tree
   with OCI labels (source/revision/version/created; licences name the
   split between MIT project code and AMD-EULA/third-party terms).
+  The same tag version + source SHA are baked into
+  `/opt/fxdna/build-identity.json` (`FXDNA_VERSION`/`FXDNA_REVISION`
+  build args); startup output, status, and `fxdna --version` report
+  that baked identity, never a mutable image tag. The sanity gate
+  compares the reported identity with the expected version/revision
+  pre-push and post-push, and refuses an image that reports a
+  development build.
 - CycloneDX SBOM + release manifest (source SHA, image digest, vendor
   manifest digest, recipe ID, base image) regenerated from release
   inputs — never the checked-in 8.4 report. Published manifests
