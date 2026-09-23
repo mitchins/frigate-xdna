@@ -6,6 +6,7 @@ unsafe/safety/permanent no-retry, explicit recover semantics, legacy
 migration honesty, cache preservation, and attempt visibility — all
 hardware-free with scripted backends.
 """
+import json
 import os
 import sqlite3
 import tempfile
@@ -532,6 +533,219 @@ class TestLegacyMigration(unittest.TestCase):
                                                "network down")):
                     with self.assertRaises(FxdnaError):
                         sup.prepare("plus://never-seen")
+            finally:
+                sup.stop()
+
+
+class TestReviewFindings(unittest.TestCase):
+    """Regression tests for the checkpoint-5 review round."""
+
+    def test_two_eligible_rows_open_one_attempt(self):
+        """retry_due serializes per row: the second eligible row for a
+        key sees the first's live attempt and stands down."""
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(
+                cfg, fake_compile={"device_required": False,
+                                   "succeed": False,
+                                   "fail_state": "COMPILE_FAILED",
+                                   "detail": "compile timeout"})
+            try:
+                ref = local_onnx(d)
+                sup.prepare(ref)
+                pump_until(sup, ref, ("COMPILE_FAILED",))
+                first = sup.registry.latest_job_for_ref(ref)
+                # A second eligible terminal row for the same key.
+                sup.registry.execute(
+                    "INSERT INTO jobs(uuid, ref, compile_key, stage,"
+                    " attempt, created_at, updated_at, failure_json)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    ("second-uuid", ref, first["compile_key"],
+                     "COMPILE_FAILED", 1, time.time(), time.time(),
+                     json.dumps(
+                         {**first["failure"], "not_before": 0.0,
+                          "resumed_to": None})))
+                expire_all_eligible(sup, ref)
+                opened = sup.jobs.retry_due()
+                self.assertEqual(len(opened), 1)
+                live = [r for r in job_rows(sup, ref)
+                        if r[1] not in ("COMPILE_FAILED",)]
+                self.assertEqual(len(live), 1)
+            finally:
+                sup.stop()
+
+    def test_resume_without_source_refuses_cleanly(self):
+        from frigate_xdna.errors import FxdnaError
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(cfg)
+            try:
+                # Unresolvable resume source fails loudly, never
+                # sourceless.
+                with self.assertRaises(FxdnaError):
+                    sup._resolve_resume_source("ck-missing")
+                # A raising factory never opens a row: the terminal
+                # row stays for operator review.
+                sup.registry.upsert_ref("plus://x", "plus", "x")
+                sup.registry.execute(
+                    "INSERT INTO jobs(uuid, ref, compile_key, stage,"
+                    " attempt, created_at, updated_at, failure_json)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    ("t-uuid", "plus://x", "ck-missing",
+                     "COMPILE_FAILED", 1, time.time(), time.time(),
+                     json.dumps(
+                         retry_policy.new_record(
+                             "COMPILE_FAILED", "COMPILE_FAILED",
+                             "compile timeout", 1, now=0.0))))
+                sup.jobs.backend_factory = lambda **kw: (_ for _ in ()
+                                                         ).throw(
+                    FxdnaError(10, "CACHE_CORRUPT", "gone"))
+                out = sup.jobs._maybe_resume(
+                    "plus://x", "ck-missing",
+                    sup.registry.get_job("t-uuid"), trigger="test")
+                self.assertIsNone(out)
+                self.assertEqual(len(job_rows(sup, "plus://x")), 1)
+            finally:
+                sup.stop()
+
+    def test_requeue_consumes_source_row(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(
+                cfg, fake_compile={"device_required": False,
+                                   "succeed": False,
+                                   "fail_state": "COMPILE_FAILED",
+                                   "detail": "compile timeout"})
+            try:
+                ref = local_onnx(d)
+                out = sup.prepare(ref)
+                pump_until(sup, ref, ("COMPILE_FAILED",))
+                res = sup.recover_ref(ref)
+                self.assertTrue(res["requeued"])
+                self.assertEqual(len(job_rows(sup, ref)), 2)
+                source = sup.registry.get_job(out["job_uuid"])
+                self.assertIn("resumed_to", source["failure"])
+                # The consumed source row never opens a second chain.
+                expire_all_eligible(sup, ref)
+                sup.pump(0.05)
+                sup.pump(0.05)
+                self.assertEqual(len(job_rows(sup, ref)), 2)
+            finally:
+                sup.stop()
+
+    def test_unknown_record_recovers_explicitly(self):
+        """Memlock pattern with adequate allowance: no auto resume,
+        but acknowledged recover opens one bounded cycle."""
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            with mock.patch.object(retry_policy, "memlock_adequate",
+                                   return_value=True):
+                sup = Supervisor(
+                    cfg, fake_compile={"device_required": False,
+                                       "succeed": False,
+                                       "fail_state": "COMPILE_FAILED",
+                                       "detail": FLEXMLRT_DETAIL})
+                try:
+                    ref = local_onnx(d)
+                    out = sup.prepare(ref)
+                    pump_until(sup, ref, ("COMPILE_FAILED",))
+                    row = sup.registry.get_job(out["job_uuid"])
+                    self.assertEqual(row["failure"]["kind"], "unknown")
+                    sup.pump(0.05)
+                    self.assertEqual(len(job_rows(sup, ref)), 1)
+                    res = sup.recover_ref(ref)
+                    self.assertTrue(res["requeued"])
+                finally:
+                    sup.stop()
+
+    def test_recover_interrupted_row_gets_record_and_resumes(self):
+        """store.recover marks workdir jobs INTERRUPTED without
+        records; reconcile must record them so they can resume."""
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(
+                cfg, fake_compile={"device_required": True,
+                                   "device_held_by_worker": True})
+            try:
+                ref = local_onnx(d)
+                out = sup.prepare(ref)
+                sup.pump(0.05)
+                work = os.path.join(d, "work", out["job_uuid"])
+                os.makedirs(work, exist_ok=True)
+                sup.stop()
+                sup2 = Supervisor(cfg)
+                try:
+                    row = sup2.registry.get_job(out["job_uuid"])
+                    self.assertEqual(row["stage"], "INTERRUPTED")
+                    self.assertIsNotNone(row["failure"])
+                    out2 = sup2.prepare(ref)
+                    self.assertNotEqual(out2["job_uuid"], out["job_uuid"])
+                finally:
+                    sup2.stop()
+            finally:
+                try:
+                    sup.stop()
+                except Exception:
+                    pass
+
+    def test_host_reboot_token_mismatch_never_auto_resumes(self):
+        """A row from a previous boot may have died with a host
+        reboot mid-operation: unproven safety, no automatic resume."""
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(
+                cfg, fake_compile={"device_required": True,
+                                   "device_held_by_worker": True})
+            try:
+                ref = local_onnx(d)
+                out = sup.prepare(ref)
+                sup.pump(0.05)
+                row = sup.registry.get_job(out["job_uuid"])
+                self.assertEqual(row["stage"], "WAITING_FOR_DEVICE")
+                sup.registry.execute(
+                    "UPDATE jobs SET boot_token=? WHERE uuid=?",
+                    ("old-boot-token", out["job_uuid"]))
+                sup.stop()
+                sup2 = Supervisor(cfg)
+                try:
+                    row = sup2.registry.get_job(out["job_uuid"])
+                    self.assertEqual(row["stage"], "INTERRUPTED")
+                    self.assertEqual(row["failure"]["kind"], "unknown")
+                    out2 = sup2.prepare(ref)
+                    self.assertEqual(out2["job_uuid"], out["job_uuid"])
+                    # ...but acknowledged recover still works.
+                    res = sup2.recover_ref(ref)
+                    self.assertTrue(res["requeued"])
+                finally:
+                    sup2.stop()
+            finally:
+                try:
+                    sup.stop()
+                except Exception:
+                    pass
+
+    def test_recover_refused_while_other_ref_inhibited(self):
+        from frigate_xdna.runtime.safety import inhibit
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(
+                cfg, fake_compile={"device_required": False,
+                                   "succeed": False,
+                                   "fail_state": "COMPILE_FAILED",
+                                   "detail": "compile timeout"})
+            try:
+                ref_a = local_onnx(d, name="a.onnx", seed=21)
+                ref_b = local_onnx(d, name="b.onnx", seed=22)
+                sup.prepare(ref_a)
+                pump_until(sup, ref_a, ("COMPILE_FAILED",))
+                sup.registry.upsert_ref(ref_b, "onnx", None)
+                inhibit(d, sup.registry, "DEVICE_FAULT", ref_b)
+                res = sup.recover_ref(ref_a)
+                self.assertFalse(res["cleared"])
+                self.assertFalse(res["requeued"])
+                self.assertIn(ref_b, res["note"])
+                self.assertEqual(len(job_rows(sup, ref_a)), 1)
+                self.assertIsNotNone(sup.registry.get_state("inhibition"))
             finally:
                 sup.stop()
 

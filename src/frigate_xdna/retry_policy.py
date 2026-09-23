@@ -165,11 +165,12 @@ def _classify_permanent(stage: str, code: str) -> dict | None:
 def _classify_evidence(stage: str, detail: str) -> dict | None:
     if _memlock_pattern(detail):
         if memlock_adequate():
-            return {"kind": "unknown", "retryable": False, "auto": False,
+            return {"kind": "unknown", "retryable": True, "auto": False,
                     "guidance": "Locked-memory vendor pattern with an"
                                 " adequate memlock allowance: attribution"
                                 " insufficient; explicit operator review"
-                                " required (see status/recover)."}
+                                " required (see status/recover), which may"
+                                " open one bounded cycle."}
         return {"kind": "config_blocked", "retryable": True,
                 "auto": False,
                 "guidance": "Inadequate locked-memory allowance: set"

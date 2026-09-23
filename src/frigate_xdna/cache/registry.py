@@ -354,12 +354,18 @@ class Registry:
                         rows[0]))
 
     def latest_job_for_ref(self, ref: str) -> dict | None:
-        """Newest job row for a ref, including alias rows."""
+        """Newest job row for a ref, including alias rows. A live row
+        sorts before terminal rows: after a resume, the current work
+        is newest even though the consumed terminal row was stamped
+        later."""
         rows = self.query(
             "SELECT uuid, ref, compile_key, stage, attempt, error_code,"
             " progress, failure_json FROM jobs WHERE ref=? OR uuid IN"
             " (SELECT job_uuid FROM job_aliases WHERE ref=?)"
-            " ORDER BY updated_at DESC LIMIT 1", (ref, ref))
+            " ORDER BY stage IN ('PREPARED','COMPILE_FAILED',"
+            "'RESOURCE_EXCEEDED','VALIDATION_FAILED',"
+            "'UNSUPPORTED_CONTRACT','QUARANTINED','INTERRUPTED'),"
+            " updated_at DESC LIMIT 1", (ref, ref))
         if not rows:
             return None
         job = dict(zip(("uuid", "ref", "compile_key", "stage", "attempt",

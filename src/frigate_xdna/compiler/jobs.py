@@ -129,13 +129,18 @@ class JobManager:
                 "'VALIDATION_FAILED','UNSUPPORTED_CONTRACT',"
                 "'QUARANTINED','INTERRUPTED')"
                 " AND failure_json IS NOT NULL"):
-            full = self.registry.get_job(row[0])
-            if full is None:
-                continue
-            resumed = self._maybe_resume(
-                row[1], row[2], full, trigger="pump", **kw)
-            if resumed is not None:
-                opened.append(resumed)
+            # One transaction per row: the live check, eligibility and
+            # creation are atomic, so a concurrent submit (which holds
+            # its own transaction) cannot interleave a duplicate
+            # attempt between this row's check and creation.
+            with self.registry.transaction():
+                full = self.registry.get_job(row[0])
+                if full is None:
+                    continue
+                resumed = self._maybe_resume(
+                    row[1], row[2], full, trigger="pump", **kw)
+                if resumed is not None:
+                    opened.append(resumed)
         return opened
 
     def _maybe_resume(self, ref: str, compile_key: str | None,
@@ -169,6 +174,8 @@ class JobManager:
             device_required=device_required,
             extra={**(extra or {}), **kw},
             prev_uuid=failed.get("uuid"))
+        if new is None:
+            return None
         # Consume this terminal row: it must never spawn a second
         # resume (its backoff stays expired; without this every pump
         # would duplicate the attempt).
@@ -182,10 +189,11 @@ class JobManager:
                      fail_state: str = "COMPILE_FAILED",
                      device_required: bool = False,
                      extra: dict | None = None,
-                     prev_uuid: str | None = None) -> dict:
+                     prev_uuid: str | None = None) -> dict | None:
         """Create attempt N+1 as a new job row (history preserved on
         the old terminal rows and carried on the new one; committed
-        artifacts never touched)."""
+        artifacts never touched). None when backend construction
+        refuses (e.g. unresolvable resume source)."""
         job_uuid = uuid.uuid4().hex
         attempt = int(prev.get("attempts", 0)) + 1
         self.registry.create_job(job_uuid, ref, compile_key,
@@ -200,7 +208,15 @@ class JobManager:
                   "device_held_by_worker": device_required,
                   "job_uuid": job_uuid}
         kwargs.update(extra or {})
-        self._backends[job_uuid] = self.backend_factory(**kwargs)
+        try:
+            self._backends[job_uuid] = self.backend_factory(**kwargs)
+        except Exception:
+            # Backend construction refused (e.g. resumed real compile
+            # whose source bytes are gone): roll the row back out so
+            # the key stays recompilable by explicit re-submit.
+            self.registry.execute("DELETE FROM jobs WHERE uuid=?",
+                                  (job_uuid,))
+            return None
         self.registry.set_ref_state(ref, "QUEUED")
         if self.listener is not None:
             self.listener({"kind": "resumed" if why in (
@@ -233,20 +249,37 @@ class JobManager:
         """Explicit acknowledged operator retry (recover path): start
         one new bounded cycle for a retryable terminal row. Safety and
         permanent classes refuse; attempts reset for the new cycle."""
-        existing = self.registry.find_job(ref, compile_key)
-        if existing is None or existing["stage"] not in \
-                TERMINAL_ERROR_STATES:
-            return None
-        full = self.registry.get_job(existing["uuid"])
-        assert full is not None
-        prev = self._requeue_prev(full)
-        if prev is None:
-            return None
-        if compile_key and self.registry.live_job_for_key(compile_key):
-            return None
-        return self._new_attempt(ref, compile_key, prev,
-                                 "operator recover", "recover",
-                                 prev_uuid=existing["uuid"])
+        with self.registry.transaction():
+            existing = self.registry.find_job(ref, compile_key)
+            if existing is None or existing["stage"] not in \
+                    TERMINAL_ERROR_STATES:
+                return None
+            if self.registry.get_state("inhibition") is not None:
+                # Safety is device-global: recover clears a same-ref
+                # inhibition before reaching here, so anything still
+                # present (any ref, any class) blocks new compiles.
+                return None
+            full = self.registry.get_job(existing["uuid"])
+            assert full is not None
+            prev = self._requeue_prev(full)
+            if prev is None:
+                return None
+            if compile_key and self.registry.live_job_for_key(
+                    compile_key):
+                return None
+            new = self._new_attempt(ref, compile_key, prev,
+                                    "operator recover", "recover",
+                                    prev_uuid=existing["uuid"])
+            if new is None:
+                return None
+            # Consume the source row like automatic resumes do: after
+            # the new cycle goes terminal, the old row must not open a
+            # second chain around the attempt bound.
+            self.registry.set_failure(
+                existing["uuid"],
+                {**(full.get("failure") or {}),
+                 "resumed_to": new["uuid"]})
+            return new
 
     def _create(self, ref: str, compile_key: str | None,
                 duration_s: float, succeed: bool, fail_state: str,

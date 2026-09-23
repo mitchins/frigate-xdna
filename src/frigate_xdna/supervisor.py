@@ -197,48 +197,94 @@ class Supervisor:
         """JobManager retry/resume transitions become console events."""
         self.emit(event)
 
-    def _reconcile_jobs(self) -> None:
-        """Mark rows stranded by a previous process INTERRUPTED.
+    def _interrupt_record(self, stage: str, row_boot: str | None,
+                          attempt: int) -> dict:
+        """Structured record for a restart-interrupted job.
 
-        store.recover handles workdir-backed jobs; rows without a live
-        backend in THIS process (stale boot token, e.g. fake-backend
-        rows) are interrupted here with a structured record. Resume
-        safety comes from the record + current safety state, never
-        from errno alone: any inhibition blocks automatic resume.
+        Resume safety comes from records, never errno alone: a row
+        whose boot token differs from this boot may have died with a
+        host reboot mid-operation (the suspect-host-reset case), so it
+        is unproven safety — never automatic. Same-boot interruption
+        with a clean safety state is a safe resume. Any inhibition
+        blocks automatic resume either way.
         """
+        from . import retry_policy as _retry
         current = boot_token()
+        base = _retry.new_record(
+            "INTERRUPTED", "INTERRUPTED", "", attempt or 1)
+        if (self.registry.get_state("inhibition") is not None
+                or current == "unknown"
+                or (row_boot and row_boot != current)):
+            base["reason"] = (
+                "interrupted with an unproven safety state"
+                f" (row boot {row_boot or '?'} vs current {current};"
+                " a mismatch may mean a host reboot mid-operation);"
+                " explicit operator review required")
+            base["kind"] = "unknown"
+            base["retryable"] = True
+            base["auto"] = False
+            base["guidance"] = (
+                "Interrupted with an unproven safety state (possible"
+                " host reboot or active inhibition): no automatic"
+                " resume. Review status/diagnose evidence, then recover"
+                " explicitly if safe.")
+            return base
+        base["reason"] = (f"interrupted in {stage} by process restart;"
+                          " clean safety state")
+        return base
+
+    def _reconcile_jobs(self) -> None:
+        """Interrupt stranded rows and record them.
+
+        store.recover handles workdir-backed jobs (marking them
+        INTERRUPTED without records); rows without a live backend in
+        THIS process are interrupted here. Both shapes get structured
+        records via _interrupt_record — including INTERRUPTED rows
+        that lack one — so resume decisions never run on bare stages.
+        """
         for row in self.registry.query(
-                "SELECT uuid, ref, compile_key, stage, attempt FROM jobs"
+                "SELECT uuid, ref, stage, attempt, boot_token FROM jobs"
                 " WHERE stage NOT IN ('PREPARED','COMPILE_FAILED',"
                 "'RESOURCE_EXCEEDED','VALIDATION_FAILED',"
                 "'UNSUPPORTED_CONTRACT','QUARANTINED','INTERRUPTED')"):
-            uuid, ref, _ckey, stage, attempt = row
+            uuid, ref, stage, attempt, row_boot = row
             if self.registry.get_job(uuid) is None:
                 continue
             self.registry.set_job(uuid, "INTERRUPTED",
                                   error_code="INTERRUPTED")
             self.registry.set_ref_state(ref, "INTERRUPTED")
-            from . import retry_policy as _retry
-            if current == "unknown" or self.registry.get_state(
-                    "inhibition") is not None:
-                record = _retry.new_record(
-                    "INTERRUPTED", "INTERRUPTED",
-                    "interrupted with an unproven safety state; explicit"
-                    " operator review required", attempt or 1)
-                record["kind"] = "unknown"
-                record["retryable"] = False
-                record["auto"] = False
-                record["guidance"] = (
-                    "Interrupted with an unproven safety state"
-                    " (unknown boot token or active inhibition): no"
-                    " automatic resume. Review status, then recover"
-                    " explicitly if safe.")
-            else:
-                record = _retry.new_record(
-                    "INTERRUPTED", "INTERRUPTED",
-                    f"interrupted in {stage} by process restart; clean"
-                    " safety state", attempt or 1)
-            self.registry.set_failure(uuid, record)
+            self.registry.set_failure(
+                uuid, self._interrupt_record(stage, row_boot,
+                                             attempt or 1))
+        for row in self.registry.query(
+                "SELECT uuid, ref, stage, attempt, boot_token FROM jobs"
+                " WHERE stage='INTERRUPTED' AND failure_json IS NULL"):
+            uuid, ref, stage, attempt, row_boot = row
+            self.registry.set_ref_state(ref, "INTERRUPTED")
+            self.registry.set_failure(
+                uuid, self._interrupt_record(stage, row_boot,
+                                             attempt or 1))
+
+    def _resolve_resume_source(self, compile_key: str) -> str:
+        """Source bytes path for a resumed real compile, resolved from
+        committed rows (artifact -> source -> rel_path). Raises when
+        the bytes are gone: the key stays recompilable by explicit
+        re-submit, but a resume must never start sourceless."""
+        art = self.registry.get_artifact(compile_key)
+        src = self.registry.get_source(
+            art["source_sha256"]) if art else None
+        if src is None:
+            raise FxdnaError(CACHE_CORRUPT, "CACHE_CORRUPT",
+                             f"source bytes missing for resumed compile"
+                             f" {compile_key[:12]}…; re-submit explicitly")
+        path = os.path.join(self.data_dir, "sources",
+                            src["sha256"],
+                            os.path.basename(src["rel_path"]))
+        if not os.path.isfile(path):
+            raise FxdnaError(CACHE_CORRUPT, "CACHE_CORRUPT",
+                             f"source file missing for resumed compile"
+                             f" {compile_key[:12]}…; re-submit explicitly")
+        return path
 
     def _make_backend_job(self, **kw):
         """Job factory: real audited backend when prefixes are configured,
@@ -246,10 +292,14 @@ class Supervisor:
         """
         if self.compiler_prefixes is not None and kw.get("compile_key"):
             from .compiler.real import RealCompileJob
+            source_path = kw.get("source_path", "")
+            if not source_path:
+                source_path = self._resolve_resume_source(
+                    kw.get("compile_key", ""))
             return RealCompileJob(
                 source_sha256=kw.get("source_sha256", ""),
                 compile_key=kw.get("compile_key", ""),
-                source_path=kw.get("source_path", ""),
+                source_path=source_path,
                 workdir=os.path.join(self.data_dir, "work",
                                      kw.get("job_uuid", "nojobs")),
                 prefixes=self.compiler_prefixes,
@@ -1281,6 +1331,9 @@ class Supervisor:
                 # so a later recover no longer finds it. One transaction:
                 # concurrent recoveries cannot clear the same inhibition
                 # twice, and a crash rolls back both halves together.
+                # The requeue below runs outside this transaction
+                # (requeue manages its own); its live-duplicate guard
+                # keeps concurrent recoveries to one new attempt.
                 self.registry.execute(
                     "DELETE FROM service_state WHERE key=?",
                     ("inhibition",))
@@ -1288,17 +1341,27 @@ class Supervisor:
                                         {"ref": parsed["ref"],
                                          "previous": inh,
                                          "at": time.time()})
-                requeued = self._requeue_for_ref(parsed["ref"])
-                return {"ref": parsed["ref"], "cleared": True,
-                        "requeued": requeued is not None}
-            requeued = self._requeue_for_ref(parsed["ref"])
-            if requeued is not None:
+                cleared = True
+            elif inh is not None:
                 return {"ref": parsed["ref"], "cleared": False,
-                        "requeued": True,
-                        "note": "new bounded attempt opened"}
+                        "requeued": False,
+                        "note": "inhibition active for"
+                                f" {inh.get('ref')} ({inh.get('reason')});"
+                                " resolve it before recovering"
+                                f" {parsed['ref']}."}
+            else:
+                cleared = False
+        requeued = self._requeue_for_ref(parsed["ref"])
+        if cleared:
+            return {"ref": parsed["ref"], "cleared": True,
+                    "requeued": requeued is not None}
+        if requeued is not None:
             return {"ref": parsed["ref"], "cleared": False,
-                    "requeued": False,
-                    "note": "no inhibition recorded for this ref"}
+                    "requeued": True,
+                    "note": "new bounded attempt opened"}
+        return {"ref": parsed["ref"], "cleared": False,
+                "requeued": False,
+                "note": "no inhibition recorded for this ref"}
 
     def _requeue_for_ref(self, ref: str) -> dict | None:
         """Open one new bounded cycle for the ref's retryable terminal
