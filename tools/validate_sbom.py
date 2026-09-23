@@ -66,6 +66,27 @@ def check_identity(doc: dict) -> tuple[str | None, str | None]:
     return serial, None
 
 
+def _check_licenses(comp: dict) -> str | None:
+    """Verify one component's licence choices: None, or the reason."""
+    licenses = comp.get("licenses", [])
+    if not isinstance(licenses, list):
+        return (f"component {comp.get('bom-ref')!r}"
+                 " licenses is not an array")
+    for choice in licenses:
+        lic = choice.get("license") if isinstance(choice, dict) else None
+        if not isinstance(lic, dict):
+            return (f"component {comp.get('bom-ref')!r}"
+                     " licence choice has no license object")
+        if "id" in lic:
+            return (f"component {comp.get('bom-ref')!r}"
+                     f" puts {lic['id']!r} through license.id"
+                     " (SPDX-only; use name)")
+        if not lic.get("name"):
+            return (f"component {comp.get('bom-ref')!r}"
+                     " licence choice has no non-empty name")
+    return None
+
+
 def check_components(doc: dict) -> tuple[int | None, str | None]:
     """Verify components array, bom-ref uniqueness, licences: (n, None)."""
     components = doc.get("components")
@@ -87,22 +108,9 @@ def check_components(doc: dict) -> tuple[int | None, str | None]:
             if ref in seen:
                 return None, f"duplicate bom-ref {ref!r}"
             seen.add(ref)
-        licenses = comp.get("licenses", [])
-        if not isinstance(licenses, list):
-            return None, (f"component {comp.get('bom-ref')!r}"
-                           " licenses is not an array")
-        for choice in licenses:
-            lic = choice.get("license") if isinstance(choice, dict) else None
-            if not isinstance(lic, dict):
-                return None, (f"component {comp.get('bom-ref')!r}"
-                               " licence choice has no license object")
-            if "id" in lic:
-                return None, (f"component {comp.get('bom-ref')!r}"
-                               f" puts {lic['id']!r} through license.id"
-                               " (SPDX-only; use name)")
-            if not lic.get("name"):
-                return None, (f"component {comp.get('bom-ref')!r}"
-                               " licence choice has no non-empty name")
+        error = _check_licenses(comp)
+        if error is not None:
+            return None, error
     return len(components), None
 
 
