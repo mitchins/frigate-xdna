@@ -61,6 +61,20 @@ if [[ "$GOT_IDENTITY" == *" channel=development" ]]; then
 fi
 echo "identity match: $WANT_VERSION @ $WANT_REVISION"
 
+echo "== $IMG: no test fixtures or fake backends =="
+# Scripted-vendor fixtures (fake workers, phase dummies) carry the
+# FXDNA-TEST-FIXTURE marker; the appliance must not contain it, nor
+# any test tree. (compiler/fake.py ships but is unreachable in images:
+# backend selection pins the audited backend and the artifact manifest
+# backend check invalidates anything else.)
+FOUND_FIX=$($RUN --entrypoint sh "$IMG" -c '
+  grep -rIl "FXDNA-TEST-FIXTURE" /opt/fxdna 2>/dev/null || true')
+# shellcheck disable=SC2086
+[[ -z "$FOUND_FIX" ]] || { echo "$FOUND_FIX"; echo "test fixture in image"; exit 1; }
+HAS_TESTS=$($RUN --entrypoint sh "$IMG" -c '
+  ls -d /opt/fxdna/manager/tests /opt/fxdna/manager/fixtures 2>/dev/null || true')
+[[ -z "$HAS_TESTS" ]] || { echo "$HAS_TESTS"; echo "test tree in image"; exit 1; }
+
 echo "== $IMG: vendor manifest matches release record =="
 GOT=$($RUN --entrypoint sha256sum "$IMG" \
   /opt/fxdna/recipes/vendor-files.manifest.json | cut -d" " -f1)
