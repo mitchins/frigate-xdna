@@ -15,6 +15,7 @@ Isolation contract (tested, not just documented):
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import resource
 import shutil
@@ -83,6 +84,11 @@ class CompileResult:
     rai_bytes: int = 0
     error: str = ""
     vm_peak_kb: int = 0
+    # Bounded vendor tail for the failed phase (last stdout/stderr
+    # lines, ≤500 chars): a "Compilation Complete" line never
+    # overrides a failed exit, and operators get the actual vendor
+    # text (e.g. the FlexMLRT mmap failure) without log spelunking.
+    detail: str = ""
 
 
 def build_compile_env(prefixes: CompilerPrefixes, workdir: str) -> dict[str, str]:
@@ -214,6 +220,27 @@ def _tail_line(path: str, marker: str) -> str:
     return ""
 
 
+def _last_lines(path: str, count: int = 3) -> str:
+    """Last `count` non-empty log lines (bounded read); "" when absent."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(max(0, os.fstat(f.fileno()).st_size - 4096))
+            lines = f.read().decode(errors="replace").splitlines()
+    except OSError:
+        return ""
+    kept = [line.strip() for line in lines if line.strip()][-count:]
+    return " / ".join(kept)
+
+
+def _phase_detail(workdir: str, prefix: str) -> str:
+    """Bounded vendor tail for a failed phase (stdout, then stderr)."""
+    tail = _last_lines(os.path.join(workdir, f"{prefix}.stdout.log"))
+    err = _last_lines(os.path.join(workdir, f"{prefix}.stderr.log"))
+    if err and err != tail:
+        tail = f"{tail} | {err}" if tail else err
+    return tail[:500]
+
+
 def probe_artifact(data_dir: str, rai_path: str, class_count: int,
                    shape: list[int], worker_factory=None,
                    timeout_s: float = 180.0) -> tuple[str, str]:
@@ -330,17 +357,35 @@ def _run_vaiml_phase(prefixes, bf16_path: str, workdir: str,
          "--cache-key", cache_key],
         build_compile_env(prefixes, workdir), workdir, remaining,
         os.path.join(workdir, "phase2-compile"))
+    detail = _phase_detail(workdir, "phase2-compile")
     if rc != 0:
-        return CompileResult(rc, wall(), _child_peak_rss(),
-                             error="vaiml-compile failed",
-                             vm_peak_kb=vm_peak)
+        return CompileResult(
+            rc, wall(), _child_peak_rss(),
+            error=("vaiml-compile timeout" if rc == 124
+                   else "vaiml-compile failed"),
+            detail=detail, vm_peak_kb=vm_peak)
+    # A "Compilation Complete" line never overrides a missing marker:
+    # the marker must carry a digest and a byte count, or the phase
+    # did not prove what it produced (garbage markers fail here, and
+    # a bare int() crash on malformed numbers is a failure, not an
+    # exception).
+    rai_sha, rai_bytes = "", 0
     line = _tail_line(os.path.join(workdir, "phase2-compile.stdout.log"),
                       "COMPILE_OK")
-    rai_sha, rai_bytes = "", 0
     if line:
-        parts = line.rsplit(" ", 2)
-        if len(parts) == 3:
+        try:
+            parts = line.rsplit(" ", 2)
+            if len(parts) != 3:
+                raise ValueError("not a COMPILE_OK coordinate line")
             rai_sha, rai_bytes = parts[1], int(parts[2])
+            if not _parse_digest_token(rai_sha) or rai_bytes <= 0:
+                raise ValueError("bad COMPILE_OK coordinates")
+        except ValueError:
+            rai_sha, rai_bytes = "", 0
+    if not rai_sha:
+        return CompileResult(1, wall(), _child_peak_rss(),
+                             error="vaiml-compile marker missing",
+                             detail=detail, vm_peak_kb=vm_peak)
     return (rai_sha, rai_bytes,
             os.path.join(workdir, "cache", cache_key, f"{cache_key}.rai"),
             vm_peak)
@@ -369,13 +414,23 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
         build_quant_env(workdir), workdir, remaining,
         os.path.join(workdir, "phase1-quant"))
     vm_peak = max(vm_peak, _vm)
+    detail = _phase_detail(workdir, "phase1-quant")
     if rc != 0:
-        return CompileResult(rc, time.monotonic() - t_all,
-                             _child_peak_rss(), error="bf16-prepare failed",
-                             vm_peak_kb=vm_peak)
+        return CompileResult(
+            rc, time.monotonic() - t_all, _child_peak_rss(),
+            error=("bf16-prepare timeout" if rc == 124
+                   else "bf16-prepare failed"),
+            detail=detail, vm_peak_kb=vm_peak)
+    # Exit 0 without the marker proves nothing: the phase must name
+    # the digest it produced.
     line = _tail_line(os.path.join(workdir, "phase1-quant.stdout.log"),
                       "BF16_PREPARE_OK")
     bf16_sha = _parse_digest_token(line)
+    if not bf16_sha:
+        return CompileResult(1, time.monotonic() - t_all,
+                             _child_peak_rss(),
+                             error="bf16-prepare marker missing",
+                             detail=detail, vm_peak_kb=vm_peak)
 
     phase2 = _run_vaiml_phase(prefixes, bf16_path, workdir, cache_key,
                               deadline, t_all)
@@ -384,6 +439,42 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
         return phase2
     rai_sha, rai_bytes, rai_path, _vm = phase2
     vm_peak = max(vm_peak, _vm)
+
+    # The marker coordinates must describe a real artifact: missing
+    # or truncated files fail here, never at activation time.
+    try:
+        actual = os.path.getsize(rai_path)
+    except OSError:
+        actual = -1
+    if actual < 0:
+        return CompileResult(1, time.monotonic() - t_all,
+                             _child_peak_rss(),
+                             error="vaiml-compile artifact missing",
+                             detail=_phase_detail(workdir,
+                                                  "phase2-compile"),
+                             vm_peak_kb=vm_peak)
+    if actual <= 0 or actual != rai_bytes:
+        return CompileResult(1, time.monotonic() - t_all,
+                             _child_peak_rss(),
+                             error="vaiml-compile artifact truncated: "
+                                   f"got {actual} want {rai_bytes}",
+                             detail=_phase_detail(workdir,
+                                                  "phase2-compile"),
+                             vm_peak_kb=vm_peak)
+    # The coordinates must describe these exact bytes, not just any
+    # file of the right size.
+    try:
+        with open(rai_path, "rb") as f:
+            file_sha = hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        file_sha = ""
+    if file_sha != rai_sha:
+        return CompileResult(1, time.monotonic() - t_all,
+                             _child_peak_rss(),
+                             error="vaiml-compile artifact hash mismatch",
+                             detail=_phase_detail(workdir,
+                                                  "phase2-compile"),
+                             vm_peak_kb=vm_peak)
 
     # Out-of-child probe through the real worker path (fresh process;
     # the in-compile probe cannot map device memory under the child's
@@ -417,9 +508,11 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
         os.path.join(workdir, "phase3-validate"))
     vm_peak = max(vm_peak, _vm)
     if rc != 0:
-        return CompileResult(rc, time.monotonic() - t_all,
-                             _child_peak_rss(), error="validate failed",
-                             vm_peak_kb=vm_peak)
+        return CompileResult(
+            rc, time.monotonic() - t_all, _child_peak_rss(),
+            error=("validate timeout" if rc == 124 else "validate failed"),
+            detail=_phase_detail(workdir, "phase3-validate"),
+            vm_peak_kb=vm_peak)
     return CompileResult(0, time.monotonic() - t_all, _child_peak_rss(),
                          bf16_sha256=bf16_sha, rai_path=rai_path,
                          rai_sha256=rai_sha, rai_bytes=rai_bytes,

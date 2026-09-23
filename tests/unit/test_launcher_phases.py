@@ -202,9 +202,26 @@ class TestLockedRun(unittest.TestCase):
         self.assertEqual(res.error, "bf16-prepare failed")
 
     def test_full_pipeline_success_with_fakes(self):
+        # A coherent success: markers name real coordinates and the
+        # artifact exists with exactly the claimed size. (Marker and
+        # artifact enforcement now fail anything less; see
+        # tests/unit/test_phase_dummies.py for the scripted cases.)
+        import hashlib
+        rai = b"R" * 64
+        sha = hashlib.sha256(rai).hexdigest()
         with mock.patch.object(launcher, "spawn", return_value=(0, "", 0)):
             with tempfile.TemporaryDirectory() as d:
                 path, _data = yolo_source(d, classes=8, seed=5)
+                with open(os.path.join(
+                        d, "phase1-quant.stdout.log"), "w") as f:
+                    f.write(f"BF16_PREPARE_OK {sha}\n")
+                with open(os.path.join(
+                        d, "phase2-compile.stdout.log"), "w") as f:
+                    f.write(f"COMPILE_OK {sha} {len(rai)}\n")
+                rai_dir = os.path.join(d, "cache", "ck")
+                os.makedirs(rai_dir, exist_ok=True)
+                with open(os.path.join(rai_dir, "ck.rai"), "wb") as f:
+                    f.write(rai)
                 res = _run_locked(
                     prefixes(d), path, d, "ck", time.monotonic() + 9999.0,
                     time.monotonic(),
@@ -212,16 +229,27 @@ class TestLockedRun(unittest.TestCase):
         self.assertEqual(res.returncode, 0)
         self.assertTrue(res.rai_path.endswith("ck.rai"))
 
+    def _coherent_markers(self, d, rai=b"RAI"):
+        """Pre-write marker logs + artifact so a mocked rc-0 run
+        reaches the probe stage (marker/artifact enforcement)."""
+        import hashlib
+        sha = hashlib.sha256(rai).hexdigest()
+        with open(os.path.join(d, "phase1-quant.stdout.log"), "w") as f:
+            f.write(f"BF16_PREPARE_OK {sha}\n")
+        with open(os.path.join(d, "phase2-compile.stdout.log"), "w") as f:
+            f.write(f"COMPILE_OK {sha} {len(rai)}\n")
+        rai_dir = os.path.join(d, "cache", "ck")
+        os.makedirs(rai_dir, exist_ok=True)
+        with open(os.path.join(rai_dir, "ck.rai"), "wb") as f:
+            f.write(rai)
+
     def test_probe_inspection_failure_is_terminal(self):
         with mock.patch.object(launcher, "spawn", return_value=(0, "", 0)):
             with tempfile.TemporaryDirectory() as d:
                 bad = os.path.join(d, "bad.onnx")
                 with open(bad, "wb") as f:
                     f.write(b"not onnx at all")
-                rai_dir = os.path.join(d, "cache", "ck")
-                os.makedirs(rai_dir, exist_ok=True)
-                with open(os.path.join(rai_dir, "ck.rai"), "wb") as f:
-                    f.write(b"RAI")
+                self._coherent_markers(d)
                 res = _run_locked(
                     prefixes(d), bad, d, "ck", time.monotonic() + 9999.0,
                     time.monotonic(),
@@ -233,10 +261,7 @@ class TestLockedRun(unittest.TestCase):
         with mock.patch.object(launcher, "spawn", return_value=(0, "", 0)):
             with tempfile.TemporaryDirectory() as d:
                 path, _data = yolo_source(d, classes=8, seed=5)
-                rai_dir = os.path.join(d, "cache", "ck")
-                os.makedirs(rai_dir, exist_ok=True)
-                with open(os.path.join(rai_dir, "ck.rai"), "wb") as f:
-                    f.write(b"RAI")
+                self._coherent_markers(d)
 
                 def refusing():
                     return ProbeChild(
@@ -254,6 +279,7 @@ class TestLockedRun(unittest.TestCase):
             jumps = [now] + [now + 9999.0] * 10
             with tempfile.TemporaryDirectory() as d:
                 path, _data = yolo_source(d)
+                self._coherent_markers(d)
                 with mock.patch.object(launcher.time, "monotonic",
                                        side_effect=jumps):
                     res = _run_locked(
@@ -267,6 +293,7 @@ class TestLockedRun(unittest.TestCase):
             jumps = [now, now] + [now + 9999.0] * 10
             with tempfile.TemporaryDirectory() as d:
                 path, _data = yolo_source(d)
+                self._coherent_markers(d)
                 with mock.patch.object(launcher.time, "monotonic",
                                        side_effect=jumps):
                     res = _run_locked(
