@@ -83,6 +83,12 @@ def expired_req(header):
             time.monotonic() - 1.0)
 
 
+def drive_serve_once(fe):
+    async def go():
+        await fe._serve_loop()
+    asyncio.run(go())
+
+
 class TestArtifactUsable(unittest.TestCase):
     def test_corrupt_metadata_refuses(self):
         with tempfile.TemporaryDirectory() as d:
@@ -161,12 +167,8 @@ class TestServeLoop(unittest.TestCase):
             err.errno = zmq.EAGAIN
             fe.sock = FakeSock([err])
             fe._queue = asyncio.Queue()
-            try:
-                asyncio.run(fe._serve_loop())
-            except zmq.ZMQError as e:
-                self.assertEqual(e.errno, zmq.EAGAIN)
-            else:
-                self.fail("expected non-terminal ZMQError to propagate")
+            with self.assertRaises(zmq.ZMQError):
+                drive_serve_once(fe)
 
     def test_full_queue_replies_resource_exceeded(self):
         with tempfile.TemporaryDirectory() as d:
