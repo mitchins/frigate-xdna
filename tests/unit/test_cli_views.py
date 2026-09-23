@@ -131,6 +131,9 @@ class FakeSupervisor:
     def pump(self, _timeout):
         pass
 
+    def report_progress(self):
+        pass
+
     def prepare(self, ref):
         self.prepared.append(ref)
 
@@ -202,7 +205,7 @@ class TestServeLifecycle(unittest.TestCase):
             real_handlers = cli_mod._install_serve_handlers
             outcome = {}
 
-            def fake_sup_factory(config):
+            def fake_sup_factory(config, **_kw):
                 sup = FakeSupervisor(config)
                 sups.append(sup)
                 return sup
@@ -219,6 +222,11 @@ class TestServeLifecycle(unittest.TestCase):
             cli_mod.Supervisor = fake_sup_factory
             zmq_mod.FrigateZmqFrontend = fake_fe_factory
             cli_mod._install_serve_handlers = handlers.append
+            real_preflight = cli_mod.run_preflight
+            # Lifecycle tests stub the supervisor; preflight has its
+            # own dedicated tests (deployment would fail here on
+            # stock runners with no NPU).
+            cli_mod.run_preflight = lambda _config: None
             try:
                 with mock.patch.dict(os.environ, {}, clear=False):
                     os.environ.pop("FXDNA_ENDPOINT", None)
@@ -249,6 +257,7 @@ class TestServeLifecycle(unittest.TestCase):
                 cli_mod.Supervisor = real_sup
                 zmq_mod.FrigateZmqFrontend = real_fe
                 cli_mod._install_serve_handlers = real_handlers
+                cli_mod.run_preflight = real_preflight
                 FakeFrontend.instances.clear()
 
     def test_serve_runs_and_shuts_down_cleanly(self):

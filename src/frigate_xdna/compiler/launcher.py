@@ -89,6 +89,9 @@ class CompileResult:
     # overrides a failed exit, and operators get the actual vendor
     # text (e.g. the FlexMLRT mmap failure) without log spelunking.
     detail: str = ""
+    # In-compile native probe outcome ("ok"/"failed"/"skipped"/""):
+    # the supervisor records VERIFIED only on a recorded "ok".
+    probe: str = ""
 
 
 def build_compile_env(prefixes: CompilerPrefixes, workdir: str) -> dict[str, str]:
@@ -488,6 +491,7 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     # Out-of-child probe through the real worker path (fresh process;
     # the in-compile probe cannot map device memory under the child's
     # address-space cap). Skipped when the device is busy serving.
+    probed = ""
     if data_dir is not None and os.path.isfile(rai_path):
         try:
             spec = _probe_spec(source_onnx)
@@ -500,10 +504,13 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
             data_dir, rai_path, spec[0], spec[1],
             worker_factory=worker_factory, timeout_s=180.0)
         if _status == "failed":
-            return CompileResult(7, time.monotonic() - t_all,
-                                 _child_peak_rss(),
-                                 error=f"probe failed: {_detail}",
-                                 vm_peak_kb=vm_peak)
+            failed = CompileResult(7, time.monotonic() - t_all,
+                                   _child_peak_rss(),
+                                   error=f"probe failed: {_detail}",
+                                   vm_peak_kb=vm_peak)
+            failed.probe = "failed"
+            return failed
+        probed = "skipped" if _status == "skipped" else "ok"
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return CompileResult(124, time.monotonic() - t_all,
@@ -522,10 +529,12 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
             error=("validate timeout" if rc == 124 else "validate failed"),
             detail=_phase_detail(workdir, "phase3-validate"),
             vm_peak_kb=vm_peak)
-    return CompileResult(0, time.monotonic() - t_all, _child_peak_rss(),
-                         bf16_sha256=bf16_sha, rai_path=rai_path,
-                         rai_sha256=rai_sha, rai_bytes=rai_bytes,
-                         vm_peak_kb=vm_peak)
+    ok = CompileResult(0, time.monotonic() - t_all, _child_peak_rss(),
+                       bf16_sha256=bf16_sha, rai_path=rai_path,
+                       rai_sha256=rai_sha, rai_bytes=rai_bytes,
+                       vm_peak_kb=vm_peak)
+    ok.probe = probed
+    return ok
 
 
 def _child_peak_rss() -> int:

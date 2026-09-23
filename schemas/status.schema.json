@@ -36,6 +36,21 @@
       },
       "required": ["ref", "compile_key", "serving_digest", "generation"]
     },
+    "worker": {
+      "type": ["object", "null"],
+      "description": "Live resident worker binding, or null when no worker serves.",
+      "properties": {
+        "compile_key": {"type": ["string", "null"]},
+        "generation": {"type": "integer", "minimum": 0},
+        "serving_digest": {"type": ["string", "null"]},
+        "loaded": {"type": "boolean"},
+        "alive": {"type": "boolean"}
+      }
+    },
+    "ready": {"type": "boolean",
+              "description": "Inference readiness: loaded, alive, permitted worker, no inhibition."},
+    "reason": {"type": "string",
+               "description": "Human reason for the current readiness value."},
     "models": {
       "type": "array",
       "items": {
@@ -43,7 +58,7 @@
         "required": ["ref", "source_sha256", "state"],
         "properties": {
           "ref": {"type": "string"},
-          "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "source_sha256": {"type": "string"},
           "state": {
             "type": "string",
             "enum": ["NEW", "FETCHING", "DOWNLOADED", "INSPECTED", "QUEUED",
@@ -55,7 +70,15 @@
                      "SOURCE_CHANGED", "CACHE_CORRUPT", "QUARANTINED",
                      "INTERRUPTED", "DEVICE_BUSY", "DEVICE_FAULT",
                      "SAFETY_INHIBITED"]
-          }
+          },
+          "phase": {"type": ["string", "null"],
+                    "description": "Current preparation sub-phase, if any."},
+          "elapsed_s": {"type": ["number", "null"],
+                        "description": "Measured seconds in the current phase, if any."},
+          "verified": {"type": "boolean",
+                       "description": "A native check (in-compile probe or activation LOAD) is recorded for this artifact."},
+          "error_code": {"type": ["string", "null"]},
+          "compile_key": {"type": ["string", "null"]}
         }
       }
     },

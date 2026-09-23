@@ -19,6 +19,14 @@ from ..models import inspect as _inspect
 from .policy import check_transfer
 from .sessions import SessionTable
 
+
+def _emit(sup, event: dict) -> None:
+    """Console progress via the supervisor; tolerates test doubles
+    without a reporter."""
+    emit = getattr(sup, "emit", None)
+    if callable(emit):
+        emit(event)
+
 PROTOCOL_VERSION = 1
 MAX_HEADER_BYTES = 16 * 1024
 MAX_TENSOR_BYTES = 16 * 1024 * 1024
@@ -279,6 +287,7 @@ class FrigateZmqFrontend:
                     compile_key, self._generation)
                 await self._reply(identity, {
                     "model_saved": True, "model_loaded": True})
+                _emit(self.sup, {"kind": "handshake_complete"})
                 return True
             return False
         if compile_key == self._active_artifact:
@@ -288,6 +297,7 @@ class FrigateZmqFrontend:
                 compile_key, self._generation)
             await self._reply(identity, {
                 "model_saved": True, "model_loaded": True})
+            _emit(self.sup, {"kind": "handshake_complete"})
             return True
         # different model, check MODEL_IN_USE
         if self.sessions.has_active_traffic(self._generation):
@@ -313,6 +323,7 @@ class FrigateZmqFrontend:
                 compile_key, self._generation)
             await self._reply(identity, {
                 "model_saved": True, "model_loaded": True})
+            _emit(self.sup, {"kind": "handshake_complete"})
             return True
         return False
 

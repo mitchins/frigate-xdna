@@ -83,7 +83,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap = sub.add_parser("activate", help="Activate an already prepared model.")
     ap.add_argument("ref")
     ap.add_argument("--maintenance", action="store_true")
-    ap.add_argument("--wait", action="store_true")
+    ap.add_argument("--wait", action="store_true",
+                    help="Wait until the ref projects ACTIVE (bounded).")
+    ap.add_argument("--timeout", type=float, default=300.0,
+                    help="Bound for --wait (seconds).")
 
     cp = sub.add_parser("cache", help="Inspect/prune the content cache.")
     csub = cp.add_subparsers(dest="cache_command", required=True)
@@ -104,6 +107,36 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("ref")
     rp.add_argument("--acknowledge", action="store_true", required=True)
     return p
+
+
+def cmd_health(config, ready: bool) -> int:
+    """Liveness (default) or readiness (--ready) from the real daemon.
+
+    A dead daemon, stale socket, or failed bounded admin request is
+    liveness-false with a nonzero exit — never success with
+    alive=false. Readiness requires a loaded, alive, permitted worker
+    with no inhibition; it never opens the NPU, compiles, or infers.
+    """
+    try:
+        resp = admin_call(config.data_dir, {"command": "health"})
+        if not resp.get("ok", True) or "health" not in resp:
+            raise FxdnaError(NOT_READY, "DAEMON_UNREACHABLE",
+                             "bounded admin request failed")
+        doc = resp["health"]
+    except FxdnaError:
+        doc = {"alive": False,
+               "reason": "daemon unreachable (absent or stale socket)"}
+    out = {"schema_version": 1, "alive": bool(doc.get("alive", True)),
+           "ready": bool(doc.get("ready", False)),
+           "reason": doc.get("reason", ""),
+           "worker": doc.get("worker"),
+           "inhibition": doc.get("inhibition")}
+    print(json.dumps(out, indent=2, sort_keys=True))
+    if not out["alive"]:
+        return NOT_READY
+    if ready and not out["ready"]:
+        return NOT_READY
+    return SUCCESS
 
 
 def _daemon_alive(data_dir: str, timeout_s: float = 2.0) -> bool:
@@ -140,30 +173,38 @@ def _read_status(config, ref=None, show_identifiers: bool = False) -> dict:
                 "state": "STARTING",
                 "active": None, "models": [],
                 "note": "no registry yet; daemon not started"}
+    from .model_view import project_ref
     from .observability.redact import load_or_create_key
     key = None if show_identifiers else load_or_create_key(config.data_dir)
     view = _StatusView(show_identifiers, key)
     # SERVING is reported only when a live manager owns the directory;
-    # otherwise STARTING (or INHIBITED) — never inference readiness (B2).
+    # otherwise STARTING (or INHIBITED) — never inference readiness.
+    # Without a live manager no ACTIVE projection is provable: the
+    # persisted record stays history, `active` stays null.
     daemon = _daemon_alive(config.data_dir)
     reg = Registry(db, read_only=True)
     try:
         if ref:
             from .models.refs import parse_ref
-            rec = reg.get_ref(parse_ref(ref)["ref"])
-            models = [view.model(rec)] if rec else []
+            parsed = parse_ref(ref)["ref"]
+            rec = reg.get_ref(parsed)
+            models = [view.project(project_ref(reg, parsed, None))
+                      ] if rec else []
         else:
-            models = [view.row(r) for r in reg.query(
-                "SELECT ref, kind, model_id, source_sha256,"
-                " metadata_sha256, state FROM model_refs")]
+            models = [view.project(project_ref(reg, r[0], None))
+                      for r in reg.query("SELECT ref FROM model_refs")]
         inhibition = reg.get_state("inhibition")
         state = "SERVING" if daemon else (
             "INHIBITED" if inhibition else "STARTING")
-        active = view.active(reg.get_state("active"))
+        ready = False
+        reason = ("daemon not running" if not daemon
+                  else "no live worker projection offline")
         return {"schema_version": 1, "service": "frigate-xdna",
                 "version": build["version"], "build": build,
                 "state": state,
-                "active": active, "models": models,
+                "active": None, "worker": None,
+                "ready": ready, "reason": reason,
+                "models": models,
                 "inhibition": inhibition}
     finally:
         reg.close()
@@ -176,12 +217,15 @@ class _StatusView:
         self.show = show_identifiers
         self.key = key
 
-    def model(self, rec: dict) -> dict:
-        return self.triple(rec["ref"], rec.get("source_sha256"),
-                           rec.get("state") or "NEW")
-
-    def row(self, r: tuple) -> dict:
-        return self.triple(r[0], r[3] or "", r[5])
+    def project(self, view: dict) -> dict:
+        """Redact identity fields of a projected model view; phase,
+        elapsed, verified, error and key pass through (no secrets)."""
+        redacted = self.triple(view["ref"], view.get("source_sha256"),
+                               view["state"])
+        redacted.update({k: view.get(k) for k in
+                         ("phase", "elapsed_s", "verified", "error_code",
+                          "compile_key")})
+        return redacted
 
     def triple(self, raw_ref: str, source_sha: str | None, state: str,
                ) -> dict:
@@ -339,10 +383,12 @@ _ADMIN_EXIT = {
     "COMPILE_FAILED": 6, "RESOURCE_EXCEEDED": 6,
     "VALIDATION_FAILED": 7,
     "DEVICE_BUSY": 8, "DEVICE_FAULT": 8, "SAFETY_INHIBITED": 8,
-    "QUARANTINED": 8,
+    "QUARANTINED": 8, "ACTIVATION_FAILED": 8,
     "CACHE_CORRUPT": 10,
-    "OWNERSHIP_CONFLICT": 9,
+    "OWNERSHIP_CONFLICT": 9, "MODEL_IN_USE": 9,
     "SOURCE_CHANGED": 2, "INTERRUPTED": 3,
+    "NOT_PREPARED": 3, "UNKNOWN_JOB": 3, "WAIT_TIMEOUT": 3,
+    "DAEMON_UNREACHABLE": 3,
 }
 
 
@@ -372,13 +418,33 @@ def _terminal_exit(state: str) -> int:
     return _TERMINAL_EXIT.get(state, NOT_READY)
 
 
+def run_preflight(config, header: bool = True) -> int | None:
+    """Deployment preflight before expensive work. Returns an exit
+    code when a blocking check fails, else None (servable)."""
+    from .deploy_checks import blocking_failure, run_preflight
+    if header:
+        print("Checking deployment requirements...", file=sys.stderr)
+    checks = run_preflight(config)
+    bad = blocking_failure(checks)
+    if bad is None:
+        return None
+    print(f"fxdna: requirement failed: {bad['message']}"
+          f" [{bad.get('error_code', 'ERROR')}]",
+          file=sys.stderr)
+    return bad["code"]
+
+
 def cmd_serve(config) -> int:
     if "FXDNA_ENDPOINT" not in os.environ:
         # SPEC §5.1: loopback by default for native development; the image
         # default (bind-all) applies only when explicitly configured.
         config = config.__class__(**{**config.__dict__,
                                      "endpoint": "tcp://127.0.0.1:5555"})
-    sup = Supervisor(config)
+    failed = run_preflight(config)
+    if failed is not None:
+        return failed
+    from .observability.progress import ConsoleReporter
+    sup = Supervisor(config, reporter=ConsoleReporter())
     sup.start_admin()
     # Start ROUTER frontend (Task 04) if endpoint is configured
     zfrontend = None
@@ -496,6 +562,9 @@ def cmd_prepare(config, args) -> int:
                     {"command": "status", "ref": ref})["status"]
             results.append(job)
     else:
+        failed = run_preflight(config)
+        if failed is not None:
+            return failed
         sup = Supervisor(config)  # takes exclusive lock or raises
         try:
             for ref in args.refs:
@@ -515,6 +584,7 @@ def cmd_prepare(config, args) -> int:
 
 def _wait_for_state(config, ref: str, want: str, timeout: float,
                     print_success: bool = True) -> int:
+    from .model_view import satisfies
     daemon = _daemon_alive(config.data_dir)
     deadline = time.monotonic() + timeout
     while True:
@@ -525,7 +595,10 @@ def _wait_for_state(config, ref: str, want: str, timeout: float,
         else:
             doc = _read_status(config, ref)
         states = [m["state"] for m in doc.get("models", [])]
-        if states and states[0] == want:
+        # Ranked satisfaction: ACTIVE implies VERIFIED implies
+        # PREPARED (activation records verification), so waiting for
+        # a lesser state succeeds once a better one projects.
+        if states and satisfies(states[0], want):
             if print_success:
                 print(json.dumps(doc, indent=2, sort_keys=True))
             return SUCCESS
@@ -534,6 +607,25 @@ def _wait_for_state(config, ref: str, want: str, timeout: float,
             return _terminal_exit(states[0])
         if time.monotonic() >= deadline:
             print(f"fxdna: timed out waiting for {ref}={want}",
+                  file=sys.stderr)
+            return NOT_READY
+        time.sleep(0.5)
+
+
+def _wait_live_active(sup, ref: str, timeout: float) -> int:
+    """Bounded ACTIVE wait against a live standalone supervisor."""
+    deadline = time.monotonic() + timeout
+    while True:
+        doc = sup.status(ref)
+        states = [m["state"] for m in doc.get("models", [])]
+        if states and states[0] == "ACTIVE":
+            print(json.dumps(doc, indent=2, sort_keys=True))
+            return SUCCESS
+        if states and states[0] in _TERMINAL_EXIT:
+            print(json.dumps(doc, indent=2, sort_keys=True))
+            return _terminal_exit(states[0])
+        if time.monotonic() >= deadline:
+            print(f"fxdna: timed out waiting for {ref}=ACTIVE",
                   file=sys.stderr)
             return NOT_READY
         time.sleep(0.5)
@@ -578,11 +670,19 @@ def main(argv: list[str] | None = None) -> int:
                     {"command": "activate", "ref": args.ref,
                      "maintenance": args.maintenance})
                 print(json.dumps(resp, indent=2, sort_keys=True))
-                return SUCCESS
+                if not args.wait:
+                    return SUCCESS
+                return _wait_for_state(config, args.ref, "ACTIVE",
+                                       args.timeout)
             sup = Supervisor(config)
             try:
                 print(json.dumps(sup.activate(args.ref, args.maintenance)))
-                return SUCCESS
+                if not args.wait:
+                    return SUCCESS
+                # Standalone wait polls the live supervisor (still
+                # owning its worker); the read-only path cannot
+                # project ACTIVE after stop().
+                return _wait_live_active(sup, args.ref, args.timeout)
             finally:
                 sup.stop()
         if args.command == "cache":
@@ -642,25 +742,21 @@ def main(argv: list[str] | None = None) -> int:
                       "lease; refusing without it [DEVICE_UNAVAILABLE]",
                       file=sys.stderr)
                 return 8
+            from .deploy_checks import run_preflight
             doc = {"schema_version": 1, "checks": [
                 {"name": "registry-readable", "ok": os.path.isfile(
                     os.path.join(config.data_dir, "registry.sqlite3"))},
                 {"name": "endpoint-configured",
-                 "ok": "://" in config.endpoint}],
+                 "ok": "://" in config.endpoint}] + [
+                {"name": c["name"], "ok": c["ok"],
+                 "message": c["message"]}
+                for c in run_preflight(config,
+                                       create_data_dir=False)],
                 "note": "passive checks only; no NPU probed"}
             print(json.dumps(doc, indent=2, sort_keys=True))
             return SUCCESS
         if args.command == "health":
-            alive = _daemon_alive(config.data_dir)
-            if not args.ready:
-                print(json.dumps({"schema_version": 1, "alive": alive}))
-                return SUCCESS
-            # --ready requires an ACTIVE healthy worker (Task 04). No
-            # worker exists in Task 02: never claim readiness.
-            print(json.dumps({"schema_version": 1, "alive": alive,
-                              "ready": False,
-                              "note": "no native worker in this build"}))
-            return NOT_READY
+            return cmd_health(config, args.ready)
         if args.command == "recover":
             if _daemon_alive(config.data_dir):
                 resp = _admin_or_raise(config.data_dir,
