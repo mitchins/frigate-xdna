@@ -489,7 +489,7 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
         return failed
 
     probed, vm_peak, probe_failed = _run_probe_step(
-        source_onnx, workdir, data_dir, rai_path, t_all, vm_peak,
+        source_onnx, data_dir, rai_path, t_all, vm_peak,
         worker_factory)
     if probe_failed is not None:
         return probe_failed
@@ -500,7 +500,7 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     return validated
 
 
-def _run_probe_step(source_onnx: str, workdir: str, data_dir: str | None,
+def _run_probe_step(source_onnx: str, data_dir: str | None,
                     rai_path: str, t_all: float, vm_peak: int,
                     worker_factory):
     """Out-of-child probe through the real worker path (fresh process;
