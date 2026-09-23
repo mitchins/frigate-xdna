@@ -250,6 +250,14 @@ class TestServeLifecycle(unittest.TestCase):
                         time.sleep(0.02)
                     self.assertTrue(fe.started)
                     self.assertTrue(handlers)
+                    # Let the serve loop complete at least one
+                    # pump+report cycle before stopping; otherwise the
+                    # progress-call assertion below races startup.
+                    deadline = time.monotonic() + 10.0
+                    while (not sups[0].progress_calls
+                           and time.monotonic() < deadline):
+                        time.sleep(0.02)
+                    self.assertGreater(sups[0].progress_calls, 0)
                     handlers[0](15, None)
                     thread.join(timeout=10.0)
                     self.assertFalse(thread.is_alive())

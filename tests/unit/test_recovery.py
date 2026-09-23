@@ -993,6 +993,26 @@ class TestUpgradeFollowups(unittest.TestCase):
                 sup.stop()
 
 
+class TestRefusalDisplayConsistency(unittest.TestCase):
+    def test_refusal_stamp_displays_non_retryable(self):
+        from frigate_xdna.model_view import _failure_view
+        # A construction refusal stamped on a legacy row must display
+        # exactly what requeue enforces: no retry.
+        view, retryable = _failure_view(
+            {"resume_refused": "gone"},
+            {"stage": "COMPILE_FAILED"})
+        self.assertIsNone(view)
+        self.assertFalse(retryable)
+        # Untouched legacy rows keep the stage rule.
+        view, retryable = _failure_view(
+            None, {"stage": "COMPILE_FAILED"})
+        self.assertIsNone(view)
+        self.assertTrue(retryable)
+        view, retryable = _failure_view(
+            None, {"stage": "QUARANTINED"})
+        self.assertFalse(retryable)
+
+
 class TestInterruptResume(unittest.TestCase):
     def test_restart_interrupted_resumes_with_clean_safety(self):
         with tempfile.TemporaryDirectory() as d:

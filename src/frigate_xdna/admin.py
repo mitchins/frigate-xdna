@@ -35,9 +35,22 @@ class AdminServer(threading.Thread):
         # cannot mistake a starting daemon for a dead one (and take
         # the standalone exclusive-lock path by mistake).
         self._srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._srv.bind(self.path)
-        os.chmod(self.path, 0o700)
-        self._srv.listen(8)
+        try:
+            self._srv.bind(self.path)
+            os.chmod(self.path, 0o700)
+            self._srv.listen(8)
+        except Exception:
+            # A half-bound socket must not leak an FD or a stale path
+            # that a later start would mistake for a live daemon.
+            try:
+                self._srv.close()
+            except OSError:
+                pass
+            try:
+                os.unlink(self.path)
+            except OSError:
+                pass
+            raise
         self._srv.settimeout(0.2)
 
     def run(self):

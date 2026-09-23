@@ -60,11 +60,15 @@ _LEGACY_NO_RETRY = frozenset({
 
 def _failure_view(failure, job) -> tuple[dict | None, bool]:
     """(display record, retryable) for a job failure value. Lineage
-    markers on live resumed rows (no phase) display nothing. Legacy
-    terminal rows without records mirror the requeue rule: retryable
-    unless a safety/permanent stage; live rows never are."""
+    markers and refusal stamps on rows (no phase) display nothing and
+    are never retryable — mirroring _requeue_prev, which refuses
+    anything without retryable=True. Legacy terminal rows with NO
+    record at all mirror the requeue rule: retryable unless a
+    safety/permanent stage; live rows never are."""
     from .compiler.jobs import TERMINAL_ERROR_STATES
     if not isinstance(failure, dict) or "phase" not in failure:
+        if failure is not None:
+            return None, False
         stage = (job or {}).get("stage")
         return None, bool(stage and stage in TERMINAL_ERROR_STATES
                           and stage not in _LEGACY_NO_RETRY)

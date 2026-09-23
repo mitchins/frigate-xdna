@@ -45,8 +45,10 @@ The model can be saved and prepared, but stock 0.18.0 initial model failure is n
 Container logs describe real preparation phases and may contain your
 raw Plus model IDs. They stay on your machine by default. To share
 diagnostics (support, issue reports), use `fxdna diagnose --out DIR`,
-which pseudonymizes IDs and abbreviates digests — never paste raw
-container logs publicly.
+which pseudonymizes Plus IDs and abbreviates source digests — never
+paste raw container logs publicly. Content hashes (compile keys) are
+exported full by design: they identify bytes, not your account, and
+are not sensitive.
 
 ## Status, cache and offline operation
 
