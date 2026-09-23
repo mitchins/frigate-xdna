@@ -130,6 +130,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends cmake g++ pkg-c
 FROM base AS final
 COPY --from=manager /opt/manager-venv /opt/manager-venv
 COPY --from=manager /opt/fxdna/manager /opt/fxdna/manager
+# Build identity (release version + source revision) for the app's
+# truthful identity reporting; without this the image claims a
+# development build and the release sanity gate refuses it.
+COPY --from=manager /opt/fxdna/build-identity.json /opt/fxdna/build-identity.json
 COPY --from=compiler /opt/compile-venv /opt/compile-venv
 COPY --from=compiler /opt/xilinx-xrt /opt/xilinx-xrt
 COPY --from=quant /opt/quant-venv /opt/quant-venv

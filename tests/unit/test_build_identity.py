@@ -82,6 +82,14 @@ class TestIdentityRead(unittest.TestCase):
                                  "revision": FAKE_SHA,
                                  "channel": "release"})
 
+    def test_dev_build_keeps_valid_revision(self):
+        self._point({"schema_version": 1, "version": "0.1.1.dev0",
+                     "revision": FAKE_SHA})
+        ident = get_build_identity()
+        self.assertEqual(ident["channel"], "development")
+        self.assertEqual(ident["revision"], FAKE_SHA)
+        self.assertEqual(ident["version"], "0.1.1.dev0")
+
     def test_rc_identity_is_not_final(self):
         self._point({"schema_version": 1, "version": "0.1.1-rc.2",
                      "revision": FAKE_SHA})

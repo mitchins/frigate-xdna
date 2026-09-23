@@ -33,9 +33,11 @@ CHANNEL_RC = "release-candidate"
 CHANNEL_RELEASE = "release"
 
 
-def _development(version: str) -> dict:
+def _development(version: str, revision: str = "unknown") -> dict:
+    if not isinstance(revision, str) or not REVISION_RE.match(revision):
+        revision = "unknown"
     return {"schema_version": 1, "version": version,
-            "revision": "unknown", "channel": CHANNEL_DEVELOPMENT}
+            "revision": revision, "channel": CHANNEL_DEVELOPMENT}
 
 
 def channel_for(version: str) -> str:
@@ -60,11 +62,15 @@ def get_build_identity() -> dict:
         return _development(__version__)
     version = raw.get("version")
     revision = raw.get("revision")
-    if not isinstance(version, str) or not isinstance(revision, str):
+    if not isinstance(version, str):
         return _development(__version__)
     if not (STABLE_RE.match(version) or RC_RE.match(version)):
-        return _development(__version__)
-    if not REVISION_RE.match(revision):
+        # Development build, explicitly — but keep a valid baked
+        # revision when one exists (local image traceability).
+        return _development(
+            version if version else __version__,
+            revision if isinstance(revision, str) else "unknown")
+    if not isinstance(revision, str) or not REVISION_RE.match(revision):
         return _development(__version__)
     return {"schema_version": 1, "version": version,
             "revision": revision, "channel": channel_for(version)}
