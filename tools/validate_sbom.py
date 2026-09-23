@@ -103,6 +103,19 @@ def _seed_refs(doc: dict) -> tuple[set[str], str | None]:
     return {ref}, None
 
 
+def _check_ref(seen: set[str], index: int, comp: dict) -> str | None:
+    """Verify one component's bom-ref presence, shape, uniqueness."""
+    if "bom-ref" not in comp:
+        return None
+    ref = comp.get("bom-ref")
+    if not isinstance(ref, str) or not ref:
+        return f"components[{index}] bom-ref is not a non-empty string"
+    if ref in seen:
+        return f"duplicate bom-ref {ref!r}"
+    seen.add(ref)
+    return None
+
+
 def check_components(doc: dict) -> tuple[int | None, str | None]:
     """Verify components array, bom-ref uniqueness, licences: (n, None)."""
     components = doc.get("components")
@@ -114,14 +127,9 @@ def check_components(doc: dict) -> tuple[int | None, str | None]:
     for index, comp in enumerate(components):
         if not isinstance(comp, dict):
             return None, f"components[{index}] is not an object"
-        if "bom-ref" in comp:
-            ref = comp.get("bom-ref")
-            if not isinstance(ref, str) or not ref:
-                return None, (f"components[{index}] bom-ref is not"
-                               " a non-empty string")
-            if ref in seen:
-                return None, f"duplicate bom-ref {ref!r}"
-            seen.add(ref)
+        error = _check_ref(seen, index, comp)
+        if error is not None:
+            return None, error
         error = _check_licenses(comp)
         if error is not None:
             return None, error
