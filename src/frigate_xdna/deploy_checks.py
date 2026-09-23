@@ -133,11 +133,16 @@ def check_key_file(key_file: str | None) -> dict:
             "error_code": "INVALID_CONFIG"}
 
 
-def check_plus_credential(config) -> dict:
-    """Plus refs without any credential fail acquisition; say so now."""
+def check_plus_credential(config, extra_refs: tuple = ()) -> dict:
+    """Plus refs without any credential fail acquisition; say so now.
+
+    extra_refs covers refs requested on the command line (e.g.
+    `prepare plus://ID`), which are not in FXDNA_MODELS yet fail the
+    same acquisition path.
+    """
     from .models.refs import parse_ref
     wants_plus = False
-    for ref in config.models:
+    for ref in list(config.models) + list(extra_refs or ()):
         try:
             if parse_ref(ref)["kind"] == "plus":
                 wants_plus = True
@@ -167,14 +172,15 @@ def check_models(config) -> dict:
             "code": 0}
 
 
-def run_preflight(config, create_data_dir: bool = True) -> list[dict]:
+def run_preflight(config, create_data_dir: bool = True,
+                  extra_refs: tuple = ()) -> list[dict]:
     """All deployment checks, in a stable order: configuration errors
     (key, credential) before environment limits (memlock, disk,
     device), so a fixable config mistake is never masked by the
     runner's own limits. `doctor` passes create_data_dir=False to
     stay side-effect free."""
     return [check_key_file(config.plus_api_key_file),
-            check_plus_credential(config),
+            check_plus_credential(config, extra_refs),
             check_memlock(),
             check_data_dir(config.data_dir, create=create_data_dir),
             check_device(config.device),

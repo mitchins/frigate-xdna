@@ -418,13 +418,14 @@ def _terminal_exit(state: str) -> int:
     return _TERMINAL_EXIT.get(state, NOT_READY)
 
 
-def run_preflight(config, header: bool = True) -> int | None:
+def run_preflight(config, header: bool = True,
+                  extra_refs: tuple = ()) -> int | None:
     """Deployment preflight before expensive work. Returns an exit
     code when a blocking check fails, else None (servable)."""
     from .deploy_checks import blocking_failures, run_preflight
     if header:
         print("Checking deployment requirements...", file=sys.stderr)
-    checks = run_preflight(config)
+    checks = run_preflight(config, extra_refs=extra_refs)
     bad = blocking_failures(checks)
     if not bad:
         return None
@@ -563,7 +564,7 @@ def cmd_prepare(config, args) -> int:
                     {"command": "status", "ref": ref})["status"]
             results.append(job)
     else:
-        failed = run_preflight(config)
+        failed = run_preflight(config, extra_refs=tuple(args.refs))
         if failed is not None:
             return failed
         sup = Supervisor(config)  # takes exclusive lock or raises
