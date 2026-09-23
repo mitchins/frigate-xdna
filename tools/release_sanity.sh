@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Hardware-free release-image sanity gate (Task 8.5).
-# Usage: release_sanity.sh <image-ref> <vendor-manifest-sha256>
+# Hardware-free release-image sanity gate (Task 8.5, identity: v0.1.1 C2).
+# Usage: release_sanity.sh <image-ref> <vendor-manifest-sha256> <version> <revision>
 # Runs the SAME checks pre-push (local tag) and post-push (digest),
 # so a bad image can never reach :latest. No NPU, no secrets, no network
 # except the local container runtime. Exit nonzero on any mismatch.
 set -euo pipefail
 
-IMG="${1:?usage: release_sanity.sh <image-ref> <manifest-sha256>}"
-WANT_MANIFEST="${2:?usage: release_sanity.sh <image-ref> <manifest-sha256}"
+IMG="${1:?usage: release_sanity.sh <image-ref> <manifest-sha256> <version> <revision>}"
+WANT_MANIFEST="${2:?usage: release_sanity.sh <image-ref> <manifest-sha256> <version> <revision>}"
+WANT_VERSION="${3:?usage: release_sanity.sh <image-ref> <manifest-sha256> <version> <revision>}"
+WANT_REVISION="${4:?usage: release_sanity.sh <image-ref> <manifest-sha256> <version> <revision>}"
 # Container runtime override (podman locally, docker on stock runners).
 CR="${CONTAINER_RUNTIME:-podman}"
 if [[ "$CR" == "docker" ]]; then
@@ -45,6 +47,19 @@ FOUND=$($RUN --entrypoint sh "$IMG" -c '
 CREDS=$($RUN --entrypoint sh "$IMG" -c '
   grep -rIlE "PLUS_API_KEY=.{4,}|ghp_|github_pat_|xox[bap]-" /opt/fxdna/manager 2>/dev/null || true')
 [[ -z "$CREDS" ]] || { echo "$CREDS"; echo "credential material"; exit 1; }
+
+echo "== $IMG: reported build identity =="
+GOT_IDENTITY=$($RUN --user 10001:10001 --read-only \
+  --entrypoint fxdna "$IMG" --version)
+echo "$GOT_IDENTITY"
+[[ "$GOT_IDENTITY" == "fxdna $WANT_VERSION revision=$WANT_REVISION channel="* ]] || {
+  echo "identity mismatch: want version=$WANT_VERSION revision=$WANT_REVISION";
+  exit 1; }
+if [[ "$GOT_IDENTITY" == *" channel=development" ]]; then
+  echo "release image reports a development build"
+  exit 1
+fi
+echo "identity match: $WANT_VERSION @ $WANT_REVISION"
 
 echo "== $IMG: vendor manifest matches release record =="
 GOT=$($RUN --entrypoint sha256sum "$IMG" \

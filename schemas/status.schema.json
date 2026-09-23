@@ -3,11 +3,21 @@
   "$id": "https://github.com/mitchins/frigate-xdna/schemas/status.schema.json",
   "title": "frigate-xdna service status",
   "type": "object",
-  "required": ["schema_version", "service", "version", "state"],
+  "required": ["schema_version", "service", "version", "build", "state"],
   "properties": {
     "schema_version": {"const": 1},
     "service": {"const": "frigate-xdna"},
     "version": {"type": "string"},
+    "build": {
+      "type": "object",
+      "required": ["version", "revision", "channel"],
+      "properties": {
+        "version": {"type": "string"},
+        "revision": {"type": "string"},
+        "channel": {"enum": ["development", "release-candidate",
+                             "release"]}
+      }
+    },
     "state": {
       "type": "string",
       "enum": ["STARTING", "SERVING", "DEGRADED", "INHIBITED",

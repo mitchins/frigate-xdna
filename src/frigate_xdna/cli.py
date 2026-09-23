@@ -17,6 +17,7 @@ import time
 
 from . import __version__
 from .admin import admin_call, socket_path
+from .build_identity import format_identity, get_build_identity
 from .cache.registry import Registry
 from .config import load_config
 from .errors import (
@@ -40,7 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Self-contained XDNA detector sidecar for Frigate "
                     "(stock Frigate unchanged).",
     )
-    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    from .build_identity import version_string
+    p.add_argument("--version", action="version", version=version_string())
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     sub.add_parser("serve", help="Start manager, ZMQ frontend and supervision.")
@@ -131,9 +133,11 @@ def _read_status(config, ref=None, show_identifiers: bool = False) -> dict:
     --show-identifiers reveals raw values on the owning machine only.
     """
     db = os.path.join(config.data_dir, "registry.sqlite3")
+    build = get_build_identity()
     if not os.path.isfile(db):
         return {"schema_version": 1, "service": "frigate-xdna",
-                "version": __version__, "state": "STARTING",
+                "version": build["version"], "build": build,
+                "state": "STARTING",
                 "active": None, "models": [],
                 "note": "no registry yet; daemon not started"}
     from .observability.redact import load_or_create_key
@@ -157,7 +161,8 @@ def _read_status(config, ref=None, show_identifiers: bool = False) -> dict:
             "INHIBITED" if inhibition else "STARTING")
         active = view.active(reg.get_state("active"))
         return {"schema_version": 1, "service": "frigate-xdna",
-                "version": __version__, "state": state,
+                "version": build["version"], "build": build,
+                "state": state,
                 "active": active, "models": models,
                 "inhibition": inhibition}
     finally:
@@ -434,6 +439,7 @@ def cmd_serve(config) -> int:
         except FxdnaError as e:
             print(f"fxdna: startup prepare {ref}: {e.message} "
                   f"[{e.error_code}]", file=sys.stderr)
+    print(format_identity(get_build_identity()), file=sys.stderr)
     print(f"fxdna: serving endpoint={config.endpoint} "
           f"data={sup.data_dir}", file=sys.stderr)
     # Explicit handlers: as container PID 1 the default SIGTERM action
