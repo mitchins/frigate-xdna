@@ -15,54 +15,64 @@ from __future__ import annotations
 import sys
 
 
+def _elapsed(event: dict) -> str:
+    return f"elapsed={event['elapsed_s']:.0f}s"
+
+
+def _formatters() -> dict:
+    return {
+        "preparing_model":
+            lambda e: f"Preparing model {e['ref']}...",
+        "model_cached":
+            lambda e: (f"Model {e['ref']} already prepared; no compilation."),
+        "downloading_model":
+            lambda e: f"Downloading model {e['ref']}...",
+        "inspection_complete":
+            lambda e: (f"Model inspection complete: {e['ref']}:"
+                       f" {e.get('profile', '?')}"
+                       f" {e.get('shape', '')}".rstrip()),
+        "bf16_running":
+            lambda e: (f"BF16 preparation running: {e['ref']}:"
+                       f" {_elapsed(e)}"),
+        "compiling":
+            lambda e: (f"XDNA compilation running: {e['ref']}:"
+                       f" {_elapsed(e)}"),
+        "validating":
+            lambda e: (f"Artifact validation running: {e['ref']}:"
+                       f" {_elapsed(e)}"),
+        "waiting_for_device":
+            lambda e: (f"Waiting for device: {e['ref']} (compilation needs"
+                       f" the NPU while a worker owns it)."),
+        "worker_lost":
+            lambda e: (f"Worker lost: {e['reason']}."
+                       f" Daemon live; see `fxdna status`."),
+        "model_prepared":
+            lambda e: (f"Model prepared: {e['ref']}; waiting for Frigate at"
+                       f" {e['endpoint']}"),
+        "preparation_failed":
+            lambda e: (f"Preparation failed: {e['ref']}:"
+                       f" phase={e['phase']} code={e['code']}"
+                       f"{' reason=' + e['reason'] if e.get('reason') else ''}."
+                       f" See `fxdna status {e['ref']}`."),
+        "worker_active":
+            lambda e: (f"Worker active: generation={e['generation']}"
+                       f" model={e.get('compile_key', '')[:12]}..."),
+        "handshake_complete":
+            lambda _e: "Frigate model handshake complete.",
+        "heartbeat":
+            lambda e: (f"Still preparing {e['ref']}: {e['phase']}:"
+                       f" {_elapsed(e)}"),
+    }
+
+
 def format_event(event: dict) -> str:
     """One plain log line per event. Unknown kinds are never dropped
     silently: they render generically."""
     kind = event.get("kind", "?")
-    if kind == "preparing_model":
-        return f"Preparing model {event['ref']}..."
-    if kind == "model_cached":
-        return (f"Model {event['ref']} already prepared"
-                f"{' (' + event['note'] + ')' if event.get('note') else ''};"
-                f" no compilation.")
-    if kind == "downloading_model":
-        return f"Downloading model {event['ref']}..."
-    if kind == "inspection_complete":
-        return (f"Model inspection complete: {event['ref']}:"
-                f" {event.get('profile', '?')}"
-                f" {event.get('shape', '')}".rstrip())
-    if kind == "bf16_running":
-        return (f"BF16 preparation running: {event['ref']}:"
-                f" elapsed={event['elapsed_s']:.0f}s")
-    if kind == "compiling":
-        return (f"XDNA compilation running: {event['ref']}:"
-                f" elapsed={event['elapsed_s']:.0f}s")
-    if kind == "validating":
-        return (f"Artifact validation running: {event['ref']}:"
-                f" elapsed={event['elapsed_s']:.0f}s")
-    if kind == "waiting_for_device":
-        return (f"Waiting for device: {event['ref']} (compilation needs"
-                f" the NPU while a worker owns it).")
-    if kind == "worker_lost":
-        return (f"Worker lost: {event['reason']}."
-                f" Daemon live; see `fxdna status`.")
-    if kind == "model_prepared":
-        return (f"Model prepared: {event['ref']}; waiting for Frigate at"
-                f" {event['endpoint']}")
-    if kind == "preparation_failed":
-        return (f"Preparation failed: {event['ref']}:"
-                f" phase={event['phase']} code={event['code']}"
-                f"{' reason=' + event['reason'] if event.get('reason') else ''}."
-                f" See `fxdna status {event['ref']}`.")
-    if kind == "worker_active":
-        return (f"Worker active: generation={event['generation']}"
-                f" model={event.get('compile_key', '')[:12]}...")
-    if kind == "handshake_complete":
-        return "Frigate model handshake complete."
-    if kind == "heartbeat":
-        return (f"Still preparing {event['ref']}: {event['phase']}:"
-                f" elapsed={event['elapsed_s']:.0f}s")
-    return f"fxdna: {kind} {event}"
+    render = _formatters().get(kind)
+    if render is None:
+        return f"fxdna: {kind} {event}"
+    return render(event)
 
 
 class ConsoleReporter:

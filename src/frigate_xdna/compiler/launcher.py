@@ -488,18 +488,34 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
     if failed is not None:
         return failed
 
-    # Out-of-child probe through the real worker path (fresh process;
-    # the in-compile probe cannot map device memory under the child's
-    # address-space cap). Skipped when the device is busy serving.
+    probed, vm_peak, probe_failed = _run_probe_step(
+        source_onnx, workdir, data_dir, rai_path, t_all, vm_peak,
+        worker_factory)
+    if probe_failed is not None:
+        return probe_failed
+
+    validated, vm_peak = _run_validate_phase(
+        prefixes, workdir, rai_path, deadline, t_all, vm_peak,
+        bf16_sha, rai_sha, rai_bytes, probed)
+    return validated
+
+
+def _run_probe_step(source_onnx: str, workdir: str, data_dir: str | None,
+                    rai_path: str, t_all: float, vm_peak: int,
+                    worker_factory):
+    """Out-of-child probe through the real worker path (fresh process;
+    the in-compile probe cannot map device memory under the child's
+    address-space cap). Skipped when the device is busy serving.
+    Returns (probed, vm_peak, None) or (..., terminal CompileResult)."""
     probed = ""
     if data_dir is not None and os.path.isfile(rai_path):
         try:
             spec = _probe_spec(source_onnx)
         except Exception as e:
-            return CompileResult(7, time.monotonic() - t_all,
-                                 _child_peak_rss(),
-                                 error=f"probe inspection failed: {e}",
-                                 vm_peak_kb=vm_peak)
+            return probed, vm_peak, CompileResult(
+                7, time.monotonic() - t_all, _child_peak_rss(),
+                error=f"probe inspection failed: {e}",
+                vm_peak_kb=vm_peak)
         _status, _detail = probe_artifact(
             data_dir, rai_path, spec[0], spec[1],
             worker_factory=worker_factory, timeout_s=180.0)
@@ -509,13 +525,21 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
                                    error=f"probe failed: {_detail}",
                                    vm_peak_kb=vm_peak)
             failed.probe = "failed"
-            return failed
+            return probed, vm_peak, failed
         probed = "skipped" if _status == "skipped" else "ok"
+    return probed, vm_peak, None
+
+
+def _run_validate_phase(prefixes, workdir: str, rai_path: str,
+                        deadline: float, t_all: float, vm_peak: int,
+                        bf16_sha: str, rai_sha: str, rai_bytes: int,
+                        probed: str) -> tuple:
+    """Phase 3 (artifact validation). Returns (CompileResult, vm_peak)."""
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return CompileResult(124, time.monotonic() - t_all,
                              _child_peak_rss(), error=_TIMEOUT_ERROR,
-                             vm_peak_kb=vm_peak)
+                             vm_peak_kb=vm_peak), vm_peak
     rc, _, _vm = spawn(
         [prefixes.compile_python,
          os.path.join(prefixes.recipe_dir, "validate.py"),
@@ -528,13 +552,13 @@ def _run_locked(prefixes, source_onnx, workdir, cache_key, timeout_s,
             rc, time.monotonic() - t_all, _child_peak_rss(),
             error=("validate timeout" if rc == 124 else "validate failed"),
             detail=_phase_detail(workdir, "phase3-validate"),
-            vm_peak_kb=vm_peak)
+            vm_peak_kb=vm_peak), vm_peak
     ok = CompileResult(0, time.monotonic() - t_all, _child_peak_rss(),
                        bf16_sha256=bf16_sha, rai_path=rai_path,
                        rai_sha256=rai_sha, rai_bytes=rai_bytes,
                        vm_peak_kb=vm_peak)
     ok.probe = probed
-    return ok
+    return ok, vm_peak
 
 
 def _child_peak_rss() -> int:

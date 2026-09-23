@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 
-_ELAPSED_RE = re.compile(r"elapsed=([0-9]+(?:\.[0-9]+)?)s")
+_ELAPSED_RE = re.compile(r"elapsed=(\d+(?:\.\d+)?)s")
 _PHASE_RE = re.compile(r"phase=([A-Z_]+)")
 
 STATE_RANK = {"PREPARED": 1, "VERIFIED": 2, "ACTIVE": 3}

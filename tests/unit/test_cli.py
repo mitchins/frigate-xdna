@@ -88,18 +88,12 @@ class TestCli(unittest.TestCase):
 
     def test_stale_socket_is_not_alive(self):
         import tempfile
+        from unittest import mock
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "control.sock"), "w") as f:
                 f.write("not a socket")
-            old = os.environ.get("FXDNA_TEST_DATA_DIR")
-            os.environ["FXDNA_TEST_DATA_DIR"] = d
-            try:
+            with mock.patch.dict(os.environ, {"FXDNA_TEST_DATA_DIR": d}):
                 rc, out, _ = run_cli(["health"])
-            finally:
-                if old is None:
-                    del os.environ["FXDNA_TEST_DATA_DIR"]
-                else:
-                    os.environ["FXDNA_TEST_DATA_DIR"] = old
         self.assertEqual(rc, NOT_READY)
         self.assertFalse(json.loads(out)["alive"])
 

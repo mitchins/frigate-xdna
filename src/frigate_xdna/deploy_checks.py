@@ -120,7 +120,7 @@ def check_key_file(key_file: str | None) -> dict:
                            " the Docker host.",
                 "code": 2, "error_code": "INVALID_CONFIG"}
     if not _uid_can_read(key_file, os.geteuid(), os.getegid(),
-                         os.getgroups()):
+                         tuple(os.getgroups())):
         return {"name": "key-file", "ok": False,
                 "message": f"PLUS_API_KEY_FILE={key_file} not readable"
                            " by this UID: the container runs as UID 10001"
