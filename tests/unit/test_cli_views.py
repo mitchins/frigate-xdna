@@ -124,6 +124,7 @@ class FakeSupervisor:
         self.frontend = None
         self.stopped = False
         self.prepared = []
+        self.progress_calls = 0
 
     def start_admin(self):
         pass
@@ -132,7 +133,7 @@ class FakeSupervisor:
         pass
 
     def report_progress(self):
-        pass
+        self.progress_calls += 1
 
     def prepare(self, ref):
         self.prepared.append(ref)
@@ -249,6 +250,14 @@ class TestServeLifecycle(unittest.TestCase):
                         time.sleep(0.02)
                     self.assertTrue(fe.started)
                     self.assertTrue(handlers)
+                    # Let the serve loop complete at least one
+                    # pump+report cycle before stopping; otherwise the
+                    # progress-call assertion below races startup.
+                    deadline = time.monotonic() + 10.0
+                    while (not sups[0].progress_calls
+                           and time.monotonic() < deadline):
+                        time.sleep(0.02)
+                    self.assertGreater(sups[0].progress_calls, 0)
                     handlers[0](15, None)
                     thread.join(timeout=10.0)
                     self.assertFalse(thread.is_alive())
@@ -266,6 +275,9 @@ class TestServeLifecycle(unittest.TestCase):
         self.assertTrue(sup.stopped)
         self.assertTrue(fe.stopped)
         self.assertEqual(sup.prepared, ["plus://startup"])
+        # The serve loop must drive console reporting every pump;
+        # without this the container goes silent during compiles.
+        self.assertGreater(sup.progress_calls, 0)
 
     def test_serve_stop_failure_still_shuts_down(self):
         rc, sup, fe = self.run_serve(StopFailFrontend)

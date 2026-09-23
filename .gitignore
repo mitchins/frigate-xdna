@@ -18,3 +18,6 @@ evidence/
 secrets/
 PLUS_API_KEY
 .env
+# Audited vendor payload (private B2 bundle, extracted for image builds
+# only; never committed — see packaging/vendor-bundle.json).
+packaging/vendor-input/

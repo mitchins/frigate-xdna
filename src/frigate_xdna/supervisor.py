@@ -187,6 +187,7 @@ class Supervisor:
         self._worker_serving_digest: str | None = None
         recover(self.data_dir, self.registry)
         self._reconcile_jobs()
+        self._baseline_progress()
 
     def emit(self, event: dict) -> None:
         """Report one real transition; silent without a reporter."""
@@ -828,6 +829,16 @@ class Supervisor:
             reason = "worker not alive"
         return {"alive": True, "ready": ready, "reason": reason,
                 "worker": info, "inhibition": inhibition}
+
+    def _baseline_progress(self) -> None:
+        """Snapshot pre-existing row states silently at construction:
+        a restart must not announce legacy terminal rows as fresh
+        failures. Work submitted after this point reports normally."""
+        for row in self.registry.query("SELECT uuid, stage FROM jobs"):
+            self._seen_stages[row[0]] = row[1]
+        for row in self.registry.query("SELECT ref, state FROM model_refs"):
+            self._seen_ref_states[row[0]] = row[1]
+        self._last_worker_generation = self._worker_generation
 
     def report_progress(self) -> None:
         """Emit console events for transitions since the last call.

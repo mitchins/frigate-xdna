@@ -940,6 +940,257 @@ class TestCodexFindings(unittest.TestCase):
                     pass
 
 
+class TestUpgradeFollowups(unittest.TestCase):
+    def test_baseline_snapshot_stays_silent(self):
+        from frigate_xdna.observability.progress import RecordingReporter
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(
+                cfg, fake_compile={"device_required": False,
+                                   "succeed": False,
+                                   "fail_state": "COMPILE_FAILED"})
+            try:
+                ref = local_onnx(d)
+                sup.prepare(ref)
+                pump_until(sup, ref, ("COMPILE_FAILED",))
+                sup.stop()
+                rec = RecordingReporter()
+                sup2 = Supervisor(cfg, reporter=rec)
+                try:
+                    sup2.pump(0.05)
+                    sup2.report_progress()
+                    sup2.report_progress()
+                    self.assertNotIn("preparation_failed", rec.kinds())
+                finally:
+                    sup2.stop()
+            finally:
+                try:
+                    sup.stop()
+                except Exception:
+                    pass
+
+    def test_legacy_retryable_projection(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(cfg)
+            try:
+                for ref, stage in (("plus://a", "COMPILE_FAILED"),
+                                   ("plus://q", "QUARANTINED")):
+                    sup.registry.upsert_ref(ref, "plus", ref)
+                    sup.registry.set_ref_state(ref, stage)
+                    sup.registry.execute(
+                        "INSERT INTO jobs(uuid, ref, compile_key, stage,"
+                        " attempt, created_at, updated_at) VALUES"
+                        " (?,?,?,?,?,?,?)",
+                        (f"u-{stage}", ref, "ck", stage, 0,
+                         time.time(), time.time()))
+                models = {m["ref"]: m for m in sup.status()["models"]}
+                self.assertTrue(models["plus://a"]["retryable"])
+                self.assertFalse(models["plus://q"]["retryable"])
+                res = sup.recover_ref("plus://q")
+                self.assertFalse(res["requeued"])
+            finally:
+                sup.stop()
+
+
+class TestRefusalDisplayConsistency(unittest.TestCase):
+    def test_refusal_stamp_displays_non_retryable(self):
+        from frigate_xdna.model_view import _failure_view
+        # A construction refusal stamped on a legacy row must display
+        # exactly what requeue enforces: no retry.
+        view, retryable = _failure_view(
+            {"resume_refused": "gone"},
+            {"stage": "COMPILE_FAILED"})
+        self.assertIsNone(view)
+        self.assertFalse(retryable)
+        # Untouched legacy rows keep the stage rule.
+        view, retryable = _failure_view(
+            None, {"stage": "COMPILE_FAILED"})
+        self.assertIsNone(view)
+        self.assertTrue(retryable)
+        view, retryable = _failure_view(
+            None, {"stage": "QUARANTINED"})
+        self.assertFalse(retryable)
+
+
+class TestCoverageGaps(unittest.TestCase):
+    def test_admin_bind_failure_cleans_up(self):
+        from frigate_xdna.admin import AdminServer
+        with tempfile.TemporaryDirectory() as d:
+            missing = os.path.join(d, "no-such-dir")
+            with self.assertRaises(OSError):
+                AdminServer(missing, lambda req: {})
+            self.assertFalse(os.path.exists(
+                os.path.join(missing, "control.sock")))
+
+    def test_admin_chmod_failure_closes_and_unlinks(self):
+        import socket as _socket
+        from unittest import mock as _mock
+
+        from frigate_xdna.admin import AdminServer, socket_path
+        with tempfile.TemporaryDirectory() as d:
+            real = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+            with _mock.patch.object(_socket, "socket",
+                                    return_value=real):
+                with _mock.patch("os.chmod",
+                                 side_effect=OSError("no chmod")):
+                    with self.assertRaises(OSError):
+                        AdminServer(d, lambda req: {})
+            self.assertFalse(os.path.exists(socket_path(d)))
+            self.assertEqual(real.fileno(), -1)
+
+    def test_resolver_missing_file_raises(self):
+        from frigate_xdna.errors import FxdnaError
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(cfg)
+            try:
+                sha = "e" * 64
+                sup.registry.add_source(sha, 10, "model.onnx", "test")
+                with self.assertRaises(FxdnaError) as ctx:
+                    sup._compile_source_path(sha)
+                self.assertEqual(ctx.exception.error_code,
+                                 "CACHE_CORRUPT")
+            finally:
+                sup.stop()
+
+    def test_real_branch_resolves_bound_source(self):
+        from frigate_xdna.compiler.launcher import CompilerPrefixes
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            recipe = os.path.join(d, "recipe")
+            os.makedirs(recipe, exist_ok=True)
+            prefixes = CompilerPrefixes(
+                quant_python="q", compile_python="c", compile_lib="l",
+                xrt_lib="x", xrt_root="r", recipe_dir=recipe,
+                calib_dir="cal", vaiml_config="v")
+            sup = Supervisor(cfg, compiler_prefixes=prefixes)
+            try:
+                data = make_raw_yolo(os.path.join(d, "s.onnx"), res=320,
+                                     classes=4, seed=78)
+                sha = hashlib.sha256(data).hexdigest()
+                sup.registry.add_source(sha, len(data),
+                                        f"sources/{sha}/model.onnx",
+                                        "test")
+                src_dir = os.path.join(d, "sources", sha)
+                os.makedirs(src_dir, exist_ok=True)
+                with open(os.path.join(src_dir, "model.onnx"),
+                          "wb") as f:
+                    f.write(data)
+                job = sup._make_backend_job(compile_key="ck-r",
+                                            source_sha256=sha)
+                self.assertTrue(job._source_path.endswith("model.onnx"))
+            finally:
+                sup.stop()
+
+    def test_legacy_validation_recover_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(cfg)
+            try:
+                ref = local_onnx(d, seed=51)
+                sup.registry.upsert_ref(ref, "onnx", None)
+                sup.registry.set_ref_state(ref, "VALIDATION_FAILED")
+                sup.registry.execute(
+                    "INSERT INTO jobs(uuid, ref, compile_key, stage,"
+                    " attempt, created_at, updated_at) VALUES"
+                    " (?,?,?,?,?,?,?)",
+                    ("v-uuid", ref, "ck-v", "VALIDATION_FAILED", 1,
+                     time.time(), time.time()))
+                res = sup.recover_ref(ref)
+                self.assertFalse(res["requeued"])
+                self.assertIn("never", res["note"])
+            finally:
+                sup.stop()
+
+    def test_requeue_live_duplicate_reports_reason(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(
+                cfg, fake_compile={"device_required": False})
+            try:
+                ref = local_onnx(d, seed=52)
+                out = sup.prepare(ref)
+                pump_until(sup, ref, ("PREPARED",))
+                # A terminal twin row for the same key while the hit
+                # row is live is not the common path; force the live
+                # duplicate branch directly.
+                sup.registry.execute(
+                    "INSERT INTO jobs(uuid, ref, compile_key, stage,"
+                    " attempt, created_at, updated_at) VALUES"
+                    " (?,?,?,?,?,?,?)",
+                    ("live-uuid", ref, out["compile_key"], "COMPILING",
+                     2, 1000.0, 1000.0))
+                sup.registry.execute(
+                    "INSERT INTO jobs(uuid, ref, compile_key, stage,"
+                    " attempt, created_at, updated_at, failure_json)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    ("term-uuid", ref, out["compile_key"],
+                     "COMPILE_FAILED", 1, 9999999999.0, 9999999999.0,
+                     json.dumps(retry_policy.new_record(
+                         "COMPILE_FAILED", "COMPILE_FAILED",
+                         "compile timeout", 1, now=0.0))))
+                new, note = sup.jobs.requeue(ref, out["compile_key"])
+                self.assertIsNone(new)
+                self.assertIn("live attempt", note)
+            finally:
+                sup.stop()
+
+    def test_operator_construction_refusal_reports_reason(self):
+        from frigate_xdna.errors import FxdnaError
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(cfg)
+            try:
+                ref = local_onnx(d, seed=53)
+                sup.registry.upsert_ref(ref, "onnx", None)
+                sup.registry.set_ref_state(ref, "COMPILE_FAILED")
+                sup.registry.execute(
+                    "INSERT INTO jobs(uuid, ref, compile_key, stage,"
+                    " attempt, created_at, updated_at, failure_json)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    ("c-uuid", ref, "ck-c", "COMPILE_FAILED", 1,
+                     time.time(), time.time(),
+                     json.dumps(retry_policy.new_record(
+                         "COMPILE_FAILED", "COMPILE_FAILED",
+                         "compile timeout", 1, now=0.0))))
+                sup.jobs.backend_factory = lambda **kw: (_ for _ in ()
+                                                         ).throw(
+                    FxdnaError(10, "CACHE_CORRUPT", "gone"))
+                new, note = sup.jobs.requeue(ref, "ck-c")
+                self.assertIsNone(new)
+                self.assertIn("unresolvable", note)
+            finally:
+                sup.stop()
+
+    def test_cli_recover_success_exits_zero(self):
+        import io as _io
+        from contextlib import redirect_stdout as _redirect
+        from unittest import mock as _mock
+
+        from frigate_xdna import cli as _cli
+        from frigate_xdna.runtime.safety import inhibit
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(cfg)
+            try:
+                ref = local_onnx(d, seed=54)
+                sup.registry.upsert_ref(ref, "onnx", None)
+                inhibit(d, sup.registry, "WORKER_DIED", ref)
+                sup.stop()
+                buf = _io.StringIO()
+                with _mock.patch.dict(os.environ,
+                                      {"FXDNA_DATA_DIR": d}):
+                    with _redirect(buf):
+                        rc = _cli.main(["recover", ref, "--acknowledge"])
+                self.assertEqual(rc, 0)
+            finally:
+                try:
+                    sup.stop()
+                except Exception:
+                    pass
+
+
 class TestInterruptResume(unittest.TestCase):
     def test_restart_interrupted_resumes_with_clean_safety(self):
         with tempfile.TemporaryDirectory() as d:
