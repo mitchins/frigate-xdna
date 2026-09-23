@@ -1,8 +1,9 @@
-# Target configuration for the implementation; this spec kit does not contain a built image.
+# Canonical sidecar deployment. The default image is the latest published
+# release candidate (override with FXDNA_IMAGE for a newer/stable tag).
 # NPU_GID is the numeric group owning /dev/accel/accel0 on the Docker host.
 services:
   xdna:
-    image: ${FXDNA_IMAGE:-frigate-xdna:0.1-dev}
+    image: ${FXDNA_IMAGE:-ghcr.io/mitchins/frigate-xdna:0.1.0-rc.3}
     init: true
     restart: unless-stopped
     user: "10001:10001"
@@ -32,6 +33,14 @@ services:
     mem_limit: 8g
     memswap_limit: 8g
     pids_limit: 512
+    # FlexMLRT locks a 64 MiB mapping at load; the Docker default
+    # memlock allowance (8 MiB) fails it with EAGAIN after minutes of
+    # compilation. Unlimited locked memory inside this bounded
+    # container is required, not optional.
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     stop_grace_period: 60s
     healthcheck:
       test: ["CMD", "fxdna", "health"]
