@@ -201,13 +201,7 @@ class JobManager:
         self.registry.set_failure(
             job_uuid, {"resumed_from": prev_uuid,
                        "history": list(prev.get("history", []))})
-        if prev_uuid is not None:
-            # Joined aliases follow the retry: without them, an alias
-            # ref would report PREPARED with no reachable key after
-            # the new attempt succeeds.
-            for alias in self.registry.refs_for_job(prev_uuid):
-                if alias != ref:
-                    self.registry.add_alias(job_uuid, alias)
+        self._carry_aliases(job_uuid, ref, prev_uuid)
         kwargs = {"source_sha256": "", "compile_key": compile_key or "",
                   "duration_s": duration_s, "succeed": succeed,
                   "fail_state": fail_state,
@@ -215,23 +209,7 @@ class JobManager:
                   "device_held_by_worker": device_required,
                   "job_uuid": job_uuid}
         kwargs.update(extra or {})
-        try:
-            self._backends[job_uuid] = self.backend_factory(**kwargs)
-        except Exception as e:
-            # Backend construction refused (e.g. resumed real compile
-            # whose source bytes are gone): roll the row back out so
-            # the key stays recompilable by explicit re-submit, and
-            # stamp the source row so automatic retries stop burning
-            # constructions against the same refusal.
-            self.registry.execute("DELETE FROM jobs WHERE uuid=?",
-                                  (job_uuid,))
-            if prev_uuid is not None:
-                prior = self.registry.get_job(prev_uuid)
-                if prior is not None:
-                    self.registry.set_failure(
-                        prev_uuid,
-                        {**(prior.get("failure") or {}),
-                         "resume_refused": str(e)[:200]})
+        if not self._spawn_backend(job_uuid, kwargs, prev_uuid):
             return None
         self.registry.set_ref_state(ref, "QUEUED")
         if self.listener is not None:
@@ -243,6 +221,39 @@ class JobManager:
         job = self.registry.get_job(job_uuid)
         assert job is not None
         return job
+
+    def _carry_aliases(self, job_uuid: str, ref: str,
+                       prev_uuid: str | None) -> None:
+        """Joined aliases follow the retry: without them, an alias
+        ref would report PREPARED with no reachable key after the new
+        attempt succeeds."""
+        if prev_uuid is None:
+            return
+        for alias in self.registry.refs_for_job(prev_uuid):
+            if alias != ref:
+                self.registry.add_alias(job_uuid, alias)
+
+    def _spawn_backend(self, job_uuid: str, kwargs: dict,
+                       prev_uuid: str | None) -> bool:
+        """Construct the backend object. False when refused (e.g. a
+        resumed real compile whose source bytes are gone): the row is
+        rolled back so the key stays recompilable, and the source row
+        is stamped so automatic retries stop burning constructions
+        against the same refusal."""
+        try:
+            self._backends[job_uuid] = self.backend_factory(**kwargs)
+        except Exception as e:
+            self.registry.execute("DELETE FROM jobs WHERE uuid=?",
+                                  (job_uuid,))
+            if prev_uuid is not None:
+                prior = self.registry.get_job(prev_uuid)
+                if prior is not None:
+                    self.registry.set_failure(
+                        prev_uuid,
+                        {**(prior.get("failure") or {}),
+                         "resume_refused": str(e)[:200]})
+            return False
+        return True
 
     def _requeue_prev(self, full: dict) -> dict | None:
         """Previous-record baseline for an operator cycle: None when
