@@ -161,11 +161,8 @@ class TestServeLoop(unittest.TestCase):
             err.errno = zmq.EAGAIN
             fe.sock = FakeSock([err])
             fe._queue = asyncio.Queue()
-
-            async def go():
-                await fe._serve_loop()
             with self.assertRaises(zmq.ZMQError):
-                asyncio.run(go())
+                asyncio.run(fe._serve_loop())
 
     def test_full_queue_replies_resource_exceeded(self):
         with tempfile.TemporaryDirectory() as d:
