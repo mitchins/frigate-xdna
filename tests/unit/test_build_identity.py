@@ -100,7 +100,6 @@ class TestIdentityRead(unittest.TestCase):
     def test_malformed_files_fall_back_without_raising(self):
         bad = ["not json{",
                {"version": "0.1.1"},
-               {"version": "latest", "revision": FAKE_SHA},
                {"version": "0.1.1", "revision": "xyz"},
                {"version": "0.1.1", "revision": FAKE_SHA,
                 "extra": [1, 2]}]
@@ -110,6 +109,12 @@ class TestIdentityRead(unittest.TestCase):
                 ident = get_build_identity()
                 self.assertEqual(ident["channel"], "development")
                 self.assertEqual(ident["revision"], "unknown")
+        # A non-release version keeps a valid baked revision while
+        # still reporting development explicitly.
+        self._point({"version": "latest", "revision": FAKE_SHA})
+        ident = get_build_identity()
+        self.assertEqual(ident["channel"], "development")
+        self.assertEqual(ident["revision"], FAKE_SHA)
         # Unknown extra keys are tolerated; identity still authoritative.
         self._point(bad[-1])
         ident = get_build_identity()
