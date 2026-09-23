@@ -453,6 +453,7 @@ def cmd_serve(config) -> int:
         # default (bind-all) applies only when explicitly configured.
         config = config.__class__(**{**config.__dict__,
                                      "endpoint": "tcp://127.0.0.1:5555"})
+    print(format_identity(get_build_identity()), file=sys.stderr)
     failed = run_preflight(config)
     if failed is not None:
         return failed
@@ -518,7 +519,6 @@ def cmd_serve(config) -> int:
         except FxdnaError as e:
             print(f"fxdna: startup prepare {ref}: {e.message} "
                   f"[{e.error_code}]", file=sys.stderr)
-    print(format_identity(get_build_identity()), file=sys.stderr)
     print(f"fxdna: serving endpoint={config.endpoint} "
           f"data={sup.data_dir}", file=sys.stderr)
     # Explicit handlers: as container PID 1 the default SIGTERM action
@@ -536,6 +536,10 @@ def cmd_serve(config) -> int:
     try:
         while not stop_event.is_set():
             sup.pump(0.2)
+            # Console progress lives here: without this call the
+            # container goes silent during multi-minute compiles
+            # (phases, heartbeats and failure lines never print).
+            sup.report_progress()
             stop_event.wait(0.2)
     finally:
         if zfrontend is not None and zloop is not None and zthread is not None:
