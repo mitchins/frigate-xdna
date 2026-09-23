@@ -36,13 +36,32 @@ Release candidate. Validated:
 
 Evidence: `docs/RELEASE-8.4.md`.
 
+## Measured performance
+
+All figures below are snapshots or earlier runs with stated
+boundaries — not peak throughput, latency percentiles, or power
+measurements (power has not been measured).
+
+| Measurement | Value | Boundary |
+|---|---|---|
+| Detector latency, Frigate-reported | ~9.97 ms | Single client observation (RC3, YOLOv9s-320). Not native p50; its reciprocal is not measured peak FPS. |
+| Sidecar memory snapshot | ~485 MiB, 3.19% CPU, 13 PIDs | RC3 container snapshot, not all of Frigate. |
+| Sustained service (24 h 09 m) | 1,234,208 requests, 0 rejected / timed-out / late-discarded / zero-frame | Earlier acceptance run (`docs/RELEASE-8.4.md`), replay loop. Mean 10–18 ms observed; percentiles were not instrumented. |
+| Fresh model preparation | ~9 min wall (5.3 s BF16 + 531.5 s compilation → 17 MB `.rai`) | Strix Halo, Frigate+ YOLOv9s-320, RC3 observation. |
+| Power draw | Not measured | No claim made. |
+
 ## Requirements
 
 - Linux x86_64
 - Supported AMD XDNA2 NPU, visible as `/dev/accel/accel0`
 - Docker (Compose v2) or Podman
 - ~8 GiB container memory while compiling
-- Persistent `/data` volume
+- Unlimited locked memory (`ulimits: memlock: {soft: -1, hard: -1}`
+  — already in `examples/compose.yaml`; the Docker default 8 MiB
+  fails the runtime's 64 MiB locked mapping after minutes of
+  compiling, and the sidecar refuses to start expensive work without it)
+- Persistent `/data` volume (holds cache, registry, and failure
+  history across restarts — never delete it to "fix" a failure)
 - Frigate+ key only if using Plus models (local-model users need none)
 
 Certified today: Strix Halo / Ryzen AI Max 300. Other XDNA2 systems
@@ -182,15 +201,34 @@ See `examples/frigate-plus.yaml` (Plus) and
 
 ## Check it is working
 
+Normal container logs plus one status command tell you which of
+these holds — no compiler-log inspection needed:
+
 ```sh
-docker compose exec -T xdna fxdna status
-docker compose exec -T xdna fxdna wait plus://MODEL_A --timeout 1800
+docker compose logs xdna
+docker compose exec -T xdna fxdna status --json
 ```
+
+| You see | It means | Next step |
+|---|---|---|
+| `Model prepared; waiting for Frigate at …` | Artifact built and checked, no worker yet | Configure Frigate (below), then reinitialize its detector |
+| `XDNA compilation running: elapsed=…` (heartbeat) | Still preparing; phase and elapsed are real | Wait; `fxdna wait plus://MODEL_A` blocks until `PREPARED` |
+| `Checking deployment requirements…` then a requirement failure | Environment blocks preparation (e.g. memlock allowance) | Apply the stated fix (e.g. the `ulimits` block), recreate the container on the same `/data`; preparation resumes automatically |
+| `Preparation failed: … phase=… code=…` | Terminal failure with reason; `status` carries the same record plus corrective guidance | Fix what it names; retryable failures retry on their own (bounded), otherwise `fxdna recover <model> --acknowledge` opens one new bounded attempt — never delete the volume |
+| `Frigate model handshake complete` + `Worker active: generation=…` | Serving | `fxdna health --ready` exits 0 while a loaded, alive worker serves |
 
 `wait` defaults to `PREPARED`: the artifact is built and statically
 checked. It is not a claim the model has already run on hardware.
 Model activation and its bounded native checks occur before the
-successful Frigate handshake.
+successful Frigate handshake. A cached model stays available across
+restarts and offline operation without recompiling; `prepare
+--refresh` re-fetch is explicit.
+
+Automatic recovery is bounded: temporary problems retry at most 3
+attempts with backoff; inadequate configuration blocks retries until
+corrected; safety inhibitions (device fault, quarantine, suspect host
+reset) never retry automatically and `recover` refuses them — review
+the evidence first. Full policy: `docs/OPERATIONS.md`.
 
 ## How it behaves
 

@@ -253,6 +253,22 @@ class TestReadmeAgreesWithFiles(unittest.TestCase):
             self.assertNotIn(banned, lowered)
         self.assertIn("has not been measured", self.text)
 
+    def test_performance_figures_carry_boundaries(self):
+        self.assertIn("Frigate-reported", self.text)
+        self.assertIn("9.97 ms", self.text)
+        self.assertIn("Not native p50", self.text)
+        self.assertIn("485 MiB", self.text)
+        self.assertIn("not all of Frigate", self.text)
+        self.assertIn("percentiles were not instrumented", self.text)
+
+    def test_user_states_are_documented(self):
+        for marker in ("waiting for Frigate",
+                       "elapsed=", "requirement failure",
+                       "Preparation failed", "health --ready",
+                       "recover <model> --acknowledge",
+                       "memlock"):
+            self.assertIn(marker, self.text)
+
 
 if __name__ == "__main__":
     unittest.main()
