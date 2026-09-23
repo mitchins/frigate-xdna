@@ -940,6 +940,59 @@ class TestCodexFindings(unittest.TestCase):
                     pass
 
 
+class TestUpgradeFollowups(unittest.TestCase):
+    def test_baseline_snapshot_stays_silent(self):
+        from frigate_xdna.observability.progress import RecordingReporter
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(
+                cfg, fake_compile={"device_required": False,
+                                   "succeed": False,
+                                   "fail_state": "COMPILE_FAILED"})
+            try:
+                ref = local_onnx(d)
+                sup.prepare(ref)
+                pump_until(sup, ref, ("COMPILE_FAILED",))
+                sup.stop()
+                rec = RecordingReporter()
+                sup2 = Supervisor(cfg, reporter=rec)
+                try:
+                    sup2.pump(0.05)
+                    sup2.report_progress()
+                    sup2.report_progress()
+                    self.assertNotIn("preparation_failed", rec.kinds())
+                finally:
+                    sup2.stop()
+            finally:
+                try:
+                    sup.stop()
+                except Exception:
+                    pass
+
+    def test_legacy_retryable_projection(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            sup = Supervisor(cfg)
+            try:
+                for ref, stage in (("plus://a", "COMPILE_FAILED"),
+                                   ("plus://q", "QUARANTINED")):
+                    sup.registry.upsert_ref(ref, "plus", ref)
+                    sup.registry.set_ref_state(ref, stage)
+                    sup.registry.execute(
+                        "INSERT INTO jobs(uuid, ref, compile_key, stage,"
+                        " attempt, created_at, updated_at) VALUES"
+                        " (?,?,?,?,?,?,?)",
+                        (f"u-{stage}", ref, "ck", stage, 0,
+                         time.time(), time.time()))
+                models = {m["ref"]: m for m in sup.status()["models"]}
+                self.assertTrue(models["plus://a"]["retryable"])
+                self.assertFalse(models["plus://q"]["retryable"])
+                res = sup.recover_ref("plus://q")
+                self.assertFalse(res["requeued"])
+            finally:
+                sup.stop()
+
+
 class TestInterruptResume(unittest.TestCase):
     def test_restart_interrupted_resumes_with_clean_safety(self):
         with tempfile.TemporaryDirectory() as d:

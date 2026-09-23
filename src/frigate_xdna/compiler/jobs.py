@@ -269,8 +269,15 @@ class JobManager:
         if kind in ("safety", "permanent"):
             return None
         if kind == "unknown" and record is None:
-            # Legacy row without evidence: acknowledged operator risk,
-            # one bounded cycle, attempts restart.
+            # Legacy row without evidence: the stage is the only
+            # classifier. Safety/permanent stages refuse like their
+            # recorded equivalents; anything else is acknowledged
+            # operator risk (one bounded cycle, attempts restart).
+            if full.get("stage") in ("QUARANTINED",):
+                return None
+            if full.get("stage") in ("VALIDATION_FAILED",
+                                     "UNSUPPORTED_CONTRACT"):
+                return None
             return {"attempts": 0, "history": []}
         if not (record or {}).get("retryable", False):
             return None
