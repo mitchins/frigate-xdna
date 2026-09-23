@@ -60,8 +60,14 @@ class TestDeviceLeaseGuards(unittest.TestCase):
             self.assertTrue(holder.try_acquire())
             try:
                 probe = DeviceLease(d)
+                real_close = os.close
+
+                def close_then_fail(fd):
+                    real_close(fd)
+                    raise OSError("bad")
+
                 with mock.patch.object(os, "close",
-                                       side_effect=OSError("bad")):
+                                       side_effect=close_then_fail):
                     self.assertTrue(probe.is_locked_by_other())
             finally:
                 holder.release()

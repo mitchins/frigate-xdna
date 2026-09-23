@@ -102,16 +102,19 @@ class TestDiagnoseHelpers(unittest.TestCase):
             self.assertEqual(arts[0]["source_sha256"], "b" * 64)
 
     def test_serve_handler_install_tolerates_sigint_failure(self):
-        real_signal = cli_mod.signal.signal
+        calls = []
 
         def guarded(signum, handler):
+            calls.append(signum)
             if signum == cli_mod.signal.SIGINT:
                 raise OSError("no sigint here")
-            return real_signal(signum, handler)
+            return None
 
         with mock.patch.object(cli_mod.signal, "signal",
                                side_effect=guarded):
             _install_serve_handlers(lambda *_a: None)
+        self.assertEqual(calls, [cli_mod.signal.SIGTERM,
+                                 cli_mod.signal.SIGINT])
 
 
 class FakeSupervisor:
@@ -233,10 +236,11 @@ class TestServeLifecycle(unittest.TestCase):
                         self.assertFalse(thread.is_alive())
                         raise outcome["exc"]
                     deadline = time.monotonic() + 10.0
-                    while (not fe.started
+                    while (not handlers
                            and time.monotonic() < deadline):
                         time.sleep(0.02)
                     self.assertTrue(fe.started)
+                    self.assertTrue(handlers)
                     handlers[0](15, None)
                     thread.join(timeout=10.0)
                     self.assertFalse(thread.is_alive())

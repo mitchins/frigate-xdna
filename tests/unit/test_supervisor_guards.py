@@ -37,11 +37,17 @@ class FakeChild:
     def infer(self, payload, shape, generation, timeout_s):
         return bytes(RESULT_BYTES)
 
+    def alive(self):
+        return not self.retired
+
     def retire(self):
-        self.retired = True
-        self.loaded = False
+        # A real retire can fail before the child is dead (e.g.
+        # terminate() raising after a wait timeout): raise first so
+        # the child is still live and loaded at the failure point.
         if self.retire_fails:
             raise RuntimeError("retire exploded")
+        self.retired = True
+        self.loaded = False
 
 
 def make_config(tmp):
@@ -102,6 +108,7 @@ class TestSupervisorGuards(unittest.TestCase):
         try:
             _ref, ckey, _sha = plant(sup)
             self.assertTrue(sup.activate_worker(ckey))
+            self.assertTrue(self.children[0].loaded)
             sup._worker.retire_fails = True
             sup.stop()
             self.assertIsNone(sup._worker)
@@ -218,8 +225,36 @@ class TestSupervisorGuards(unittest.TestCase):
             with mock.patch.object(sup.registry, "set_state",
                                    side_effect=guarded):
                 self.assertFalse(sup.activate_worker(ckey))
+            child = self.children[0]
+            self.assertTrue(child.loaded)
             self.assertIsNone(sup._worker)
             self.assertEqual(sup._worker_generation, 0)
+            self.assertIsNotNone(sup.registry.get_state("inhibition"))
+        finally:
+            sup.stop()
+
+    def test_publish_failure_never_leaves_untracked_live_child(self):
+        """A new child whose retire explodes during publish rollback
+        must be confirmed dead or remain explicitly tracked."""
+        self.retire_fails = True
+        sup = self._sup()
+        try:
+            _ref, ckey, _sha = plant(sup)
+            real_set_state = sup.registry.set_state
+
+            def guarded(key, value):
+                if key == "active":
+                    raise RuntimeError("publish down")
+                return real_set_state(key, value)
+
+            with mock.patch.object(sup.registry, "set_state",
+                                   side_effect=guarded):
+                self.assertFalse(sup.activate_worker(ckey))
+            child = self.children[0]
+            self.assertTrue(child.alive())
+            self.assertTrue(child.loaded)
+            self.assertTrue(child.retired or sup._worker is child
+                            or child in sup._orphans)
         finally:
             sup.stop()
 
@@ -229,6 +264,7 @@ class TestSupervisorGuards(unittest.TestCase):
             _r1, ck1, _s1 = plant(sup, classes=8, seed=23)
             _r2, ck2, _s2 = plant(sup, classes=6, seed=24)
             self.assertTrue(sup.activate_worker(ck1))
+            self.assertTrue(self.children[0].loaded)
             self.children[0].retire_fails = True
             self.assertTrue(sup.activate_worker(ck2))
             self.assertEqual(sup._worker_generation, 2)
@@ -240,6 +276,7 @@ class TestSupervisorGuards(unittest.TestCase):
         try:
             _ref, ckey, _sha = plant(sup)
             self.assertTrue(sup.activate_worker(ckey))
+            self.assertTrue(self.children[0].loaded)
             sup._worker.retire_fails = True
             sup._drop_worker("TEST")
             self.assertIsNone(sup._worker)

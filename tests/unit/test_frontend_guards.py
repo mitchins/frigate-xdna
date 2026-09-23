@@ -62,13 +62,17 @@ def make_frontend(tmp, **sup_kw):
     return fe, sup
 
 
-def run_loop(fe, items):
-    """Feed worker-loop items, let them drain, then stop the loop."""
+def run_loop(fe, items, timeout=5.0):
+    """Feed worker-loop items, wait for their replies, stop the loop."""
+    want = len(items)
+
     async def drive():
         for it in items:
             fe._queue.put_nowait(it)
         task = asyncio.ensure_future(fe._worker_loop())
-        await asyncio.sleep(0.2)
+        deadline = time.monotonic() + timeout
+        while len(fe.sock.sent) < want and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
         task.cancel()
         try:
             await task

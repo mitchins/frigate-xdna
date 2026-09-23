@@ -166,6 +166,10 @@ class Supervisor:
         self._worker_generation = 0
         self._worker_compile_key: str | None = None
         self._worker_lock = threading.Lock()
+        # Children that failed to retire on a rollback path but may
+        # still be live: explicitly tracked for cleanup at stop(),
+        # never silently dropped (no untracked live workers).
+        self._orphans: list = []
         # Set by serve wiring after frontend creation (None standalone).
         self.frontend = None
         self._server: AdminServer | None = None
@@ -207,6 +211,12 @@ class Supervisor:
             if worker is not None:
                 try:
                     worker.retire()
+                except Exception:
+                    pass
+            orphans, self._orphans = self._orphans, []
+            for orphan in orphans:
+                try:
+                    orphan.retire()
                 except Exception:
                     pass
         if self._server is not None:
@@ -795,6 +805,21 @@ class Supervisor:
         except Exception:
             pass
 
+    def _retire_confirmed(self, worker) -> bool:
+        """Best-effort retire; True only if the child is confirmed dead.
+
+        retire() itself can raise after a wait timeout (e.g. from
+        terminate()), leaving the child live — callers must not drop
+        the reference in that case (see _orphans)."""
+        try:
+            worker.retire()
+        except Exception:
+            pass
+        try:
+            return not worker.alive()
+        except Exception:
+            return False
+
     def _spawn_worker(self):
         if self._worker_factory is not None:
             return self._worker_factory()
@@ -856,11 +881,11 @@ class Supervisor:
             except Exception:
                 # Publish failed: roll the swap back (retire the new
                 # child, restore previous fields) and inhibit — a live
-                # worker with no published identity must not exist.
-                try:
-                    worker.retire()
-                except Exception:
-                    pass
+                # worker with no published identity must not exist
+                # untracked: if retire did not confirm death, keep an
+                # explicit reference for cleanup at stop().
+                if not self._retire_confirmed(worker):
+                    self._orphans.append(worker)
                 self._worker = old
                 self._worker_generation = old_generation
                 self._worker_compile_key = old_key
