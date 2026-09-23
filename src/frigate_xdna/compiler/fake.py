@@ -32,6 +32,9 @@ class FakeCompileJob:
     artifact_sha256: str | None = None
     log: list[str] = field(default_factory=list)
     job_uuid: str = ""
+    # Scripted vendor tail for classification tests (mirrors the real
+    # backend's result.detail; production never sets this).
+    detail: str = ""
 
     @property
     def phase(self) -> str:

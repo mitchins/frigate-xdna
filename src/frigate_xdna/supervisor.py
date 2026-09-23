@@ -150,7 +150,8 @@ class Supervisor:
                                               "registry.sqlite3"))
         self.jobs = JobManager(self.registry,
                                backend_factory=self._make_backend_job,
-                               boot_token=boot_token())
+                               boot_token=boot_token(),
+                               listener=self._job_event)
         self.fake_compile = fake_compile or {}
         self.compiler_backend_id = compiler_backend_id
         self.compiler_prefixes = compiler_prefixes
@@ -185,22 +186,129 @@ class Supervisor:
         self._last_worker_generation = 0
         self._worker_serving_digest: str | None = None
         recover(self.data_dir, self.registry)
+        self._reconcile_jobs()
 
     def emit(self, event: dict) -> None:
         """Report one real transition; silent without a reporter."""
         if self.reporter is not None:
             self.reporter.emit(event)
 
+    def _job_event(self, event: dict) -> None:
+        """JobManager retry/resume transitions become console events."""
+        self.emit(event)
+
+    def _interrupt_record(self, stage: str, row_boot: str | None,
+                          attempt: int) -> dict:
+        """Structured record for a restart-interrupted job.
+
+        Resume safety comes from records, never errno alone: a row
+        whose boot token differs from this boot may have died with a
+        host reboot mid-operation (the suspect-host-reset case), so it
+        is unproven safety — never automatic. Same-boot interruption
+        with a clean safety state is a safe resume. Any inhibition
+        blocks automatic resume either way.
+        """
+        from . import retry_policy as _retry
+        current = boot_token()
+        base = _retry.new_record(
+            "INTERRUPTED", "INTERRUPTED", "", attempt or 1)
+        # A missing row token is unproven too: legacy or partially
+        # written rows with NULL boot_token must not bypass the host
+        # reboot check just because the current token is available.
+        if (self.registry.get_state("inhibition") is not None
+                or current == "unknown"
+                or not row_boot
+                or row_boot != current):
+            base["reason"] = (
+                "interrupted with an unproven safety state"
+                f" (row boot {row_boot or '?'} vs current {current};"
+                " a mismatch may mean a host reboot mid-operation);"
+                " explicit operator review required")
+            base["kind"] = "unknown"
+            base["retryable"] = True
+            base["auto"] = False
+            base["guidance"] = (
+                "Interrupted with an unproven safety state (possible"
+                " host reboot or active inhibition): no automatic"
+                " resume. Review status/diagnose evidence, then recover"
+                " explicitly if safe.")
+            return base
+        base["reason"] = (f"interrupted in {stage} by process restart;"
+                          " clean safety state")
+        return base
+
+    def _reconcile_jobs(self) -> None:
+        """Interrupt stranded rows and record them.
+
+        store.recover handles workdir-backed jobs (marking them
+        INTERRUPTED without records); rows without a live backend in
+        THIS process are interrupted here. Both shapes get structured
+        records via _interrupt_record — including INTERRUPTED rows
+        that lack one — so resume decisions never run on bare stages.
+        """
+        for row in self.registry.query(
+                "SELECT uuid, ref, stage, attempt, boot_token FROM jobs"
+                " WHERE stage NOT IN ('PREPARED','COMPILE_FAILED',"
+                "'RESOURCE_EXCEEDED','VALIDATION_FAILED',"
+                "'UNSUPPORTED_CONTRACT','QUARANTINED','INTERRUPTED')"):
+            uuid, ref, stage, attempt, row_boot = row
+            if self.registry.get_job(uuid) is None:
+                continue
+            self.registry.set_job(uuid, "INTERRUPTED",
+                                  error_code="INTERRUPTED")
+            self.registry.set_ref_state(ref, "INTERRUPTED")
+            self.registry.set_failure(
+                uuid, self._interrupt_record(stage, row_boot,
+                                             attempt or 1))
+        for row in self.registry.query(
+                "SELECT uuid, ref, stage, attempt, boot_token FROM jobs"
+                " WHERE stage='INTERRUPTED' AND failure_json IS NULL"):
+            uuid, ref, stage, attempt, row_boot = row
+            self.registry.set_ref_state(ref, "INTERRUPTED")
+            self.registry.set_failure(
+                uuid, self._interrupt_record(stage, row_boot,
+                                             attempt or 1))
+
+    def _compile_source_path(self, sha256: str) -> str:
+        """Bytes path for one source digest (resume binding).
+
+        Raises when the bytes are gone: the key stays recompilable by
+        explicit re-submit, but a resume must never start sourceless
+        or, worse, on the ref's newer bytes under an old key.
+        """
+        src = self.registry.get_source(sha256)
+        if src is None:
+            raise FxdnaError(CACHE_CORRUPT, "CACHE_CORRUPT",
+                             f"source bytes missing for resumed compile"
+                             f" {sha256[:12]}…; re-submit explicitly")
+        path = os.path.join(self.data_dir, "sources",
+                            src["sha256"],
+                            os.path.basename(src["rel_path"]))
+        if not os.path.isfile(path):
+            raise FxdnaError(CACHE_CORRUPT, "CACHE_CORRUPT",
+                             f"source file missing for resumed compile"
+                             f" {sha256[:12]}…; re-submit explicitly")
+        return path
+
     def _make_backend_job(self, **kw):
         """Job factory: real audited backend when prefixes are configured,
         fake backend otherwise (hardware-free tests + offline development).
+
+        A resumed real compile binds the failed attempt's source bytes
+        (JobManager carries the sha on the row and in kwargs), never
+        the ref's current bytes: compiling newer bytes under an old
+        key would corrupt the content-addressed cache.
         """
         if self.compiler_prefixes is not None and kw.get("compile_key"):
             from .compiler.real import RealCompileJob
+            source_path = kw.get("source_path", "")
+            if not source_path:
+                source_path = self._compile_source_path(
+                    kw.get("source_sha256") or "")
             return RealCompileJob(
                 source_sha256=kw.get("source_sha256", ""),
                 compile_key=kw.get("compile_key", ""),
-                source_path=kw.get("source_path", ""),
+                source_path=source_path,
                 workdir=os.path.join(self.data_dir, "work",
                                      kw.get("job_uuid", "nojobs")),
                 prefixes=self.compiler_prefixes,
@@ -331,10 +439,25 @@ class Supervisor:
             try:
                 data, fetched = self._fetch_plus(parsed["id"], refresh)
             except FxdnaError as e:
-                self.emit({"kind": "preparation_failed",
-                           "ref": parsed["ref"], "phase": "ACQUISITION",
-                           "code": e.error_code, "reason": e.message})
-                raise
+                # SPEC §4.4: never downgrade a working cached model
+                # because a refresh/token/DNS lookup fails. New
+                # downloads fail visibly and independently; a usable
+                # cached artifact keeps serving.
+                cached = self._usable_cached_key(parsed["ref"])
+                if cached is None:
+                    self.emit({"kind": "preparation_failed",
+                               "ref": parsed["ref"], "phase": "ACQUISITION",
+                               "code": e.error_code, "reason": e.message})
+                    raise
+                self.emit({"kind": "fetch_failed_cached",
+                           "ref": parsed["ref"], "code": e.error_code,
+                           "reason": e.message})
+                self.registry.set_ref_state(parsed["ref"], "PREPARED")
+                return {"ref": parsed["ref"],
+                        "compile_key": cached, "state": "PREPARED",
+                        "cache_hit": True,
+                        "note": f"fetch failed [{e.error_code}];"
+                                " serving cached artifact"}
             # Plus bytes are inspected exactly like local files: metadata
             # conflicts and unsupported contracts fail here, never queue a
             # fake compile to PREPARED. (B3)
@@ -528,6 +651,19 @@ class Supervisor:
         for ref in seen:
             self.registry.set_ref_state(ref, "PREPARED")
 
+    def _usable_cached_key(self, ref: str) -> str | None:
+        """Newest prepared key with a committed, backend-matching
+        artifact on disk (no download, no compile needed)."""
+        key = self.registry.prepared_key_for_ref(ref)
+        if not key or not self.registry.get_artifact(key):
+            return None
+        if not self._backend_ok(key):
+            return None
+        if not os.path.isfile(os.path.join(
+                self.data_dir, "artifacts", key, "model.rai")):
+            return None
+        return key
+
     def _backend_ok(self, compile_key: str) -> bool:
         """A cached row is usable only if its manifest names this backend."""
         try:
@@ -606,7 +742,7 @@ class Supervisor:
                 # activated). Terminal rows are inert to pump/GC.
                 hit_uuid = uuid.uuid4().hex
                 self.registry.create_job(hit_uuid, ref, ckey,
-                                         boot_token())
+                                         boot_token(), source_sha256=digest)
                 self.registry.set_job(hit_uuid, "PREPARED")
                 self.registry.set_ref_state(ref, "PREPARED")
                 self.emit({"kind": "model_cached", "ref": ref})
@@ -768,8 +904,10 @@ class Supervisor:
         """Advance all non-terminal jobs (fake backend).
 
         Per-job isolation: one failing job is marked failed, never kills
-        the loop or the daemon (SF4).
+        the loop or the daemon (SF4). Eligible terminal rows open new
+        bounded attempts here too, so backoff expiry needs no prepare.
         """
+        self.jobs.retry_due(**self.fake_compile)
         for row in self.registry.query(
                 "SELECT uuid FROM jobs WHERE stage NOT IN"
                 " ('PREPARED','COMPILE_FAILED','RESOURCE_EXCEEDED',"
@@ -780,6 +918,8 @@ class Supervisor:
             except FxdnaError as e:
                 self.registry.set_job(row[0], "COMPILE_FAILED",
                                       error_code=e.error_code)
+                self.jobs.record_terminal(row[0], "COMPILE_FAILED",
+                                          e.error_code, e.message)
                 for ref in self.registry.refs_for_job(row[0]):
                     self.registry.set_ref_state(ref, "COMPILE_FAILED")
                 continue
@@ -795,6 +935,9 @@ class Supervisor:
                         self.registry.set_job(
                             row[0], "COMPILE_FAILED",
                             error_code=e.error_code)
+                        self.jobs.record_terminal(
+                            row[0], "COMPILE_FAILED", e.error_code,
+                            e.message)
                         for ref in self.registry.refs_for_job(row[0]):
                             self.registry.set_ref_state(ref, "COMPILE_FAILED")
                         continue
@@ -819,6 +962,10 @@ class Supervisor:
             if job is None:
                 raise FxdnaError(NOT_READY, "UNKNOWN_JOB",
                                  f"no such job {job_uuid}")
+            if pump and job["uuid"] != job_uuid:
+                # The pump opened a bounded retry attempt: follow the
+                # live row instead of re-pumping the terminal one.
+                job_uuid = job["uuid"]
             if job["stage"] == "PREPARED":
                 if pump and job.get("compile_key"):
                     try:
@@ -1165,23 +1312,83 @@ class Supervisor:
             return ("ok", out)
 
     def recover_ref(self, ref: str) -> dict:
+        """Documented recovery route through the daemon interface.
+
+        Clears a non-safety inhibition and/or opens one new bounded
+        retry cycle for a retryable terminal job. Never bypasses
+        quarantine or safety inhibition: safety-class reasons refuse
+        with the reason and the explicit next action. Unknown legacy
+        failures report what remains unknown; the explicit
+        acknowledgement starts one bounded cycle without pretending
+        the failure was understood.
+        """
+        from . import retry_policy as _retry
         parsed = parse_ref(ref)
         with self.registry.transaction():
             inh = self.registry.get_state("inhibition")
-            if not (inh and inh.get("ref") == parsed["ref"]):
+            if inh and inh.get("ref") == parsed["ref"]:
+                if _retry.is_safety_inhibition(
+                        inh.get("reason", "")):
+                    return {"ref": parsed["ref"], "cleared": False,
+                            "requeued": False, "refused_safety": True,
+                            "note": "safety inhibition refused:"
+                                    f" {inh.get('reason')}. Explicit"
+                                    " operator review required; inspect"
+                                    " status/diagnose evidence, resolve"
+                                    " the device/fault cause first."}
+                # Remove the inhibition; persist the evidence separately
+                # so a later recover no longer finds it. One transaction:
+                # concurrent recoveries cannot clear the same inhibition
+                # twice, and a crash rolls back both halves together.
+                # The requeue below runs outside this transaction
+                # (requeue manages its own); its live-duplicate guard
+                # keeps concurrent recoveries to one new attempt.
+                self.registry.execute(
+                    "DELETE FROM service_state WHERE key=?",
+                    ("inhibition",))
+                self.registry.set_state("last_inhibition_cleared",
+                                        {"ref": parsed["ref"],
+                                         "previous": inh,
+                                         "at": time.time()})
+                cleared = True
+            elif inh is not None:
                 return {"ref": parsed["ref"], "cleared": False,
-                        "note": "no inhibition recorded for this ref"}
-            # Remove the inhibition; persist the evidence separately so a
-            # later recover no longer finds it. One transaction: concurrent
-            # recoveries cannot clear the same inhibition twice, and a
-            # crash rolls back both halves together.
-            self.registry.execute("DELETE FROM service_state WHERE key=?",
-                                  ("inhibition",))
-            self.registry.set_state("last_inhibition_cleared",
-                                    {"ref": parsed["ref"],
-                                     "previous": inh,
-                                     "at": time.time()})
-            return {"ref": parsed["ref"], "cleared": True}
+                        "requeued": False,
+                        "note": "inhibition active for"
+                                f" {inh.get('ref')} ({inh.get('reason')});"
+                                " resolve it before recovering"
+                                f" {parsed['ref']}."}
+            else:
+                cleared = False
+        row = self._terminal_row_for_ref(parsed["ref"])
+        if row is None:
+            return {"ref": parsed["ref"], "cleared": cleared,
+                    "requeued": False,
+                    "note": "no retryable terminal job for this ref"
+                            if not cleared else
+                            "inhibition cleared; nothing to requeue"}
+        new, reason = self.jobs.requeue(parsed["ref"],
+                                          row["compile_key"])
+        if new is not None:
+            return {"ref": parsed["ref"], "cleared": cleared,
+                    "requeued": True,
+                    "note": "new bounded attempt opened"}
+        return {"ref": parsed["ref"], "cleared": cleared,
+                "requeued": False, "note": reason or
+                "requeue refused"}
+
+    def _terminal_row_for_ref(self, ref: str) -> dict | None:
+        """Newest terminal row reachable from a ref (or its aliases)."""
+        row = self.registry.query(
+            "SELECT uuid FROM jobs WHERE stage IN"
+            " ('COMPILE_FAILED','RESOURCE_EXCEEDED','VALIDATION_FAILED',"
+            " 'UNSUPPORTED_CONTRACT','QUARANTINED','INTERRUPTED')"
+            " AND (ref=? OR uuid IN (SELECT job_uuid FROM job_aliases"
+            " WHERE ref=?)) ORDER BY updated_at DESC LIMIT 1",
+            (ref, ref))
+        if not row:
+            return None
+        return self.registry.get_job(row[0][0])
 
     def prune(self, apply: bool = False,
               max_bytes: int | None = None) -> dict:

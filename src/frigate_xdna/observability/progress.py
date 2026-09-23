@@ -62,6 +62,16 @@ def _formatters() -> dict:
         "heartbeat":
             lambda e: (f"Still preparing {e['ref']}: {e['phase']}:"
                        f" {_elapsed(e)}"),
+        "resumed":
+            lambda e: (f"Resuming {e['ref']}: attempt {e['attempt']}"
+                       f" ({e['reason']})."),
+        "retry_scheduled":
+            lambda e: (f"Retry scheduled: {e['ref']}: attempt"
+                       f" {e['attempt']} ({e['reason']})."),
+        "fetch_failed_cached":
+            lambda e: (f"Fetch failed for {e['ref']} [{e['code']}:"
+                       f" {e.get('reason', '')}]; serving cached"
+                       f" artifact."),
     }
 
 

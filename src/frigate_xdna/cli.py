@@ -143,18 +143,28 @@ def _daemon_alive(data_dir: str, timeout_s: float = 2.0) -> bool:
     """Liveness is a bounded connection probe, not a socket-file check.
 
     A stale control.sock after a crash must not read as a live daemon.
+    Retries briefly: the admin thread binds asynchronously, so a CLI
+    issued right after daemon start must not branch to the standalone
+    path (exclusive-lock conflict) while the socket is about to exist.
     """
     import socket as _socket
+    import time as _time
     path = socket_path(data_dir)
-    s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-    s.settimeout(timeout_s)
-    try:
-        s.connect(path)
-        return True
-    except OSError:
-        return False
-    finally:
-        s.close()
+    deadline = _time.monotonic() + min(timeout_s, 1.0)
+    while True:
+        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        s.settimeout(timeout_s)
+        try:
+            s.connect(path)
+            return True
+        except FileNotFoundError:
+            if _time.monotonic() >= deadline:
+                return False
+            _time.sleep(0.05)
+        except OSError:
+            return False
+        finally:
+            s.close()
 
 
 def _read_status(config, ref=None, show_identifiers: bool = False) -> dict:
@@ -224,7 +234,8 @@ class _StatusView:
                                view["state"])
         redacted.update({k: view.get(k) for k in
                          ("phase", "elapsed_s", "verified", "error_code",
-                          "compile_key")})
+                          "compile_key", "attempts", "retryable",
+                          "failure")})
         return redacted
 
     def triple(self, raw_ref: str, source_sha: str | None, state: str,
@@ -614,6 +625,19 @@ def _wait_for_state(config, ref: str, want: str, timeout: float,
         time.sleep(0.5)
 
 
+def _recover_exit(resp: dict) -> int:
+    """Recover exit truthfulness: success only when something was
+    cleared or requeued. A safety refusal exits 8 (operator scripts
+    must not proceed as though the inhibition lifted); any other
+    no-op exits 3."""
+    if resp.get("cleared") or resp.get("requeued"):
+        return SUCCESS
+    if resp.get("refused_safety"):
+        from .errors import DEVICE_UNAVAILABLE
+        return DEVICE_UNAVAILABLE
+    return NOT_READY
+
+
 def _wait_live_active(sup, ref: str, timeout: float) -> int:
     """Bounded ACTIVE wait against a live standalone supervisor."""
     deadline = time.monotonic() + timeout
@@ -765,12 +789,13 @@ def main(argv: list[str] | None = None) -> int:
                                        {"command": "recover",
                                         "ref": args.ref})
                 print(json.dumps(resp, indent=2, sort_keys=True))
-                return SUCCESS
+                # The daemon nests the result under "recovered".
+                return _recover_exit(resp.get("recovered", resp))
             sup = Supervisor(config)
             try:
-                print(json.dumps(sup.recover_ref(args.ref), indent=2,
-                                 sort_keys=True))
-                return SUCCESS
+                resp = sup.recover_ref(args.ref)
+                print(json.dumps(resp, indent=2, sort_keys=True))
+                return _recover_exit(resp)
             finally:
                 sup.stop()
         print(f"fxdna: '{args.command}' is not implemented in this build "

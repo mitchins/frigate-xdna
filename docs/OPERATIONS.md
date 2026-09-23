@@ -76,6 +76,29 @@ before compile, after compiler exit, and after validation. A large
 `mmap … ENOMEM` on a device mapping with healthy host CMA points at
 process address-space pressure, not device exhaustion.
 
+## Recovery without deleting data
+
+Correcting an environmental problem (e.g. the memlock allowance) and
+recreating the container on the same `/data` resumes preparation
+automatically: the daemon recognizes the corrected condition and
+opens a new bounded attempt. No volume deletion, SQLite surgery, new
+model ID, or secret re-entry.
+
+Retry policy (see `status --json` failure records for the live
+accounting):
+
+- Temporary resource problems retry automatically, at most 3 attempts
+  per cycle with backoff (30 s, 60 s, 120 s).
+- Known inadequate configuration blocks retries while unchanged and
+  resumes after the correction is verified.
+- Restart-interrupted idempotent work resumes automatically with a
+  clean safety state; any inhibition blocks automatic resume.
+- Unsupported input, bad credentials, corrupt artifacts, validation
+  failures, quarantine, and device faults never retry automatically.
+- `fxdna recover REF --acknowledge` is the explicit route: it clears
+  a non-safety inhibition and/or opens one new bounded cycle. It
+  refuses safety-class inhibitions — review the evidence first.
+
 ## Faults and suspected host reset
 
 Read status/logs first. `doctor` is passive; do not run `doctor --hardware` while a worker owns the NPU. A native/device fault or interrupted sensitive operation may set a persistent safety inhibition.
