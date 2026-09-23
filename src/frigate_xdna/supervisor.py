@@ -820,6 +820,17 @@ class Supervisor:
         except Exception:
             return False
 
+    def _retire_or_track(self, worker) -> bool:
+        """Retire a discarded worker; track it if death is unconfirmed.
+
+        True when the child is confirmed dead. False when it may still
+        be live — it is appended to _orphans for cleanup at stop() and
+        must never be silently dropped."""
+        if self._retire_confirmed(worker):
+            return True
+        self._orphans.append(worker)
+        return False
+
     def _spawn_worker(self):
         if self._worker_factory is not None:
             return self._worker_factory()
@@ -859,10 +870,7 @@ class Supervisor:
                 worker.load(spec["rai_path"], generation,
                             spec["serving_digest"], spec["class_count"])
             except _native.WorkerError as e:
-                try:
-                    worker.retire()
-                except Exception:
-                    pass
+                self._retire_or_track(worker)
                 self._inhibit_quiet(
                          f"WORKER_LOAD:{e.code}",
                          self._ref_for_artifact(compile_key))
@@ -884,8 +892,7 @@ class Supervisor:
                 # worker with no published identity must not exist
                 # untracked: if retire did not confirm death, keep an
                 # explicit reference for cleanup at stop().
-                if not self._retire_confirmed(worker):
-                    self._orphans.append(worker)
+                self._retire_or_track(worker)
                 self._worker = old
                 self._worker_generation = old_generation
                 self._worker_compile_key = old_key
@@ -893,10 +900,7 @@ class Supervisor:
                          self._ref_for_artifact(compile_key))
                 return False
             if old is not None:
-                try:
-                    old.retire()
-                except Exception:
-                    pass
+                self._retire_or_track(old)
             return True
 
     def _drop_worker(self, reason: str) -> None:
@@ -904,10 +908,7 @@ class Supervisor:
         worker, self._worker = self._worker, None
         compile_key, self._worker_compile_key = self._worker_compile_key, None
         if worker is not None:
-            try:
-                worker.retire()
-            except Exception:
-                pass
+            self._retire_or_track(worker)
         ref = (self._ref_for_artifact(compile_key)
                if compile_key else "active")
         self._inhibit_quiet(reason, ref)

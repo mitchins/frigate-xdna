@@ -271,6 +271,52 @@ class TestSupervisorGuards(unittest.TestCase):
         finally:
             sup.stop()
 
+    def test_load_failure_with_live_child_tracks_orphan(self):
+        self.fail_load = ("DEVICE_FAULT", "dead")
+        self.retire_fails = True
+        sup = self._sup()
+        try:
+            _ref, ckey, _sha = plant(sup)
+            self.assertFalse(sup.activate_worker(ckey))
+            child = self.children[0]
+            self.assertTrue(child.alive())
+            self.assertIn(child, sup._orphans)
+            self.assertIsNone(sup._worker)
+            self.assertIsNotNone(sup.registry.get_state("inhibition"))
+        finally:
+            sup.stop()
+
+    def test_old_child_retire_failure_on_switch_tracks_orphan(self):
+        sup = self._sup()
+        try:
+            _r1, ck1, _s1 = plant(sup, classes=8, seed=23)
+            _r2, ck2, _s2 = plant(sup, classes=6, seed=24)
+            self.assertTrue(sup.activate_worker(ck1))
+            old = self.children[0]
+            self.assertTrue(old.loaded)
+            old.retire_fails = True
+            self.assertTrue(sup.activate_worker(ck2))
+            self.assertEqual(sup._worker_generation, 2)
+            self.assertIn(old, sup._orphans)
+        finally:
+            sup.stop()
+
+    def test_drop_worker_with_live_child_tracks_orphan(self):
+        sup = self._sup()
+        try:
+            _ref, ckey, _sha = plant(sup)
+            self.assertTrue(sup.activate_worker(ckey))
+            child = self.children[0]
+            self.assertTrue(child.loaded)
+            child.retire_fails = True
+            sup._drop_worker("TEST")
+            self.assertIsNone(sup._worker)
+            self.assertTrue(child.alive())
+            self.assertIn(child, sup._orphans)
+            self.assertIsNotNone(sup.registry.get_state("inhibition"))
+        finally:
+            sup.stop()
+
     def test_drop_worker_tolerates_retire_failure(self):
         sup = self._sup()
         try:
