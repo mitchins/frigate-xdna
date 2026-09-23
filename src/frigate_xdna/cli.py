@@ -224,7 +224,8 @@ class _StatusView:
                                view["state"])
         redacted.update({k: view.get(k) for k in
                          ("phase", "elapsed_s", "verified", "error_code",
-                          "compile_key")})
+                          "compile_key", "attempts", "retryable",
+                          "failure")})
         return redacted
 
     def triple(self, raw_ref: str, source_sha: str | None, state: str,

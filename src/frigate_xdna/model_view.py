@@ -65,9 +65,24 @@ def project_ref(registry, ref: str,
         state = "ACTIVE"
     elif state == "PREPARED" and verified:
         state = "VERIFIED"
-    return {"ref": ref, "source_sha256": source, "state": state,
+    failure = (job or {}).get("failure")
+    if failure is not None and "phase" not in failure:
+        # Lineage marker on a live resumed row, not a failure.
+        failure = None
+    view = {"ref": ref, "source_sha256": source, "state": state,
             "phase": phase, "elapsed_s": elapsed, "verified": verified,
-            "error_code": error, "compile_key": key}
+            "error_code": error, "compile_key": key,
+            "attempts": (job or {}).get("attempt", 0) or 0,
+            "retryable": bool(failure) and bool(failure.get("retryable")),
+            "failure": None}
+    if failure:
+        view["failure"] = {
+            "phase": failure.get("phase"), "code": failure.get("code"),
+            "reason": failure.get("reason"),
+            "kind": failure.get("kind"),
+            "guidance": failure.get("guidance"),
+            "attempts": failure.get("attempts", 0)}
+    return view
 
 
 def satisfies(actual: str, want: str) -> bool:

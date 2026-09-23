@@ -11,7 +11,13 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# v1 -> v2: structured failure records on jobs (nullable: legacy rows
+# read as unknown-evidence failures, never as safe).
+_SCHEMA_V2 = """
+ALTER TABLE jobs ADD COLUMN failure_json TEXT;
+"""
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);
@@ -38,7 +44,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   uuid TEXT PRIMARY KEY, ref TEXT NOT NULL, compile_key TEXT,
   stage TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
   created_at REAL NOT NULL, updated_at REAL NOT NULL,
-  boot_token TEXT, progress TEXT, error_code TEXT);
+  boot_token TEXT, progress TEXT, error_code TEXT,
+  failure_json TEXT);
 CREATE TABLE IF NOT EXISTS pins (
   name TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL,
   created_at REAL NOT NULL);
@@ -48,6 +55,18 @@ CREATE TABLE IF NOT EXISTS job_aliases (
 CREATE TABLE IF NOT EXISTS service_state (
   key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
 """
+
+
+def _parse_failure(raw) -> dict | None:
+    """Structured failure record, or None for legacy rows without
+    evidence (unknown-evidence failures, never auto-safe)."""
+    if not raw:
+        return None
+    try:
+        record = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return record if isinstance(record, dict) else None
 
 
 class Registry:
@@ -91,10 +110,25 @@ class Registry:
                 f"registry schema v{row[0][0]} is newer than supported "
                 f"v{SCHEMA_VERSION}; refusing to open")
         elif row[0][0] < SCHEMA_VERSION:
-            raise RuntimeError(
-                f"registry schema v{row[0][0]} needs migration "
-                f"(no migrations shipped in v0.1)")
+            if read_only:
+                raise RuntimeError(
+                    f"registry schema v{row[0][0]} needs migration;"
+                    " refusing read-only open of a pre-migration store")
+            self._migrate(row[0][0])
 
+
+    def _migrate(self, from_version: int) -> None:
+        """Small, idempotent migrations. v1 -> v2 adds the nullable
+        failure_json column; legacy rows keep NULL (unknown-evidence
+        failures). No explicit transaction: executescript commits
+        implicitly, and the column check makes a crash between the
+        two statements safely re-runnable."""
+        if from_version == 1:
+            cols = [r[1] for r in self.query("PRAGMA table_info(jobs)")]
+            if "failure_json" not in cols:
+                self.cx.executescript(_SCHEMA_V2)
+            self._execute("UPDATE schema_version SET version=?",
+                          (SCHEMA_VERSION,))
 
     def _execute(self, sql, params=()):
         with self._lock:
@@ -204,12 +238,14 @@ class Registry:
                         rows[0])) if rows else None
 
     def create_job(self, uuid: str, ref: str, compile_key: str | None,
-                   boot_token: str | None) -> None:
+                   boot_token: str | None, attempt: int = 1) -> None:
         now = time.time()
         self._execute(
-            "INSERT INTO jobs(uuid, ref, compile_key, stage, created_at,"
-            " updated_at, boot_token) VALUES (?,?,?,?,?,?,?)",
-            (uuid, ref, compile_key, "QUEUED", now, now, boot_token))
+            "INSERT INTO jobs(uuid, ref, compile_key, stage, attempt,"
+            " created_at, updated_at, boot_token)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (uuid, ref, compile_key, "QUEUED", attempt, now, now,
+             boot_token))
 
     def set_job(self, uuid: str, stage: str, error_code: str | None = None,
                 progress: str | None = None):
@@ -221,9 +257,29 @@ class Registry:
     def get_job(self, uuid: str) -> dict | None:
         rows = self.query(
             "SELECT uuid, ref, compile_key, stage, attempt, error_code,"
-            " progress FROM jobs WHERE uuid=?", (uuid,))
-        return dict(zip(("uuid", "ref", "compile_key", "stage", "attempt",
-                         "error_code", "progress"), rows[0])) if rows else None
+            " progress, failure_json FROM jobs WHERE uuid=?", (uuid,))
+        if not rows:
+            return None
+        job = dict(zip(("uuid", "ref", "compile_key", "stage", "attempt",
+                        "error_code", "progress", "failure_json"),
+                       rows[0]))
+        job["failure"] = _parse_failure(job.pop("failure_json"))
+        return job
+
+    def set_failure(self, uuid: str, record: dict) -> None:
+        self._execute(
+            "UPDATE jobs SET failure_json=?, updated_at=? WHERE uuid=?",
+            (json.dumps(record, sort_keys=True), time.time(), uuid))
+
+    def live_job_for_key(self, compile_key: str) -> dict | None:
+        """A non-terminal job row for a key (duplicate-compile guard)."""
+        rows = self.query(
+            "SELECT uuid FROM jobs WHERE compile_key=? AND stage NOT IN"
+            " ('PREPARED','COMPILE_FAILED','RESOURCE_EXCEEDED',"
+            " 'VALIDATION_FAILED','UNSUPPORTED_CONTRACT','QUARANTINED',"
+            " 'INTERRUPTED') ORDER BY updated_at DESC LIMIT 1",
+            (compile_key,))
+        return self.get_job(rows[0][0]) if rows else None
 
     def find_job(self, ref: str, compile_key: str | None) -> dict | None:
         if compile_key is None:
@@ -301,13 +357,16 @@ class Registry:
         """Newest job row for a ref, including alias rows."""
         rows = self.query(
             "SELECT uuid, ref, compile_key, stage, attempt, error_code,"
-            " progress FROM jobs WHERE ref=? OR uuid IN"
+            " progress, failure_json FROM jobs WHERE ref=? OR uuid IN"
             " (SELECT job_uuid FROM job_aliases WHERE ref=?)"
             " ORDER BY updated_at DESC LIMIT 1", (ref, ref))
         if not rows:
             return None
-        return dict(zip(("uuid", "ref", "compile_key", "stage", "attempt",
-                         "error_code", "progress"), rows[0]))
+        job = dict(zip(("uuid", "ref", "compile_key", "stage", "attempt",
+                        "error_code", "progress", "failure_json"),
+                       rows[0]))
+        job["failure"] = _parse_failure(job.pop("failure_json"))
+        return job
 
     def prepared_key_for_ref(self, ref: str) -> str | None:
         """Newest PREPARED compile key reachable from a ref/alias."""
