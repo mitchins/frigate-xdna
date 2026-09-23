@@ -173,7 +173,9 @@ class JobManager:
             duration_s=duration_s, succeed=succeed, fail_state=fail_state,
             device_required=device_required,
             extra={**(extra or {}), **kw},
-            prev_uuid=failed.get("uuid"))
+            prev_uuid=failed.get("uuid"),
+            source_sha256=(extra or {}).get("source_sha256")
+            or failed.get("source_sha256"))
         if new is None:
             return None
         # Consume this terminal row: it must never spawn a second
@@ -189,20 +191,25 @@ class JobManager:
                      fail_state: str = "COMPILE_FAILED",
                      device_required: bool = False,
                      extra: dict | None = None,
-                     prev_uuid: str | None = None) -> dict | None:
+                     prev_uuid: str | None = None,
+                     source_sha256: str | None = None) -> dict | None:
         """Create attempt N+1 as a new job row (history preserved on
         the old terminal rows and carried on the new one; committed
-        artifacts never touched). None when backend construction
-        refuses (e.g. unresolvable resume source)."""
+        artifacts never touched). The attempt binds the failed
+        attempt's source bytes, never the ref's current bytes. None
+        when backend construction refuses (e.g. unresolvable resume
+        source)."""
         job_uuid = uuid.uuid4().hex
         attempt = int(prev.get("attempts", 0)) + 1
         self.registry.create_job(job_uuid, ref, compile_key,
-                                 self.boot_token, attempt=attempt)
+                                 self.boot_token, attempt=attempt,
+                                 source_sha256=source_sha256)
         self.registry.set_failure(
             job_uuid, {"resumed_from": prev_uuid,
                        "history": list(prev.get("history", []))})
         self._carry_aliases(job_uuid, ref, prev_uuid)
-        kwargs = {"source_sha256": "", "compile_key": compile_key or "",
+        kwargs = {"source_sha256": source_sha256 or "",
+                  "compile_key": compile_key or "",
                   "duration_s": duration_s, "succeed": succeed,
                   "fail_state": fail_state,
                   "device_required": device_required,
@@ -235,11 +242,10 @@ class JobManager:
 
     def _spawn_backend(self, job_uuid: str, kwargs: dict,
                        prev_uuid: str | None) -> bool:
-        """Construct the backend object. False when refused (e.g. a
-        resumed real compile whose source bytes are gone): the row is
-        rolled back so the key stays recompilable, and the source row
-        is stamped so automatic retries stop burning constructions
-        against the same refusal."""
+        """Construct the backend object. False when refused: the row
+        is rolled back so the key stays recompilable, and the source
+        row is stamped so automatic retries stop burning
+        constructions against the same refusal."""
         try:
             self._backends[job_uuid] = self.backend_factory(**kwargs)
         except Exception as e:
@@ -305,9 +311,10 @@ class JobManager:
             if compile_key and self.registry.live_job_for_key(
                     compile_key):
                 return None, "a live attempt already exists"
-            new = self._new_attempt(ref, compile_key, prev,
-                                    "operator recover", "recover",
-                                    prev_uuid=existing["uuid"])
+            new = self._new_attempt(
+                ref, compile_key, prev, "operator recover", "recover",
+                prev_uuid=existing["uuid"],
+                source_sha256=full.get("source_sha256"))
             if new is None:
                 return None, ("resume source unresolvable; re-submit"
                                " source explicitly")
@@ -324,7 +331,9 @@ class JobManager:
                 duration_s: float, succeed: bool, fail_state: str,
                 device_required: bool, **extra) -> dict:
         job_uuid = uuid.uuid4().hex
-        self.registry.create_job(job_uuid, ref, compile_key, self.boot_token)
+        self.registry.create_job(job_uuid, ref, compile_key,
+                                 self.boot_token,
+                                 source_sha256=extra.get("source_sha256"))
         kwargs = {"source_sha256": "", "compile_key": compile_key or "",
                   "duration_s": duration_s, "succeed": succeed,
                   "fail_state": fail_state,

@@ -269,49 +269,42 @@ class Supervisor:
                 uuid, self._interrupt_record(stage, row_boot,
                                              attempt or 1))
 
-    def _resolve_resume_source(self, compile_key: str) -> str:
-        """Source bytes path for a resumed real compile.
+    def _compile_source_path(self, sha256: str) -> str:
+        """Bytes path for one source digest (resume binding).
 
-        The ref's recorded source comes first: a failed first attempt
-        has no committed artifact row yet, but its source bytes are
-        already ingested. The artifact row is only a fallback. Raises
-        when the bytes are gone: the key stays recompilable by
-        explicit re-submit, but a resume must never start sourceless.
+        Raises when the bytes are gone: the key stays recompilable by
+        explicit re-submit, but a resume must never start sourceless
+        or, worse, on the ref's newer bytes under an old key.
         """
-        sha = None
-        row = self.registry.query(
-            "SELECT ref FROM jobs WHERE compile_key=?"
-            " ORDER BY updated_at DESC LIMIT 1", (compile_key,))
-        if row:
-            rec = self.registry.get_ref(row[0][0])
-            sha = (rec or {}).get("source_sha256") or None
-        if sha is None:
-            art = self.registry.get_artifact(compile_key)
-            sha = art["source_sha256"] if art else None
-        src = self.registry.get_source(sha) if sha else None
+        src = self.registry.get_source(sha256)
         if src is None:
             raise FxdnaError(CACHE_CORRUPT, "CACHE_CORRUPT",
                              f"source bytes missing for resumed compile"
-                             f" {compile_key[:12]}…; re-submit explicitly")
+                             f" {sha256[:12]}…; re-submit explicitly")
         path = os.path.join(self.data_dir, "sources",
                             src["sha256"],
                             os.path.basename(src["rel_path"]))
         if not os.path.isfile(path):
             raise FxdnaError(CACHE_CORRUPT, "CACHE_CORRUPT",
                              f"source file missing for resumed compile"
-                             f" {compile_key[:12]}…; re-submit explicitly")
+                             f" {sha256[:12]}…; re-submit explicitly")
         return path
 
     def _make_backend_job(self, **kw):
         """Job factory: real audited backend when prefixes are configured,
         fake backend otherwise (hardware-free tests + offline development).
+
+        A resumed real compile binds the failed attempt's source bytes
+        (JobManager carries the sha on the row and in kwargs), never
+        the ref's current bytes: compiling newer bytes under an old
+        key would corrupt the content-addressed cache.
         """
         if self.compiler_prefixes is not None and kw.get("compile_key"):
             from .compiler.real import RealCompileJob
             source_path = kw.get("source_path", "")
             if not source_path:
-                source_path = self._resolve_resume_source(
-                    kw.get("compile_key", ""))
+                source_path = self._compile_source_path(
+                    kw.get("source_sha256") or "")
             return RealCompileJob(
                 source_sha256=kw.get("source_sha256", ""),
                 compile_key=kw.get("compile_key", ""),
@@ -749,7 +742,7 @@ class Supervisor:
                 # activated). Terminal rows are inert to pump/GC.
                 hit_uuid = uuid.uuid4().hex
                 self.registry.create_job(hit_uuid, ref, ckey,
-                                         boot_token())
+                                         boot_token(), source_sha256=digest)
                 self.registry.set_job(hit_uuid, "PREPARED")
                 self.registry.set_ref_state(ref, "PREPARED")
                 self.emit({"kind": "model_cached", "ref": ref})

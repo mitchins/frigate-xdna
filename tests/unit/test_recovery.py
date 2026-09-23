@@ -437,6 +437,7 @@ class TestLegacyMigration(unittest.TestCase):
         reg.close()
         cx = sqlite3.connect(db)
         cx.execute("ALTER TABLE jobs DROP COLUMN failure_json")
+        cx.execute("ALTER TABLE jobs DROP COLUMN source_sha256")
         cx.execute("UPDATE schema_version SET version=1")
         cx.commit()
         cx.close()
@@ -449,7 +450,7 @@ class TestLegacyMigration(unittest.TestCase):
             reg = Registry(db)
             try:
                 row = reg.query("SELECT version FROM schema_version")
-                self.assertEqual(row[0][0], 2)
+                self.assertEqual(row[0][0], 3)
                 job = reg.get_job("rc3-job")
                 self.assertEqual(job["stage"], "COMPILE_FAILED")
                 self.assertIsNone(job["failure"])
@@ -584,7 +585,7 @@ class TestReviewFindings(unittest.TestCase):
                 # Unresolvable resume source fails loudly, never
                 # sourceless.
                 with self.assertRaises(FxdnaError):
-                    sup._resolve_resume_source("ck-missing")
+                    sup._compile_source_path("c" * 64)
                 # A raising factory never opens a row: the terminal
                 # row stays for operator review.
                 sup.registry.upsert_ref("plus://x", "plus", "x")
@@ -615,43 +616,51 @@ class TestReviewFindings(unittest.TestCase):
             finally:
                 sup.stop()
 
-    def test_resume_source_prefers_ref_over_artifact(self):
-        """A failed first attempt has no artifact row yet; the resume
-        source resolves from the ref's ingested bytes."""
-        from frigate_xdna.compiler.launcher import CompilerPrefixes
+    def test_resume_binds_failed_attempt_source(self):
+        """Cache-corruption guard: ref ingests bytes X (key K1, fails),
+        then --refresh ingests bytes Y (key K2). The K1 resume must
+        compile X, never the ref's current bytes Y."""
         with tempfile.TemporaryDirectory() as d:
             cfg = make_config(d)
-            recipe = os.path.join(d, "recipe")
-            os.makedirs(recipe, exist_ok=True)
-            prefixes = CompilerPrefixes(
-                quant_python="q", compile_python="c", compile_lib="l",
-                xrt_lib="x", xrt_root="r", recipe_dir=recipe,
-                calib_dir="cal", vaiml_config="v")
-            sup = Supervisor(cfg, compiler_prefixes=prefixes)
+            sup = Supervisor(
+                cfg, fake_compile={"device_required": False,
+                                   "succeed": False,
+                                   "fail_state": "COMPILE_FAILED",
+                                   "detail": "compile timeout"})
             try:
-                data = make_raw_yolo(os.path.join(d, "s.onnx"), res=320,
-                                     classes=4, seed=77)
-                sha = hashlib.sha256(data).hexdigest()
-                sup.registry.upsert_ref("plus://src", "plus", "src")
-                sup.registry.add_source(sha, len(data),
-                                        f"sources/{sha}/model.onnx",
-                                        "plus")
-                sup.registry.set_ref_source("plus://src", sha, "md",
-                                            "QUEUED")
-                src_dir = os.path.join(d, "sources", sha)
-                os.makedirs(src_dir, exist_ok=True)
-                with open(os.path.join(src_dir, "model.onnx"),
-                          "wb") as f:
-                    f.write(data)
-                sup.registry.execute(
-                    "INSERT INTO jobs(uuid, ref, compile_key, stage,"
-                    " attempt, created_at, updated_at) VALUES"
-                    " (?,?,?,?,?,?,?)",
-                    ("src-job", "plus://src", "ck-src", "COMPILE_FAILED",
-                     1, time.time(), time.time()))
-                job = sup._make_backend_job(compile_key="ck-src")
-                self.assertTrue(job._source_path.endswith("model.onnx"))
-                self.assertTrue(os.path.isfile(job._source_path))
+                path = os.path.join(d, "mutable.onnx")
+                make_raw_yolo(path, res=320, classes=4, seed=71)
+                out_x = sup.prepare(path)
+                pump_until(sup, path, ("COMPILE_FAILED",))
+                row_x = sup.registry.get_job(out_x["job_uuid"])
+                sha_x = row_x["source_sha256"]
+                self.assertTrue(sha_x)
+                # New bytes under the same ref: new key, new job.
+                make_raw_yolo(path, res=320, classes=4, seed=72)
+                out_y = sup.prepare(path, refresh=True)
+                self.assertNotEqual(out_y["compile_key"],
+                                    out_x["compile_key"])
+                pump_until(sup, path, ("COMPILE_FAILED",))
+                # Expire only the K1 backoff; its resume must bind X.
+                # (The failing fake backend terminates the new attempt
+                # in the same pump, so assert on the attempt-2 row.)
+                expire_backoff(sup, out_x["job_uuid"])
+                sup.pump(0.05)
+                sup.pump(0.05)
+                k1_rows = [r for r in job_rows(sup, path)
+                           if sup.registry.get_job(r[0])["compile_key"]
+                           == out_x["compile_key"]]
+                self.assertEqual(len(k1_rows), 2)
+                new_row = sup.registry.get_job(
+                    max(k1_rows, key=lambda r: r[2])[0])
+                self.assertEqual(new_row["attempt"], 2)
+                self.assertEqual(new_row["source_sha256"], sha_x)
+                # ...and the bound bytes resolve to the X file, never Y.
+                resolved = sup._compile_source_path(
+                    new_row["source_sha256"])
+                with open(resolved, "rb") as f:
+                    self.assertEqual(
+                        hashlib.sha256(f.read()).hexdigest(), sha_x)
             finally:
                 sup.stop()
 
@@ -887,6 +896,14 @@ class TestCodexFindings(unittest.TestCase):
 
         from frigate_xdna import cli as _cli
         from frigate_xdna.runtime.safety import inhibit
+
+        def run_cli(argv, data_dir):
+            buf = _io.StringIO()
+            with _mock.patch.dict(os.environ,
+                                  {"FXDNA_DATA_DIR": data_dir}):
+                with _redirect(buf):
+                    return _cli.main(argv), buf.getvalue()
+
         with tempfile.TemporaryDirectory() as d:
             cfg = make_config(d)
             sup = Supervisor(cfg)
@@ -895,17 +912,27 @@ class TestCodexFindings(unittest.TestCase):
                 sup.registry.upsert_ref(ref, "onnx", None)
                 inhibit(d, sup.registry, "DEVICE_FAULT", ref)
                 sup.stop()
-                with _mock.patch.dict(os.environ,
-                                      {"FXDNA_DATA_DIR": d}):
-                    buf = _io.StringIO()
-                    with _redirect(buf):
-                        rc = _cli.main(["recover", ref, "--acknowledge"])
+                # Standalone path.
+                rc, _out = run_cli(["recover", ref, "--acknowledge"], d)
+                self.assertEqual(rc, 8)
+                rc, _out = run_cli(["recover", "plus://other",
+                                    "--acknowledge"], d)
+                self.assertEqual(rc, 3)
+                # Daemon path (result nested under "recovered").
+                sup2 = Supervisor(cfg)
+                try:
+                    sup2.start_admin()
+                    rc, out = run_cli(["recover", ref, "--acknowledge"],
+                                      d)
                     self.assertEqual(rc, 8)
-                    buf = _io.StringIO()
-                    with _redirect(buf):
-                        rc = _cli.main(["recover", "plus://other",
-                                        "--acknowledge"])
+                    doc = json.loads(out)
+                    self.assertTrue(
+                        doc["recovered"]["refused_safety"])
+                    rc, _out = run_cli(["recover", "plus://other",
+                                        "--acknowledge"], d)
                     self.assertEqual(rc, 3)
+                finally:
+                    sup2.stop()
             finally:
                 try:
                     sup.stop()

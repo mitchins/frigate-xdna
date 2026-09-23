@@ -11,8 +11,6 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 2
-
 # v1 -> v2: structured failure records on jobs (nullable: legacy rows
 # read as unknown-evidence failures, never as safe).
 _SCHEMA_V2 = """
@@ -45,7 +43,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   stage TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
   created_at REAL NOT NULL, updated_at REAL NOT NULL,
   boot_token TEXT, progress TEXT, error_code TEXT,
-  failure_json TEXT);
+  failure_json TEXT, source_sha256 TEXT);
 CREATE TABLE IF NOT EXISTS pins (
   name TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL,
   created_at REAL NOT NULL);
@@ -54,6 +52,15 @@ CREATE TABLE IF NOT EXISTS job_aliases (
   PRIMARY KEY (job_uuid, ref));
 CREATE TABLE IF NOT EXISTS service_state (
   key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
+"""
+
+
+SCHEMA_VERSION = 3
+
+# v2 -> v3: bind each job to its source bytes (nullable: rows written
+# before this migration resolve via the ref, exactly once, at resume).
+_SCHEMA_V3 = """
+ALTER TABLE jobs ADD COLUMN source_sha256 TEXT;
 """
 
 
@@ -118,17 +125,20 @@ class Registry:
 
 
     def _migrate(self, from_version: int) -> None:
-        """Small, idempotent migrations. v1 -> v2 adds the nullable
-        failure_json column; legacy rows keep NULL (unknown-evidence
-        failures). No explicit transaction: executescript commits
-        implicitly, and the column check makes a crash between the
-        two statements safely re-runnable."""
-        if from_version == 1:
+        """Small, idempotent migrations (nullable columns only; legacy
+        rows keep NULL). No explicit transaction: executescript
+        commits implicitly, and each column check makes a crash
+        between statements safely re-runnable."""
+        if from_version <= 1:
             cols = [r[1] for r in self.query("PRAGMA table_info(jobs)")]
             if "failure_json" not in cols:
                 self.cx.executescript(_SCHEMA_V2)
-            self._execute("UPDATE schema_version SET version=?",
-                          (SCHEMA_VERSION,))
+        if from_version <= 2:
+            cols = [r[1] for r in self.query("PRAGMA table_info(jobs)")]
+            if "source_sha256" not in cols:
+                self.cx.executescript(_SCHEMA_V3)
+        self._execute("UPDATE schema_version SET version=?",
+                      (SCHEMA_VERSION,))
 
     def _execute(self, sql, params=()):
         with self._lock:
@@ -238,14 +248,15 @@ class Registry:
                         rows[0])) if rows else None
 
     def create_job(self, uuid: str, ref: str, compile_key: str | None,
-                   boot_token: str | None, attempt: int = 1) -> None:
+                   boot_token: str | None, attempt: int = 1,
+                   source_sha256: str | None = None) -> None:
         now = time.time()
         self._execute(
             "INSERT INTO jobs(uuid, ref, compile_key, stage, attempt,"
-            " created_at, updated_at, boot_token)"
-            " VALUES (?,?,?,?,?,?,?,?)",
+            " created_at, updated_at, boot_token, source_sha256)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
             (uuid, ref, compile_key, "QUEUED", attempt, now, now,
-             boot_token))
+             boot_token, source_sha256))
 
     def set_job(self, uuid: str, stage: str, error_code: str | None = None,
                 progress: str | None = None):
@@ -257,11 +268,13 @@ class Registry:
     def get_job(self, uuid: str) -> dict | None:
         rows = self.query(
             "SELECT uuid, ref, compile_key, stage, attempt, error_code,"
-            " progress, failure_json FROM jobs WHERE uuid=?", (uuid,))
+            " progress, failure_json, source_sha256 FROM jobs"
+            " WHERE uuid=?", (uuid,))
         if not rows:
             return None
         job = dict(zip(("uuid", "ref", "compile_key", "stage", "attempt",
-                        "error_code", "progress", "failure_json"),
+                        "error_code", "progress", "failure_json",
+                        "source_sha256"),
                        rows[0]))
         job["failure"] = _parse_failure(job.pop("failure_json"))
         return job
@@ -285,16 +298,19 @@ class Registry:
         if compile_key is None:
             rows = self.query(
                 "SELECT uuid, ref, compile_key, stage, attempt, error_code,"
-                " progress FROM jobs WHERE ref=? AND compile_key IS NULL"
+                " progress, source_sha256 FROM jobs"
+                " WHERE ref=? AND compile_key IS NULL"
                 " ORDER BY created_at DESC LIMIT 1", (ref,))
         else:
             rows = self.query(
                 "SELECT uuid, ref, compile_key, stage, attempt, error_code,"
-                " progress FROM jobs WHERE ref=? AND compile_key=?"
+                " progress, source_sha256 FROM jobs"
+                " WHERE ref=? AND compile_key=?"
                 " ORDER BY created_at DESC LIMIT 1",
                 (ref, compile_key))
         return dict(zip(("uuid", "ref", "compile_key", "stage", "attempt",
-                         "error_code", "progress"), rows[0])) if rows else None
+                         "error_code", "progress", "source_sha256"),
+                        rows[0])) if rows else None
 
     def add_alias(self, job_uuid: str, ref: str):
         self._execute(
@@ -360,7 +376,8 @@ class Registry:
         later."""
         rows = self.query(
             "SELECT uuid, ref, compile_key, stage, attempt, error_code,"
-            " progress, failure_json FROM jobs WHERE ref=? OR uuid IN"
+            " progress, failure_json, source_sha256 FROM jobs"
+            " WHERE ref=? OR uuid IN"
             " (SELECT job_uuid FROM job_aliases WHERE ref=?)"
             " ORDER BY stage IN ('PREPARED','COMPILE_FAILED',"
             "'RESOURCE_EXCEEDED','VALIDATION_FAILED',"
@@ -369,7 +386,8 @@ class Registry:
         if not rows:
             return None
         job = dict(zip(("uuid", "ref", "compile_key", "stage", "attempt",
-                        "error_code", "progress", "failure_json"),
+                        "error_code", "progress", "failure_json",
+                        "source_sha256"),
                        rows[0]))
         job["failure"] = _parse_failure(job.pop("failure_json"))
         return job

@@ -143,18 +143,28 @@ def _daemon_alive(data_dir: str, timeout_s: float = 2.0) -> bool:
     """Liveness is a bounded connection probe, not a socket-file check.
 
     A stale control.sock after a crash must not read as a live daemon.
+    Retries briefly: the admin thread binds asynchronously, so a CLI
+    issued right after daemon start must not branch to the standalone
+    path (exclusive-lock conflict) while the socket is about to exist.
     """
     import socket as _socket
+    import time as _time
     path = socket_path(data_dir)
-    s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-    s.settimeout(timeout_s)
-    try:
-        s.connect(path)
-        return True
-    except OSError:
-        return False
-    finally:
-        s.close()
+    deadline = _time.monotonic() + min(timeout_s, 1.0)
+    while True:
+        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        s.settimeout(timeout_s)
+        try:
+            s.connect(path)
+            return True
+        except FileNotFoundError:
+            if _time.monotonic() >= deadline:
+                return False
+            _time.sleep(0.05)
+        except OSError:
+            return False
+        finally:
+            s.close()
 
 
 def _read_status(config, ref=None, show_identifiers: bool = False) -> dict:
@@ -779,7 +789,8 @@ def main(argv: list[str] | None = None) -> int:
                                        {"command": "recover",
                                         "ref": args.ref})
                 print(json.dumps(resp, indent=2, sort_keys=True))
-                return _recover_exit(resp)
+                # The daemon nests the result under "recovered".
+                return _recover_exit(resp.get("recovered", resp))
             sup = Supervisor(config)
             try:
                 resp = sup.recover_ref(args.ref)
