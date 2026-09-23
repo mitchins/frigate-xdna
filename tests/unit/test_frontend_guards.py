@@ -159,10 +159,10 @@ class TestServeLoop(unittest.TestCase):
             fe, _sup = make_frontend(d)
             err = zmq.ZMQError()
             err.errno = zmq.EAGAIN
+            fe.sock = FakeSock([err])
+            fe._queue = asyncio.Queue()
 
             async def go():
-                fe.sock = FakeSock([err])
-                fe._queue = asyncio.Queue()
                 await fe._serve_loop()
             with self.assertRaises(zmq.ZMQError):
                 asyncio.run(go())

@@ -159,23 +159,17 @@ class TestVaimlPhase(unittest.TestCase):
         self.assertIn("timeout", res.error)
 
     def test_nonzero_rc_is_terminal(self):
-        old = launcher.spawn
-        try:
-            launcher.spawn = lambda *a: (3, "", 0)
+        with mock.patch.object(launcher, "spawn", lambda *a: (3, "", 0)):
             with tempfile.TemporaryDirectory() as d:
                 res = _run_vaiml_phase(
                     prefixes(d), "bf16.onnx", d, "ck", time.monotonic() + 9999.0,
                     time.monotonic())
-        finally:
-            launcher.spawn = old
         self.assertEqual(res.returncode, 3)
         self.assertEqual(res.error, "vaiml-compile failed")
 
     def test_ok_log_parses_rai_coordinates(self):
         sha = hashlib.sha256(b"rai-bytes").hexdigest()
-        old = launcher.spawn
-        try:
-            launcher.spawn = lambda *a: (0, "", 0)
+        with mock.patch.object(launcher, "spawn", lambda *a: (0, "", 0)):
             with tempfile.TemporaryDirectory() as d:
                 os.makedirs(os.path.join(d, "cache"), exist_ok=True)
                 with open(os.path.join(
@@ -184,8 +178,6 @@ class TestVaimlPhase(unittest.TestCase):
                 out = _run_vaiml_phase(
                     prefixes(d), "bf16.onnx", d, "ck", time.monotonic() + 9999.0,
                     time.monotonic())
-        finally:
-            launcher.spawn = old
         self.assertEqual(out[0], sha)
         self.assertEqual(out[1], 12345)
         self.assertTrue(out[2].endswith(os.path.join("ck", "ck.rai")))
@@ -200,38 +192,28 @@ class TestLockedRun(unittest.TestCase):
         self.assertEqual(res.returncode, 124)
 
     def test_quant_failure_is_terminal(self):
-        old = launcher.spawn
-        try:
-            launcher.spawn = lambda *a: (2, "", 0)
+        with mock.patch.object(launcher, "spawn", lambda *a: (2, "", 0)):
             with tempfile.TemporaryDirectory() as d:
                 path, _data = yolo_source(d)
                 res = _run_locked(
                     prefixes(d), path, d, "ck", time.monotonic() + 9999.0,
                     time.monotonic())
-        finally:
-            launcher.spawn = old
         self.assertEqual(res.returncode, 2)
         self.assertEqual(res.error, "bf16-prepare failed")
 
     def test_full_pipeline_success_with_fakes(self):
-        old = launcher.spawn
-        try:
-            launcher.spawn = lambda *a: (0, "", 0)
+        with mock.patch.object(launcher, "spawn", lambda *a: (0, "", 0)):
             with tempfile.TemporaryDirectory() as d:
                 path, _data = yolo_source(d, classes=8, seed=5)
                 res = _run_locked(
                     prefixes(d), path, d, "ck", time.monotonic() + 9999.0,
                     time.monotonic(),
                     worker_factory=ProbeChild)
-        finally:
-            launcher.spawn = old
         self.assertEqual(res.returncode, 0)
         self.assertTrue(res.rai_path.endswith("ck.rai"))
 
     def test_probe_inspection_failure_is_terminal(self):
-        old = launcher.spawn
-        try:
-            launcher.spawn = lambda *a: (0, "", 0)
+        with mock.patch.object(launcher, "spawn", lambda *a: (0, "", 0)):
             with tempfile.TemporaryDirectory() as d:
                 bad = os.path.join(d, "bad.onnx")
                 with open(bad, "wb") as f:
@@ -244,15 +226,11 @@ class TestLockedRun(unittest.TestCase):
                     prefixes(d), bad, d, "ck", time.monotonic() + 9999.0,
                     time.monotonic(),
                     data_dir=d, worker_factory=ProbeChild)
-        finally:
-            launcher.spawn = old
         self.assertEqual(res.returncode, 7)
         self.assertTrue(res.error.startswith("probe inspection failed"))
 
     def test_probe_failure_is_terminal(self):
-        old = launcher.spawn
-        try:
-            launcher.spawn = lambda *a: (0, "", 0)
+        with mock.patch.object(launcher, "spawn", lambda *a: (0, "", 0)):
             with tempfile.TemporaryDirectory() as d:
                 path, _data = yolo_source(d, classes=8, seed=5)
                 rai_dir = os.path.join(d, "cache", "ck")
@@ -267,15 +245,11 @@ class TestLockedRun(unittest.TestCase):
                     prefixes(d), path, d, "ck", time.monotonic() + 9999.0,
                     time.monotonic(),
                     data_dir=d, worker_factory=refusing)
-        finally:
-            launcher.spawn = old
         self.assertEqual(res.returncode, 7)
         self.assertTrue(res.error.startswith("probe failed: "))
 
     def test_vaiml_timeout_merges_peaks(self):
-        old = launcher.spawn
-        try:
-            launcher.spawn = lambda *a: (0, "", 0)
+        with mock.patch.object(launcher, "spawn", lambda *a: (0, "", 0)):
             now = time.monotonic()
             jumps = [now] + [now + 9999.0] * 10
             with tempfile.TemporaryDirectory() as d:
@@ -284,15 +258,11 @@ class TestLockedRun(unittest.TestCase):
                                        side_effect=jumps):
                     res = _run_locked(
                         prefixes(d), path, d, "ck", 50.0, now)
-        finally:
-            launcher.spawn = old
         self.assertEqual(res.returncode, 124)
         self.assertIn("timeout", res.error)
 
     def test_validate_timeout(self):
-        old = launcher.spawn
-        try:
-            launcher.spawn = lambda *a: (0, "", 0)
+        with mock.patch.object(launcher, "spawn", lambda *a: (0, "", 0)):
             now = time.monotonic()
             jumps = [now, now] + [now + 9999.0] * 10
             with tempfile.TemporaryDirectory() as d:
@@ -301,8 +271,6 @@ class TestLockedRun(unittest.TestCase):
                                        side_effect=jumps):
                     res = _run_locked(
                         prefixes(d), path, d, "ck", 50.0, now)
-        finally:
-            launcher.spawn = old
         self.assertEqual(res.returncode, 124)
         self.assertIn("timeout", res.error)
 
