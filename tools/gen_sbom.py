@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import json
 import os
+import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -72,13 +73,17 @@ def main() -> int:
     for comp in vendor.get("components", []):
         components.append({
             "type": "library",
-            "bom-ref": f"vendor:{comp['package']}@{comp['version']}",
+            "bom-ref": (f"vendor:{comp['package']}@{comp['version']}"
+                        f"#{comp['licence']}"),
             "name": comp["package"],
             "version": str(comp["version"]),
             "scope": "required",
             "hashes": [{"alg": "SHA-256",
                         "content": comp["files_sha256"]}],
-            "licenses": [{"license": {"id": comp["licence"]}}],
+            # Internal audited licence labels (e.g. "amd-eula") are
+            # not SPDX identifiers: CycloneDX requires license.id to
+            # be SPDX, so the verbatim label goes in license.name.
+            "licenses": [{"license": {"name": comp["licence"]}}],
             "properties": [
                 {"name": "fxdna:roles", "value": comp.get("roles", "")},
                 {"name": "fxdna:total_bytes",
@@ -86,17 +91,34 @@ def main() -> int:
             ],
         })
     for name, ver, scope in pins:
+        # CycloneDX 1.5 scope vocabulary is closed ("required" /
+        # "optional" / "excluded"): our richer runtime/dev-test
+        # distinction is preserved verbatim as a property, never lost.
         components.append({
             "type": "library",
             "bom-ref": f"pypi:{name}@{ver}",
             "name": name,
             "version": ver,
-            "scope": scope,
+            "scope": ("required" if scope == "runtime" else "excluded"),
             "purl": f"pkg:pypi/{name}@{ver}",
+            "properties": [
+                {"name": "fxdna:dependency-scope", "value": scope},
+            ],
         })
+    # Deterministic document identity: the same image identity always
+    # yields the same serialNumber (required by the attestation path
+    # alongside bomFormat/specVersion, though CycloneDX only
+    # recommends it). A changed image ID yields a new serial.
+    serial_uuid = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"https://github.com/mitchins/frigate-xdna/sbom/"
+        f"{args.image}@{args.image_id}",
+    )
     sbom = {
+        "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
+        "serialNumber": f"urn:uuid:{serial_uuid}",
         "version": 1,
         "metadata": {
             "component": {

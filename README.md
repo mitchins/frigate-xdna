@@ -36,10 +36,10 @@ are expected targets but not yet certified.
 ## Install
 
 ```sh
-docker pull ghcr.io/mitchins/frigate-xdna:0.1.0-rc.1
+docker pull ghcr.io/mitchins/frigate-xdna:0.1.0-rc.2
 ```
 
-Images publish from version tags starting at `v0.1.0-rc.1`
+Images publish from version tags starting at `v0.1.0-rc.2`
 (see `docs/RELEASE.md`); `:latest` is only ever published for stable
 releases.
 
@@ -58,7 +58,7 @@ Then start the sidecar:
 
 ```sh
 NPU_GID=$(stat -c %g /dev/accel/accel0) \
-FXDNA_IMAGE=ghcr.io/mitchins/frigate-xdna:0.1.0-rc.1 \
+FXDNA_IMAGE=ghcr.io/mitchins/frigate-xdna:0.1.0-rc.2 \
 FXDNA_MODELS="plus://<model-id>" \
 docker compose -f examples/compose.yaml -f examples/compose.plus.yaml up -d
 ```
