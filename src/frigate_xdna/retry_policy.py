@@ -162,7 +162,7 @@ def _classify_permanent(stage: str, code: str) -> dict | None:
             "guidance": guidance}
 
 
-def _classify_evidence(stage: str, code: str, detail: str) -> dict | None:
+def _classify_evidence(stage: str, detail: str) -> dict | None:
     if _memlock_pattern(detail):
         if memlock_adequate():
             return {"kind": "unknown", "retryable": False, "auto": False,
@@ -201,7 +201,7 @@ def classify(stage: str, error_code: str | None,
     code = error_code or stage
     for probe in (_classify_safety(stage, code),
                   _classify_permanent(stage, code),
-                  _classify_evidence(stage, code, detail or "")):
+                  _classify_evidence(stage, detail or "")):
         if probe is not None:
             return probe
     # A bare compile failure with no attributable evidence is not a

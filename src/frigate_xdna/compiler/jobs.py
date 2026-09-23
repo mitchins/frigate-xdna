@@ -193,11 +193,12 @@ class JobManager:
         self.registry.set_failure(
             job_uuid, {"resumed_from": prev_uuid,
                        "history": list(prev.get("history", []))})
-        kwargs = dict(source_sha256="", compile_key=compile_key or "",
-                      duration_s=duration_s, succeed=succeed,
-                      fail_state=fail_state, device_required=device_required,
-                      device_held_by_worker=device_required,
-                      job_uuid=job_uuid)
+        kwargs = {"source_sha256": "", "compile_key": compile_key or "",
+                  "duration_s": duration_s, "succeed": succeed,
+                  "fail_state": fail_state,
+                  "device_required": device_required,
+                  "device_held_by_worker": device_required,
+                  "job_uuid": job_uuid}
         kwargs.update(extra or {})
         self._backends[job_uuid] = self.backend_factory(**kwargs)
         self.registry.set_ref_state(ref, "QUEUED")
@@ -252,11 +253,12 @@ class JobManager:
                 device_required: bool, **extra) -> dict:
         job_uuid = uuid.uuid4().hex
         self.registry.create_job(job_uuid, ref, compile_key, self.boot_token)
-        kwargs = dict(source_sha256="", compile_key=compile_key or "",
-                      duration_s=duration_s, succeed=succeed,
-                      fail_state=fail_state, device_required=device_required,
-                      device_held_by_worker=device_required,
-                      job_uuid=job_uuid)
+        kwargs = {"source_sha256": "", "compile_key": compile_key or "",
+                  "duration_s": duration_s, "succeed": succeed,
+                  "fail_state": fail_state,
+                  "device_required": device_required,
+                  "device_held_by_worker": device_required,
+                  "job_uuid": job_uuid}
         kwargs.update(extra or {})
         self._backends[job_uuid] = self.backend_factory(**kwargs)
         return self.registry.get_job(job_uuid)
@@ -305,19 +307,23 @@ class JobManager:
         assert job is not None
         if stage in TERMINAL_ERROR_STATES and not (
                 prev_stage == stage and job.get("failure")):
-            detail = ""
-            result = getattr(backend, "result", None)
-            if result is not None:
-                detail = getattr(result, "detail", "") or ""
-            elif hasattr(backend, "detail"):
-                detail = getattr(backend, "detail") or ""
-            job = self.record_terminal(job_uuid, stage,
-                                       job.get("error_code"), detail)
-            resumed = self._maybe_resume(
-                job["ref"], job["compile_key"], job, trigger="pump")
-            if resumed is not None:
-                return resumed
+            return self._finish_terminal(job_uuid, backend, job)
         return job
+
+    def _finish_terminal(self, job_uuid: str, backend, job: dict) -> dict:
+        """Record a fresh terminal outcome, then open a bounded retry
+        when eligible (otherwise the row stays for operator review)."""
+        detail = ""
+        result = getattr(backend, "result", None)
+        if result is not None:
+            detail = getattr(result, "detail", "") or ""
+        elif hasattr(backend, "detail"):
+            detail = getattr(backend, "detail") or ""
+        job = self.record_terminal(job_uuid, job["stage"],
+                                   job.get("error_code"), detail)
+        resumed = self._maybe_resume(
+            job["ref"], job["compile_key"], job, trigger="pump")
+        return resumed if resumed is not None else job
 
     def wait(self, job_uuid: str, timeout_s: float,
              step_s: float = 0.05) -> dict:
