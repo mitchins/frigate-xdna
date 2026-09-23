@@ -126,45 +126,43 @@ def memlock_adequate() -> bool:
     return soft == _resource.RLIM_INFINITY or soft >= MEMLOCK_NEED_BYTES
 
 
-def classify(stage: str, error_code: str | None,
-             detail: str = "") -> dict:
-    """Classify a terminal job outcome.
-
-    Returns {kind, retryable, auto, guidance} where kind is one of
-    transient/config_blocked/permanent/safety/unknown. `retryable`
-    admits an explicit acknowledged operator retry; `auto` admits an
-    automatic one (bounded, backoff). Unknown vendor crashes,
-    device faults and safety stages are never automatic.
-    """
-    code = error_code or stage
+def _classify_safety(stage: str, code: str) -> dict | None:
     if stage == "INTERRUPTED":
         return {"kind": "interrupted_safe", "retryable": True,
                 "auto": True,
                 "guidance": "Restart-interrupted idempotent work;"
                             " resumes automatically with a clean safety"
                             " state, else waits for operator review."}
-    if stage in ("QUARANTINED",) or code in ("QUARANTINED",
-                                             "SAFETY_INHIBITED",
-                                             "DEVICE_FAULT"):
+    if stage == "QUARANTINED" or code in ("QUARANTINED",
+                                          "SAFETY_INHIBITED",
+                                          "DEVICE_FAULT"):
         return {"kind": "safety", "retryable": False, "auto": False,
                 "guidance": "Safety inhibition: explicit operator review"
                             " required; recover refuses safety-class"
                             " inhibitions."}
+    return None
+
+
+def _classify_permanent(stage: str, code: str) -> dict | None:
     if stage == "RESOURCE_EXCEEDED" or code == "RESOURCE_EXCEEDED":
         return {"kind": "transient", "retryable": True, "auto": True,
                 "guidance": "Resource exhausted: free the constrained"
                             " resource, then recover explicitly or wait"
                             " for the bounded automatic retry."}
-    if stage in PERMANENT_STAGES or code in PERMANENT_CODES:
-        if stage == "VALIDATION_FAILED" or code == "VALIDATION_FAILED":
-            guidance = ("Validation failed: evidence preserved; artifact"
-                        " neither published nor activated. New source"
-                        " bytes start a new job; this row never retries.")
-        else:
-            guidance = ("Permanent failure: fix the input/configuration"
-                        " and submit new source; this row never retries.")
-        return {"kind": "permanent", "retryable": False, "auto": False,
-                "guidance": guidance}
+    if stage not in PERMANENT_STAGES and code not in PERMANENT_CODES:
+        return None
+    if stage == "VALIDATION_FAILED" or code == "VALIDATION_FAILED":
+        guidance = ("Validation failed: evidence preserved; artifact"
+                    " neither published nor activated. New source"
+                    " bytes start a new job; this row never retries.")
+    else:
+        guidance = ("Permanent failure: fix the input/configuration"
+                    " and submit new source; this row never retries.")
+    return {"kind": "permanent", "retryable": False, "auto": False,
+            "guidance": guidance}
+
+
+def _classify_evidence(stage: str, code: str, detail: str) -> dict | None:
     if _memlock_pattern(detail):
         if memlock_adequate():
             return {"kind": "unknown", "retryable": False, "auto": False,
@@ -179,7 +177,7 @@ def classify(stage: str, error_code: str | None,
                             " (examples/compose.yaml) and recreate the"
                             " container on the same /data; preparation"
                             " resumes automatically."}
-    if stage == "COMPILE_FAILED" and "timeout" in (detail or "").lower():
+    if stage == "COMPILE_FAILED" and "timeout" in detail.lower():
         return {"kind": "transient", "retryable": True, "auto": True,
                 "guidance": "Compile timeout: bounded automatic retry"
                             " with backoff."}
@@ -187,6 +185,25 @@ def classify(stage: str, error_code: str | None,
         return {"kind": "transient", "retryable": True, "auto": True,
                 "guidance": "Temporary acquisition failure: bounded"
                             " automatic retry with backoff."}
+    return None
+
+
+def classify(stage: str, error_code: str | None,
+             detail: str = "") -> dict:
+    """Classify a terminal job outcome.
+
+    Returns {kind, retryable, auto, guidance} where kind is one of
+    transient/config_blocked/permanent/safety/unknown. `retryable`
+    admits an explicit acknowledged operator retry; `auto` admits an
+    automatic one (bounded, backoff). Unknown vendor crashes,
+    device faults and safety stages are never automatic.
+    """
+    code = error_code or stage
+    for probe in (_classify_safety(stage, code),
+                  _classify_permanent(stage, code),
+                  _classify_evidence(stage, code, detail or "")):
+        if probe is not None:
+            return probe
     # A bare compile failure with no attributable evidence is not a
     # recognized temporary problem: never automatic, but an explicit
     # acknowledged operator retry may open one bounded cycle.

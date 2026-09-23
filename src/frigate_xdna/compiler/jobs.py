@@ -64,17 +64,12 @@ class JobManager:
                 self.registry.add_alias(existing["uuid"], ref)
                 return existing
             if existing and existing["stage"] in TERMINAL_ERROR_STATES:
-                full = self.registry.get_job(existing["uuid"])
-                resumed = self._maybe_resume(
-                    ref, compile_key, full,
+                return self._submit_terminal(
+                    ref, compile_key, existing,
                     duration_s=duration_s, succeed=succeed,
                     fail_state=fail_state,
                     device_required=device_required,
-                    extra={**(extra or {}), **kw},
-                    trigger="submit")
-                if resumed is not None:
-                    return resumed
-                return existing
+                    extra={**(extra or {}), **kw})
             if existing and existing["stage"] == "PREPARED":
                 # Reusable only with a committed artifact behind it;
                 # otherwise the key genuinely needs work (recovery path).
@@ -101,6 +96,22 @@ class JobManager:
     def backend_for(self, job_uuid: str):
         """Backend job object (for result retrieval); None if unknown."""
         return self._backends.get(job_uuid)
+
+    def _submit_terminal(self, ref: str, compile_key: str | None,
+                         existing: dict, duration_s: float = 0.0,
+                         succeed: bool = True,
+                         fail_state: str = "COMPILE_FAILED",
+                         device_required: bool = False,
+                         extra: dict | None = None) -> dict:
+        """Submit against a terminal row: resume when eligible,
+        otherwise return the row unchanged."""
+        full = self.registry.get_job(existing["uuid"])
+        resumed = self._maybe_resume(
+            ref, compile_key, full,
+            duration_s=duration_s, succeed=succeed,
+            fail_state=fail_state, device_required=device_required,
+            extra=extra, trigger="submit")
+        return resumed if resumed is not None else existing
 
     def retry_due(self, now: float | None = None, **kw) -> list[dict]:
         """Open bounded attempts for eligible terminal rows whose time
@@ -161,8 +172,7 @@ class JobManager:
         # Consume this terminal row: it must never spawn a second
         # resume (its backoff stays expired; without this every pump
         # would duplicate the attempt).
-        consumed = dict(record)
-        consumed["resumed_to"] = new["uuid"]
+        consumed = {**record, "resumed_to": new["uuid"]}
         self.registry.set_failure(failed["uuid"], consumed)
         return new
 
@@ -201,6 +211,23 @@ class JobManager:
         assert job is not None
         return job
 
+    def _requeue_prev(self, full: dict) -> dict | None:
+        """Previous-record baseline for an operator cycle: None when
+        the class refuses. Attempts reset; history carries over."""
+        record = full.get("failure")
+        kind = (record or {}).get("kind", "unknown")
+        if kind in ("safety", "permanent"):
+            return None
+        if kind == "unknown" and record is None:
+            # Legacy row without evidence: acknowledged operator risk,
+            # one bounded cycle, attempts restart.
+            return {"attempts": 0, "history": []}
+        if not (record or {}).get("retryable", False):
+            return None
+        prev = {**(record or {})}
+        prev["attempts"] = 0
+        return prev
+
     def requeue(self, ref: str, compile_key: str | None) -> dict | None:
         """Explicit acknowledged operator retry (recover path): start
         one new bounded cycle for a retryable terminal row. Safety and
@@ -211,19 +238,9 @@ class JobManager:
             return None
         full = self.registry.get_job(existing["uuid"])
         assert full is not None
-        record = full.get("failure")
-        kind = (record or {}).get("kind", "unknown")
-        if kind in ("safety", "permanent"):
+        prev = self._requeue_prev(full)
+        if prev is None:
             return None
-        if kind == "unknown" and record is None:
-            # Legacy row without evidence: acknowledged operator risk,
-            # one bounded cycle, attempts restart.
-            prev: dict = {"attempts": 0, "history": []}
-        elif not (record or {}).get("retryable", False):
-            return None
-        else:
-            prev = dict(record or {})
-            prev["attempts"] = 0
         if compile_key and self.registry.live_job_for_key(compile_key):
             return None
         return self._new_attempt(ref, compile_key, prev,

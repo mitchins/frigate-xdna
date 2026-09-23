@@ -45,6 +45,28 @@ def parse_progress(progress: str | None) -> tuple[float | None, str | None]:
     return elapsed, phase
 
 
+def _ranked_state(stored: str, verified: bool,
+                  live_worker_key: str | None, key: str | None) -> str:
+    if live_worker_key and key == live_worker_key:
+        return "ACTIVE"
+    if stored == "PREPARED" and verified:
+        return "VERIFIED"
+    return stored
+
+
+def _failure_view(failure) -> tuple[dict | None, bool]:
+    """(display record, retryable) for a job failure value. Lineage
+    markers on live resumed rows (no phase) display nothing."""
+    if not isinstance(failure, dict) or "phase" not in failure:
+        return None, False
+    return {"phase": failure.get("phase"), "code": failure.get("code"),
+            "reason": failure.get("reason"),
+            "kind": failure.get("kind"),
+            "guidance": failure.get("guidance"),
+            "attempts": failure.get("attempts", 0)}, \
+        bool(failure.get("retryable"))
+
+
 def project_ref(registry, ref: str,
                 live_worker_key: str | None) -> dict:
     """Projected view for one ref: {state, phase, elapsed_s, verified,
@@ -60,29 +82,14 @@ def project_ref(registry, ref: str,
     elapsed, sub = parse_progress((job or {}).get("progress"))
     phase = sub or ((job or {}).get("stage")
                     if job and job["stage"] not in ("PREPARED",) else None)
-    state = stored
-    if live_worker_key and key == live_worker_key:
-        state = "ACTIVE"
-    elif state == "PREPARED" and verified:
-        state = "VERIFIED"
-    failure = (job or {}).get("failure")
-    if failure is not None and "phase" not in failure:
-        # Lineage marker on a live resumed row, not a failure.
-        failure = None
-    view = {"ref": ref, "source_sha256": source, "state": state,
+    failure, retryable = _failure_view((job or {}).get("failure"))
+    return {"ref": ref, "source_sha256": source,
+            "state": _ranked_state(stored, verified, live_worker_key,
+                                   key),
             "phase": phase, "elapsed_s": elapsed, "verified": verified,
             "error_code": error, "compile_key": key,
             "attempts": (job or {}).get("attempt", 0) or 0,
-            "retryable": bool(failure) and bool(failure.get("retryable")),
-            "failure": None}
-    if failure:
-        view["failure"] = {
-            "phase": failure.get("phase"), "code": failure.get("code"),
-            "reason": failure.get("reason"),
-            "kind": failure.get("kind"),
-            "guidance": failure.get("guidance"),
-            "attempts": failure.get("attempts", 0)}
-    return view
+            "retryable": retryable, "failure": failure}
 
 
 def satisfies(actual: str, want: str) -> bool:
