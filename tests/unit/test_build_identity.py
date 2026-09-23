@@ -98,8 +98,9 @@ class TestIdentityRead(unittest.TestCase):
         self.assertEqual(ident["channel"], "release-candidate")
 
     def test_malformed_files_fall_back_without_raising(self):
-        bad = ["not json{",
+        bad = ["not json{", "[1, 2]",
                {"version": "0.1.1"},
+               {"version": 5, "revision": FAKE_SHA},
                {"version": "0.1.1", "revision": "xyz"},
                {"version": "0.1.1", "revision": FAKE_SHA,
                 "extra": [1, 2]}]

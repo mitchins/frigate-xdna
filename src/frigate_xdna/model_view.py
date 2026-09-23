@@ -35,10 +35,7 @@ def parse_progress(progress: str | None) -> tuple[float | None, str | None]:
     elapsed, phase = None, None
     m = _ELAPSED_RE.search(progress)
     if m:
-        try:
-            elapsed = float(m.group(1))
-        except ValueError:
-            elapsed = None
+        elapsed = float(m.group(1))
     m = _PHASE_RE.search(progress)
     if m:
         phase = m.group(1)
