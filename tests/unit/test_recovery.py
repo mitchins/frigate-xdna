@@ -69,10 +69,15 @@ def expire_all_eligible(sup, ref):
 
 class TestClassify(unittest.TestCase):
     def test_kinds(self):
-        self.assertEqual(
-            retry_policy.classify("COMPILE_FAILED", "COMPILE_FAILED",
-                                  FLEXMLRT_DETAIL)["kind"],
-            "unknown")  # adequate memlock here: no attribution
+        # Host memlock varies (stock CI runners are constrained), so
+        # pin the allowance: adequate -> unattributable, constrained
+        # -> config-blocked. Never depend on the test machine.
+        with mock.patch.object(retry_policy, "memlock_adequate",
+                               return_value=True):
+            self.assertEqual(
+                retry_policy.classify("COMPILE_FAILED", "COMPILE_FAILED",
+                                      FLEXMLRT_DETAIL)["kind"],
+                "unknown")
         with mock.patch.object(retry_policy, "memlock_adequate",
                                return_value=False):
             c = retry_policy.classify("COMPILE_FAILED", "COMPILE_FAILED",
