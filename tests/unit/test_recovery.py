@@ -6,6 +6,7 @@ unsafe/safety/permanent no-retry, explicit recover semantics, legacy
 migration honesty, cache preservation, and attempt visibility — all
 hardware-free with scripted backends.
 """
+import hashlib
 import json
 import os
 import sqlite3
@@ -604,7 +605,53 @@ class TestReviewFindings(unittest.TestCase):
                     "plus://x", "ck-missing",
                     sup.registry.get_job("t-uuid"), trigger="test")
                 self.assertIsNone(out)
+                # The terminal evidence remains for operator review,
+                # and the refusal is stamped so retries stop burning.
+                kept = sup.registry.get_job("t-uuid")
+                self.assertEqual(kept["stage"], "COMPILE_FAILED")
                 self.assertEqual(len(job_rows(sup, "plus://x")), 1)
+                self.assertIn("resume_refused",
+                              kept["failure"])
+            finally:
+                sup.stop()
+
+    def test_resume_source_prefers_ref_over_artifact(self):
+        """A failed first attempt has no artifact row yet; the resume
+        source resolves from the ref's ingested bytes."""
+        from frigate_xdna.compiler.launcher import CompilerPrefixes
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d)
+            recipe = os.path.join(d, "recipe")
+            os.makedirs(recipe, exist_ok=True)
+            prefixes = CompilerPrefixes(
+                quant_python="q", compile_python="c", compile_lib="l",
+                xrt_lib="x", xrt_root="r", recipe_dir=recipe,
+                calib_dir="cal", vaiml_config="v")
+            sup = Supervisor(cfg, compiler_prefixes=prefixes)
+            try:
+                data = make_raw_yolo(os.path.join(d, "s.onnx"), res=320,
+                                     classes=4, seed=77)
+                sha = hashlib.sha256(data).hexdigest()
+                sup.registry.upsert_ref("plus://src", "plus", "src")
+                sup.registry.add_source(sha, len(data),
+                                        f"sources/{sha}/model.onnx",
+                                        "plus")
+                sup.registry.set_ref_source("plus://src", sha, "md",
+                                            "QUEUED")
+                src_dir = os.path.join(d, "sources", sha)
+                os.makedirs(src_dir, exist_ok=True)
+                with open(os.path.join(src_dir, "model.onnx"),
+                          "wb") as f:
+                    f.write(data)
+                sup.registry.execute(
+                    "INSERT INTO jobs(uuid, ref, compile_key, stage,"
+                    " attempt, created_at, updated_at) VALUES"
+                    " (?,?,?,?,?,?,?)",
+                    ("src-job", "plus://src", "ck-src", "COMPILE_FAILED",
+                     1, time.time(), time.time()))
+                job = sup._make_backend_job(compile_key="ck-src")
+                self.assertTrue(job._source_path.endswith("model.onnx"))
+                self.assertTrue(os.path.isfile(job._source_path))
             finally:
                 sup.stop()
 

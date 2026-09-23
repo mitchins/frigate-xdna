@@ -266,13 +266,25 @@ class Supervisor:
                                              attempt or 1))
 
     def _resolve_resume_source(self, compile_key: str) -> str:
-        """Source bytes path for a resumed real compile, resolved from
-        committed rows (artifact -> source -> rel_path). Raises when
-        the bytes are gone: the key stays recompilable by explicit
-        re-submit, but a resume must never start sourceless."""
-        art = self.registry.get_artifact(compile_key)
-        src = self.registry.get_source(
-            art["source_sha256"]) if art else None
+        """Source bytes path for a resumed real compile.
+
+        The ref's recorded source comes first: a failed first attempt
+        has no committed artifact row yet, but its source bytes are
+        already ingested. The artifact row is only a fallback. Raises
+        when the bytes are gone: the key stays recompilable by
+        explicit re-submit, but a resume must never start sourceless.
+        """
+        sha = None
+        row = self.registry.query(
+            "SELECT ref FROM jobs WHERE compile_key=?"
+            " ORDER BY updated_at DESC LIMIT 1", (compile_key,))
+        if row:
+            rec = self.registry.get_ref(row[0][0])
+            sha = (rec or {}).get("source_sha256") or None
+        if sha is None:
+            art = self.registry.get_artifact(compile_key)
+            sha = art["source_sha256"] if art else None
+        src = self.registry.get_source(sha) if sha else None
         if src is None:
             raise FxdnaError(CACHE_CORRUPT, "CACHE_CORRUPT",
                              f"source bytes missing for resumed compile"
@@ -1351,23 +1363,27 @@ class Supervisor:
                                 f" {parsed['ref']}."}
             else:
                 cleared = False
-        requeued = self._requeue_for_ref(parsed["ref"])
-        if cleared:
-            return {"ref": parsed["ref"], "cleared": True,
-                    "requeued": requeued is not None}
-        if requeued is not None:
-            return {"ref": parsed["ref"], "cleared": False,
+        row = self._terminal_row_for_ref(parsed["ref"])
+        if row is None:
+            return {"ref": parsed["ref"], "cleared": cleared,
+                    "requeued": False,
+                    "note": "no retryable terminal job for this ref"
+                            if not cleared else
+                            "inhibition cleared; nothing to requeue"}
+        new, reason = self.jobs.requeue(parsed["ref"],
+                                          row["compile_key"])
+        if new is not None:
+            return {"ref": parsed["ref"], "cleared": cleared,
                     "requeued": True,
                     "note": "new bounded attempt opened"}
-        return {"ref": parsed["ref"], "cleared": False,
-                "requeued": False,
-                "note": "no inhibition recorded for this ref"}
+        return {"ref": parsed["ref"], "cleared": cleared,
+                "requeued": False, "note": reason or
+                "requeue refused"}
 
-    def _requeue_for_ref(self, ref: str) -> dict | None:
-        """Open one new bounded cycle for the ref's retryable terminal
-        row (or acknowledged unknown legacy row)."""
+    def _terminal_row_for_ref(self, ref: str) -> dict | None:
+        """Newest terminal row reachable from a ref (or its aliases)."""
         row = self.registry.query(
-            "SELECT compile_key FROM jobs WHERE stage IN"
+            "SELECT uuid FROM jobs WHERE stage IN"
             " ('COMPILE_FAILED','RESOURCE_EXCEEDED','VALIDATION_FAILED',"
             " 'UNSUPPORTED_CONTRACT','QUARANTINED','INTERRUPTED')"
             " AND (ref=? OR uuid IN (SELECT job_uuid FROM job_aliases"
@@ -1375,7 +1391,7 @@ class Supervisor:
             (ref, ref))
         if not row:
             return None
-        return self.jobs.requeue(ref, row[0][0])
+        return self.registry.get_job(row[0][0])
 
     def prune(self, apply: bool = False,
               max_bytes: int | None = None) -> dict:

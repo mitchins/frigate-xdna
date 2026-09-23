@@ -210,12 +210,21 @@ class JobManager:
         kwargs.update(extra or {})
         try:
             self._backends[job_uuid] = self.backend_factory(**kwargs)
-        except Exception:
+        except Exception as e:
             # Backend construction refused (e.g. resumed real compile
             # whose source bytes are gone): roll the row back out so
-            # the key stays recompilable by explicit re-submit.
+            # the key stays recompilable by explicit re-submit, and
+            # stamp the source row so automatic retries stop burning
+            # constructions against the same refusal.
             self.registry.execute("DELETE FROM jobs WHERE uuid=?",
                                   (job_uuid,))
+            if prev_uuid is not None:
+                prior = self.registry.get_job(prev_uuid)
+                if prior is not None:
+                    self.registry.set_failure(
+                        prev_uuid,
+                        {**(prior.get("failure") or {}),
+                         "resume_refused": str(e)[:200]})
             return None
         self.registry.set_ref_state(ref, "QUEUED")
         if self.listener is not None:
@@ -245,33 +254,45 @@ class JobManager:
         prev["attempts"] = 0
         return prev
 
-    def requeue(self, ref: str, compile_key: str | None) -> dict | None:
-        """Explicit acknowledged operator retry (recover path): start
-        one new bounded cycle for a retryable terminal row. Safety and
-        permanent classes refuse; attempts reset for the new cycle."""
+    def requeue(self, ref: str, compile_key: str | None) -> tuple:
+        """Explicit acknowledged operator retry (recover path).
+
+        Returns (new_row, None) with attempts reset for the new
+        cycle, or (None, reason) spelling out the refusal (safety /
+        permanent class, active inhibition, live duplicate,
+        unresolvable resume source). Callers surface the reason;
+        refusals are never silent.
+        """
         with self.registry.transaction():
             existing = self.registry.find_job(ref, compile_key)
             if existing is None or existing["stage"] not in \
                     TERMINAL_ERROR_STATES:
-                return None
-            if self.registry.get_state("inhibition") is not None:
+                return None, "no retryable terminal job for this ref"
+            inh = self.registry.get_state("inhibition")
+            if inh is not None:
                 # Safety is device-global: recover clears a same-ref
                 # inhibition before reaching here, so anything still
                 # present (any ref, any class) blocks new compiles.
-                return None
+                return None, (f"inhibition active for {inh.get('ref')}"
+                              f" ({inh.get('reason')}); resolve it first")
             full = self.registry.get_job(existing["uuid"])
             assert full is not None
             prev = self._requeue_prev(full)
             if prev is None:
-                return None
+                record = full.get("failure") or {}
+                return None, (f"{record.get('kind', 'unknown')} failure"
+                               f" ({record.get('code', '?')}) never"
+                               " retries; see"
+                               f" `fxdna status {ref}` for guidance")
             if compile_key and self.registry.live_job_for_key(
                     compile_key):
-                return None
+                return None, "a live attempt already exists"
             new = self._new_attempt(ref, compile_key, prev,
                                     "operator recover", "recover",
                                     prev_uuid=existing["uuid"])
             if new is None:
-                return None
+                return None, ("resume source unresolvable; re-submit"
+                               " source explicitly")
             # Consume the source row like automatic resumes do: after
             # the new cycle goes terminal, the old row must not open a
             # second chain around the attempt bound.
@@ -279,7 +300,7 @@ class JobManager:
                 existing["uuid"],
                 {**(full.get("failure") or {}),
                  "resumed_to": new["uuid"]})
-            return new
+            return new, None
 
     def _create(self, ref: str, compile_key: str | None,
                 duration_s: float, succeed: bool, fail_state: str,

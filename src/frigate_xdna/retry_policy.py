@@ -244,6 +244,8 @@ def auto_eligible(record: dict | None, now: float) -> tuple[bool, str]:
         return False, "legacy failure without evidence"
     if record.get("resumed_to"):
         return False, "already resumed"
+    if record.get("resume_refused"):
+        return False, f"resume refused: {record['resume_refused']}"
     if "phase" not in record:
         return False, "not a terminal failure"
     kind = record.get("kind", "unknown")
