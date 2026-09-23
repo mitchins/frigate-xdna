@@ -16,7 +16,8 @@ If your machine has an otherwise-idle NPU, this puts it to work on object detect
 ```text
 Configure image, device group, model, and credential
 → deploy the sidecar
-→ confirm the model is prepared with `fxdna status` / `fxdna wait`
+→ see `Model prepared; waiting for Frigate at …` in normal logs
+  (or confirm with `fxdna status` / `fxdna wait`)
 → configure the matching Frigate endpoint and model
 → detection starts
 ```
