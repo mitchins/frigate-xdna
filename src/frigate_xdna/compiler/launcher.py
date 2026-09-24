@@ -54,7 +54,7 @@ def sample_vm_peak(pid: int, stop: threading.Event,
 # Secret names that must never appear in a child environment, even if the
 # manager process was started with them set.
 FORBIDDEN_ENV_KEYS = frozenset({
-    "PLUS_API_KEY", "PLUS_API_KEY_FILE", "GH_PAT", "GH_TOKEN",
+    "PLUS_API_KEY", "GH_PAT", "GH_TOKEN",
     "AUTHORIZATION", "BEARER_TOKEN",
 })
 

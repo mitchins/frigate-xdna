@@ -20,10 +20,17 @@ class TestConfig(unittest.TestCase):
         c = load_config({"FXDNA_MODELS": "plus://A, plus://B\nplus://C ,, "})
         self.assertEqual(c.models, ("plus://A", "plus://B", "plus://C"))
 
-    def test_secret_sources_mutually_exclusive(self):
-        with self.assertRaises(FxdnaError) as ctx:
-            load_config({"PLUS_API_KEY": "x", "PLUS_API_KEY_FILE": "/run/k"})
-        self.assertEqual(ctx.exception.exit_code, 2)
+    def test_plus_key_from_environment(self):
+        c = load_config({"PLUS_API_KEY": "x"})
+        self.assertEqual(c.plus_api_key, "x")
+        self.assertTrue(c.redacted()["plus_api_key_set"])
+
+    def test_unknown_key_file_variable_ignored(self):
+        # No file-based credential exists: a stale _FILE variable
+        # must not become a second credential source.
+        c = load_config({"PLUS_API_KEY": "x",
+                         "PLUS_API_KEY_FILE": "/run/k"})
+        self.assertEqual(c.plus_api_key, "x")
 
     def test_secret_never_in_redacted_view(self):
         c = load_config({"PLUS_API_KEY": "supersecret"})

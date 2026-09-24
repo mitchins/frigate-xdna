@@ -207,13 +207,14 @@ class TestNetworkingVariants(unittest.TestCase):
         self.assertIn("127.0.0.1", text)
         self.assertIn("network_mode", text)  # host-mode caveat documented
 
-    def test_plus_overlay_keeps_file_credential(self):
+    def test_plus_overlay_passes_key_through_environment(self):
         doc = load_example("compose.plus.yaml")
         env = doc["services"]["xdna"]["environment"]
-        self.assertEqual(env["PLUS_API_KEY_FILE"],
-                         "/run/secrets/PLUS_API_KEY")
-        self.assertIn("PLUS_API_KEY",
-                      doc["services"]["xdna"]["secrets"])
+        self.assertIn("PLUS_API_KEY", env)
+        self.assertIn(":?", str(env["PLUS_API_KEY"]))
+        self.assertNotIn("secrets", doc["services"]["xdna"])
+        text = read_example("compose.plus.yaml")
+        self.assertNotIn("PLUS_API_KEY_FILE", text)
 
 
 class TestReadmeAgreesWithFiles(unittest.TestCase):
@@ -240,11 +241,12 @@ class TestReadmeAgreesWithFiles(unittest.TestCase):
         self.assertIn("tcp://xdna:5555", self.text)
         self.assertIn("tcp://127.0.0.1:5555", self.text)
 
-    def test_credential_alternatives_and_file_rules(self):
+    def test_single_env_credential_route(self):
         self.assertIn("PLUS_API_KEY", self.text)
-        self.assertIn("PLUS_API_KEY_FILE", self.text)
-        self.assertIn("10001", self.text)
-        self.assertIn("0600", self.text)
+        self.assertNotIn("PLUS_API_KEY_FILE", self.text)
+        self.assertNotIn("0600", self.text)
+        # The key is never logged and stays out of status output.
+        self.assertIn("never logged", self.text)
 
     def test_no_promotional_or_invented_claims(self):
         lowered = self.text.lower()

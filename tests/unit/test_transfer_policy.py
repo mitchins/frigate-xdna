@@ -39,12 +39,13 @@ class TestComposeExposure(unittest.TestCase):
         body = self._read("compose.host-port.yaml")
         self.assertIn("${FXDNA_BIND_IP:-127.0.0.1}:5555:5555", body)
 
-    def test_plus_secret_lives_only_in_overlay(self):
+    def test_plus_key_lives_only_in_overlay(self):
         base = self._read("compose.yaml")
         overlay = self._read("compose.plus.yaml")
         self.assertNotIn("PLUS_API_KEY", base)
-        self.assertIn("PLUS_API_KEY_FILE: /run/secrets/PLUS_API_KEY",
-                      overlay)
+        self.assertIn("PLUS_API_KEY", overlay)
+        self.assertNotIn("PLUS_API_KEY_FILE", overlay)
+        self.assertNotIn("secrets:", overlay)
 
 
 if __name__ == "__main__":

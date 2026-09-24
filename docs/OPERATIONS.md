@@ -8,7 +8,7 @@ extend them.
 
 On the Docker host, confirm a supported accelerator node exists. Container images cannot supply the host kernel/firmware. Obtain its numeric group using `stat -c '%g' /dev/accel/accel0`; put that value in the Compose environment as `NPU_GID`.
 
-Copy the example Compose and `.env.example`, choose an actual built/released image and set selected model references. For Plus, provide the API key in `secrets/PLUS_API_KEY`; keep the file private. Frigate itself retains its normal Plus credential too; this does not require sharing Frigate's entire config directory with the sidecar.
+Copy the example Compose and `.env.example`, choose an actual built/released image and set selected model references. For Plus, set `PLUS_API_KEY` to the same key already configured for Frigate. Frigate itself retains its normal Plus credential too; this does not require sharing Frigate's entire config directory with the sidecar.
 
 ```
 docker compose up -d xdna

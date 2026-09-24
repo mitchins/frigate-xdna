@@ -390,21 +390,6 @@ class TestPreflight(unittest.TestCase):
             check = deploy_checks.check_memlock()
         self.assertTrue(check["ok"])
 
-    def test_key_readability_bits(self):
-        from frigate_xdna.deploy_checks import _uid_can_read
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "key")
-            with open(path, "w") as f:
-                f.write("k")
-            os.chmod(path, 0o600)
-            # Owner reads; another UID with no group/other bits fails —
-            # the documented root-owned-0600 rule for UID 10001.
-            self.assertTrue(_uid_can_read(path, os.geteuid(),
-                                          os.getegid(), ()))
-            self.assertFalse(_uid_can_read(path, 10001, 10001, ()))
-            os.chmod(path, 0o644)
-            self.assertTrue(_uid_can_read(path, 10001, 10001, ()))
-
     def test_missing_device_fails(self):
         from frigate_xdna import deploy_checks
         check = deploy_checks.check_device("/nonexistent-accel-xyz")
@@ -418,6 +403,22 @@ class TestPreflight(unittest.TestCase):
         check = deploy_checks.check_plus_credential(cfg)
         self.assertFalse(check["ok"])
         self.assertEqual(check["code"], 4)
+
+    def test_plus_env_credential_passes(self):
+        from frigate_xdna import deploy_checks
+        cfg = Config(data_dir="/tmp", models=("plus://abc",),
+                     plus_api_key="placeholder-key")
+        check = deploy_checks.check_plus_credential(cfg)
+        self.assertTrue(check["ok"])
+        # ...including for refs requested on the command line.
+        cfg = Config(data_dir="/tmp")
+        check = deploy_checks.check_plus_credential(
+            cfg, extra_refs=("plus://abc",))
+        self.assertFalse(check["ok"])
+        cfg = Config(data_dir="/tmp", plus_api_key="placeholder-key")
+        check = deploy_checks.check_plus_credential(
+            cfg, extra_refs=("plus://abc",))
+        self.assertTrue(check["ok"])
 
     def test_config_error_not_masked_by_environment(self):
         """Constrained runners (e.g. stock CI memlock) must still
@@ -445,7 +446,7 @@ class TestPreflight(unittest.TestCase):
                     rc = cli_mod.main(["doctor"])
         self.assertEqual(rc, SUCCESS)
         names = [c["name"] for c in json.loads(buf.getvalue())["checks"]]
-        for want in ("memlock", "data-dir", "device", "key-file",
+        for want in ("memlock", "data-dir", "device",
                      "plus-credential", "models-configured"):
             self.assertIn(want, names)
 
