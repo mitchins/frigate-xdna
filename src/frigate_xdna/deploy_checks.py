@@ -19,27 +19,6 @@ MEMLOCK_NEED_BYTES = 64 * 1024 * 1024
 DATA_FREE_MIN_BYTES = 512 * 1024 * 1024
 
 
-def _uid_can_read(path: str, uid: int, gid: int, groups: tuple) -> bool:
-    """Permission-bit readability for one UID (no root bypass).
-
-    os.access answers for the CALLER; in tests running as root that
-    would bless a root-owned 0600 file the UID-10001 service user
-    cannot read. Evaluating the bits explicitly keeps the documented
-    rule ("a root-owned 0600 file is not readable by UID 10001")
-    honest everywhere.
-    """
-    try:
-        st = os.stat(path)
-    except OSError:
-        return False
-    mode = st.st_mode
-    if st.st_uid == uid:
-        return bool(mode & 0o400)
-    if st.st_gid == gid or st.st_gid in (groups or ()):
-        return bool(mode & 0o040)
-    return bool(mode & 0o004)
-
-
 def check_memlock() -> dict:
     """Locked-memory allowance must cover the 64 MiB FlexMLRT mapping."""
     try:
@@ -109,32 +88,8 @@ def check_device(device: str) -> dict:
             "error_code": "DEVICE_UNAVAILABLE"}
 
 
-def check_key_file(key_file: str | None) -> dict:
-    if not key_file:
-        return {"name": "key-file", "ok": True,
-                "message": "no key file configured", "code": 0}
-    if not os.path.isfile(key_file):
-        return {"name": "key-file", "ok": False,
-                "message": f"PLUS_API_KEY_FILE={key_file} not found:"
-                           " the bind source must be an absolute path on"
-                           " the Docker host.",
-                "code": 2, "error_code": "INVALID_CONFIG"}
-    if not _uid_can_read(key_file, os.geteuid(), os.getegid(),
-                         tuple(os.getgroups())):
-        return {"name": "key-file", "ok": False,
-                "message": f"PLUS_API_KEY_FILE={key_file} not readable"
-                           " by this UID: the container runs as UID 10001"
-                           " and a root-owned 0600 file is not readable"
-                           " by it. Use the secrets overlay or adjust"
-                           " ownership/permissions.",
-                "code": 2, "error_code": "INVALID_CONFIG"}
-    return {"name": "key-file", "ok": True,
-            "message": f"{key_file} readable", "code": 0,
-            "error_code": "INVALID_CONFIG"}
-
-
 def check_plus_credential(config, extra_refs: tuple = ()) -> dict:
-    """Plus refs without any credential fail acquisition; say so now.
+    """Plus refs without PLUS_API_KEY fail acquisition; say so now.
 
     extra_refs covers refs requested on the command line (e.g.
     `prepare plus://ID`), which are not in FXDNA_MODELS yet fail the
@@ -149,11 +104,10 @@ def check_plus_credential(config, extra_refs: tuple = ()) -> dict:
                 break
         except Exception:
             continue
-    if wants_plus and not (config.plus_api_key or
-                           config.plus_api_key_file):
+    if wants_plus and not config.plus_api_key:
         return {"name": "plus-credential", "ok": False,
-                "message": "Plus models configured but neither PLUS_API_KEY"
-                           " nor PLUS_API_KEY_FILE is set.",
+                "message": "Plus models configured but PLUS_API_KEY is"
+                           " not set.",
                 "code": 4, "error_code": "ACQUISITION_FAILED"}
     return {"name": "plus-credential", "ok": True,
             "message": "Plus credential present or not needed", "code": 0,
@@ -179,8 +133,7 @@ def run_preflight(config, create_data_dir: bool = True,
     device), so a fixable config mistake is never masked by the
     runner's own limits. `doctor` passes create_data_dir=False to
     stay side-effect free."""
-    return [check_key_file(config.plus_api_key_file),
-            check_plus_credential(config, extra_refs),
+    return [check_plus_credential(config, extra_refs),
             check_memlock(),
             check_data_dir(config.data_dir, create=create_data_dir),
             check_device(config.device),

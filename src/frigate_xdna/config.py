@@ -21,8 +21,9 @@ VALID_LOG_LEVELS = ("debug", "info", "warning", "error")
 @dataclass(frozen=True)
 class Config:
     models: tuple[str, ...] = ()
-    plus_api_key: str | None = None  # inline only; never logged
-    plus_api_key_file: str | None = None
+    # The sole Plus credential input (container environment). Never
+    # logged, never baked into images, never passed to child envs.
+    plus_api_key: str | None = None
     data_dir: str = DEFAULT_DATA_DIR_IMAGE
     endpoint: str = DEFAULT_ENDPOINT_IMAGE
     device: str = DEFAULT_DEVICE
@@ -35,7 +36,6 @@ class Config:
         return {
             "models": list(self.models),
             "plus_api_key_set": self.plus_api_key is not None,
-            "plus_api_key_file": self.plus_api_key_file,
             "data_dir": self.data_dir,
             "endpoint": self.endpoint,
             "device": self.device,
@@ -77,11 +77,6 @@ def load_config(env: dict[str, str] | None = None) -> Config:
     """Build validated Config from environment mapping (os.environ default)."""
     env = os.environ if env is None else env
     key = env.get("PLUS_API_KEY")
-    key_file = env.get("PLUS_API_KEY_FILE")
-    if key and key_file:
-        raise FxdnaError(INVALID_ARGS, "INVALID_CONFIG",
-                         "PLUS_API_KEY and PLUS_API_KEY_FILE are mutually "
-                         "exclusive; set exactly one")
     log_level = env.get("FXDNA_LOG_LEVEL", DEFAULT_LOG_LEVEL).strip().lower()
     if log_level not in VALID_LOG_LEVELS:
         raise FxdnaError(INVALID_ARGS, "INVALID_CONFIG",
@@ -93,7 +88,6 @@ def load_config(env: dict[str, str] | None = None) -> Config:
     return Config(
         models=_split_models(env.get("FXDNA_MODELS", "")),
         plus_api_key=key,
-        plus_api_key_file=key_file,
         data_dir=env.get("FXDNA_DATA_DIR", DEFAULT_DATA_DIR_IMAGE).strip(),
         endpoint=endpoint,
         device=env.get("FXDNA_DEVICE", DEFAULT_DEVICE).strip(),

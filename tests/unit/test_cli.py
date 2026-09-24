@@ -112,19 +112,12 @@ class TestCli(unittest.TestCase):
         self.assertEqual(rc, 4)
         self.assertIn("ACQUISITION_FAILED", err)
 
-    def test_config_error_exit_code(self):
-        old = os.environ.get("PLUS_API_KEY"), os.environ.get("PLUS_API_KEY_FILE")
-        os.environ["PLUS_API_KEY"] = "a"
-        os.environ["PLUS_API_KEY_FILE"] = "b"
-        try:
-            rc, _, _ = run_cli(["status"])
-        finally:
-            for k, v in (("PLUS_API_KEY", old[0]), ("PLUS_API_KEY_FILE", old[1])):
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
-        self.assertEqual(rc, 2)
+    def test_stale_key_file_variable_ignored(self):
+        # A stale PLUS_API_KEY_FILE must not error and must not
+        # become a credential: the environment key stays sole input.
+        rc, _, _ = run_cli(["status"], env_extra={
+            "PLUS_API_KEY": "a", "PLUS_API_KEY_FILE": "b"})
+        self.assertEqual(rc, SUCCESS)
 
 
 if __name__ == "__main__":

@@ -74,13 +74,9 @@ def boot_token() -> str:
 
 
 def _read_secret(config: Config) -> str | None:
-    if config.plus_api_key_file:
-        try:
-            with open(config.plus_api_key_file) as f:
-                return f.read().strip()
-        except OSError:
-            raise FxdnaError(4, "ACQUISITION_FAILED",
-                             "cannot read PLUS_API_KEY_FILE")
+    # PLUS_API_KEY (container environment) is the sole credential
+    # input. It is never logged, never baked into images, and never
+    # forwarded to compiler/native child environments.
     return config.plus_api_key
 
 

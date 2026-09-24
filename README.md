@@ -91,8 +91,15 @@ Deploy with stock Frigate on the same Docker network:
 ```sh
 NPU_GID=$(stat -c %g /dev/accel/accel0) \
 FXDNA_MODELS="plus://<model-id>" \
+PLUS_API_KEY="<your-frigate-plus-key>" \
 docker compose -f examples/compose.yaml -f examples/compose.plus.yaml up -d
 ```
+
+Reuse the Plus key already configured for Frigate itself — the
+overlay passes it through the container environment (it refuses to
+start without it). The key is never logged, never appears in status
+or diagnostic output, and never reaches compiler or inference child
+processes.
 
 `NPU_GID` is the numeric group owning `/dev/accel/accel0` on the
 Docker host. `FXDNA_MODELS` is required (the Compose file refuses to
@@ -124,33 +131,8 @@ these stack environment variables:
 | `FXDNA_IMAGE` | `ghcr.io/mitchins/frigate-xdna:0.1.0-rc.3` (or newer) | no |
 | `FXDNA_MODELS` | `plus://<model-id>` (or a `/models/...` path) | yes, for Plus models |
 | `NPU_GID` | numeric group of `/dev/accel/accel0` | no |
-| `PLUS_API_KEY` | raw key value only (Plus setups without a key file) | no |
+| `PLUS_API_KEY` | the same raw key value already configured for Frigate (no `plus://`) | no |
 | `FXDNA_BIND_IP` | only for host-networked Frigate (default `127.0.0.1`) | no |
-
-Use **either** `PLUS_API_KEY` **or** `PLUS_API_KEY_FILE` — never
-both at once (the sidecar refuses to start with both set).
-
-### Plus key file
-
-The documented overlay (`examples/compose.plus.yaml`) mounts the key
-through Docker secrets (container path `PLUS_API_KEY_FILE` =
-`/run/secrets/PLUS_API_KEY`):
-
-```sh
-mkdir -p examples/secrets
-printf '%s\n' 'YOUR_PLUS_KEY' > examples/secrets/PLUS_API_KEY
-chmod 600 examples/secrets/PLUS_API_KEY
-```
-
-Rules that must hold, whichever method you use:
-
-- The file contains only the key value (one line, no `plus://`).
-- The bind source is an absolute path on the Docker host.
-- The container runs as UID 10001 — that UID must actually be able
-  to read the file. A root-owned `0600` file bind-mounted directly
-  is **not** readable by UID 10001; use the secrets overlay above
-  (mounted read-only and world-readable inside the container) or
-  adjust ownership/permissions so UID 10001 can read it.
 
 ## Frigate config
 
@@ -181,6 +163,7 @@ loopback, then point Frigate at it:
 ```sh
 NPU_GID=$(stat -c %g /dev/accel/accel0) \
 FXDNA_MODELS="plus://<model-id>" \
+PLUS_API_KEY="<your-frigate-plus-key>" \
 docker compose -f examples/compose.yaml -f examples/compose.plus.yaml \
   -f examples/compose.host-port.yaml up -d
 ```
