@@ -26,6 +26,25 @@ MANIFEST = os.path.join(
     "yolo-public-contracts-0.1.2.manifest.json")
 
 
+# Case B's banked location (outside the evidence area). The only
+# absolute path this script ever opens; everything else is confined
+# to --models (see _confined).
+_BANKED_B = "/mnt/downloads/xdna-task03-work/yolov8n.onnx"
+
+
+def _confined(models_dir: str, filename: str) -> str:
+    """Resolve a manifest-controlled filename inside the models dir.
+
+    Refuses anything escaping the directory (defense in depth: the
+    names come from the committed manifest, not the operator).
+    """
+    base = os.path.realpath(models_dir)
+    candidate = os.path.realpath(os.path.join(base, filename))
+    if os.path.commonpath([base, candidate]) != base:
+        raise ValueError(f"refusing path outside models dir: {filename!r}")
+    return candidate
+
+
 def sha_of(path: str) -> tuple[str, int]:
     h = hashlib.sha256()
     size = 0
@@ -43,16 +62,22 @@ def main() -> int:
     ap.add_argument("--manifest", default=MANIFEST)
     args = ap.parse_args()
     from frigate_xdna.models import inspect as _inspect
-    with open(args.manifest, encoding="utf-8") as f:
+    models_dir = os.path.realpath(args.models)
+    with open(os.path.realpath(args.manifest), encoding="utf-8") as f:
         manifest = json.load(f)
     failures = []
     for case in manifest["cases"]:
         cid = case["id"]
         want = case["onnx"]
-        path = os.path.join(args.models, want["filename"])
+        try:
+            path = _confined(models_dir, want["filename"])
+        except ValueError as e:
+            failures.append(f"{cid}: {e}")
+            continue
         # Case B lives in its banked location, not the evidence area.
-        if not os.path.isfile(path) and cid == "B":
-            path = "/mnt/downloads/xdna-task03-work/yolov8n.onnx"
+        if not os.path.isfile(path) and cid == "B" and os.path.isfile(
+                _BANKED_B):
+            path = _BANKED_B
         if not os.path.isfile(path):
             failures.append(f"{cid}: missing file for {want['filename']}")
             continue
