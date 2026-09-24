@@ -76,6 +76,33 @@ Full SHA-256 (weights `.pt` / exported `.onnx`):
 - No model hit the stop rule (nothing failed to compile, load, or
   run safely), so no larger-memory diagnostic run was needed and
   the supported default envelope is unchanged.
+
+## Recommendation
+
+**YOLOv9-C 320 is the recommended quality/performance inflection
+on the qualified Strix Halo platform.** It is the largest YOLOv9
+variant that remains in the ~15 ms detector-latency band,
+sustaining ~71 sequential detector requests/s in qualification.
+This provides substantial headroom for a typical motion-driven
+multi-camera Frigate deployment at the recommended 5 detect fps
+(8 cameras × 5 fps = 40 camera frames/s of demand, before
+motion-gating reduces it further). No claim is made about eight
+cameras at 15 fps unconstrained: simultaneous demand from all
+cameras, and multiple regions per frame, can exceed any single
+number — size the detector from the measured ~71 req/s against
+your own camera count and frame rates.
+
+YOLOv9-E also runs correctly, but incurs a large
+latency/throughput step (~69 ms / 14 req/s) and is better treated
+as a specialist quality-over-throughput option.
+
+The recommendation combines frigate-xdna's measured 320 inference
+performance with the upstream YOLOv9 model family's published
+accuracy scaling (M → C → E: 51.4 → 53.0 → 55.6 COCO AP at 640 —
+C takes most of the family's quality headroom for almost no
+latency cost over M here, while E buys 2.6 further AP points at
+roughly a 5x latency penalty in this 320 deployment).
+frigate-xdna did not independently measure COCO mAP at 320.
 - Caveats: the benchmark replays one fixed crop tensor, so
   sustained req/s has no preprocessing or scene variance in it;
   all Frigate replays used the walk2 clip with the C7 rig config
