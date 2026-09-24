@@ -1,0 +1,13 @@
+# Local overlay: operator-supplied YOLO ONNX for the xdna sidecar.
+# No Frigate+ credential is required: local-only deployments omit
+# compose.plus.yaml entirely. The host model directory is mounted
+# read-only at /models, so local://ID resolves to <dir>/ID.onnx.
+# Usage: docker compose -f compose.yaml -f compose.local.yaml up -d xdna
+# Mixing Plus and local refs deliberately means including the Plus
+# overlay too: -f compose.yaml -f compose.local.yaml -f compose.plus.yaml
+services:
+  xdna:
+    environment:
+      FXDNA_MODEL_DIR: /models
+    volumes:
+      - "${FXDNA_MODEL_HOST_DIR:?Set the host model directory}:/models:ro"

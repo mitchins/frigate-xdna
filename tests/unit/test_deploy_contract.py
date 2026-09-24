@@ -217,6 +217,59 @@ class TestNetworkingVariants(unittest.TestCase):
         self.assertNotIn("PLUS_API_KEY_FILE", text)
 
 
+class TestLocalOverlay(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.doc = load_example("compose.local.yaml")
+        cls.xdna = cls.doc["services"]["xdna"]
+
+    def test_model_dir_default_and_ro_mount(self):
+        env = self.xdna["environment"]
+        self.assertEqual(env["FXDNA_MODEL_DIR"], "/models")
+        volumes = self.xdna["volumes"]
+        self.assertEqual(len(volumes), 1)
+        bind = str(volumes[0])
+        self.assertIn("FXDNA_MODEL_HOST_DIR", bind)
+        self.assertIn(":?", bind)
+        self.assertTrue(bind.endswith(":/models:ro"),
+                        f"model mount must be read-only: {bind}")
+
+    def test_overlay_adds_nothing_else(self):
+        self.assertEqual(set(self.xdna), {"environment", "volumes"})
+        text = read_example("compose.local.yaml")
+        for banned in ("PLUS_API_KEY", "ports:", "privileged",
+                       "docker.sock", "NET_ADMIN", "SYS_ADMIN",
+                       "secrets:"):
+            self.assertNotIn(banned, text)
+
+    def test_merged_render_needs_no_plus_credential(self):
+        base = load_example("compose.yaml")
+        merged_env = dict(base["services"]["xdna"]["environment"])
+        merged_env.update(self.xdna["environment"])
+        merged_volumes = list(base["services"]["xdna"]["volumes"])
+        merged_volumes += self.xdna["volumes"]
+        self.assertEqual(merged_env["FXDNA_MODEL_DIR"], "/models")
+        self.assertIn(":?", merged_env["FXDNA_MODELS"])
+        self.assertIn("xdna-data:/data", merged_volumes)
+        self.assertTrue(any(str(v).endswith(":/models:ro")
+                            for v in merged_volumes))
+        merged_text = (read_example("compose.yaml")
+                       + read_example("compose.local.yaml"))
+        self.assertNotIn("PLUS_API_KEY", merged_text)
+
+    def test_env_example_documents_host_dir(self):
+        with open(os.path.join(EXAMPLES, ".env.example"),
+                  encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("FXDNA_MODEL_HOST_DIR", text)
+        self.assertIn("local://yolov9-t-320", text)
+
+    def test_portainer_table_covers_host_dir(self):
+        with open(README, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("FXDNA_MODEL_HOST_DIR", text)
+
+
 class TestReadmeAgreesWithFiles(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
