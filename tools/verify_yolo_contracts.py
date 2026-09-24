@@ -93,7 +93,8 @@ def check_bytes(cid: str, want: dict, raw: bytes) -> str | None:
     return None
 
 
-def check_contract(case: dict, contract, cls: dict) -> list[str]:
+def check_contract(case: dict, contract, cls: dict,
+                   summary_line: str | None) -> list[str]:
     """Graph/verdict mismatches against the recorded case."""
     cid = case["id"]
     found: list[str] = []
@@ -120,6 +121,10 @@ def check_contract(case: dict, contract, cls: dict) -> list[str]:
     if not verdict.get("compatible") and ok:
         found.append(f"{cid}: expected refusal,"
                      f" classifier says {cls!r}")
+    if summary_line != verdict.get("serving_summary"):
+        found.append(f"{cid}: serving summary differs"
+                     f" (got {summary_line!r},"
+                     f" want {verdict.get('serving_summary')!r})")
     return found
 
 
@@ -139,8 +144,9 @@ def check_case(case: dict, models_dir: str, inspect) -> list[str]:
         contract = inspect.inspect_model(model)
     except Exception as e:  # noqa: BLE001 - recorded as a mismatch
         return [f"{cid}: inspect refused: {e}"]
-    return check_contract(case, contract,
-                          inspect.classify_output(contract["outputs"]))
+    cls = inspect.classify_output(contract["outputs"])
+    summary = inspect.summarize_inspection(contract, cls, None)
+    return check_contract(case, contract, cls, summary.get("output"))
 
 
 def main() -> int:
