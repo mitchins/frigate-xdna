@@ -106,8 +106,8 @@ processes.
 `NPU_GID` is the numeric group owning `/dev/accel/accel0` on the
 Docker host. `FXDNA_MODELS` is required (the Compose file refuses to
 start without it) and uses the `plus://` form for Plus models. The
-default image is the latest published release candidate; override
-with `FXDNA_IMAGE=...` for a newer or stable tag.
+default image is the latest stable release; override with
+`FXDNA_IMAGE=...` for a newer candidate or a pinned digest.
 
 Local-only deployments omit the Plus overlay and need no Plus
 secret:
