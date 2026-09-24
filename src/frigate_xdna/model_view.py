@@ -4,9 +4,13 @@ One account of current state shared by daemon status, read-only CLI
 status, waits and console reporting. Stored ref states
 (NEW/QUEUED/.../PREPARED/terminals) are overlaid with:
 
-* ACTIVE — a live worker serves this ref's prepared artifact. Never
-  stored: a persisted `active` record is history, not proof, so after
-  a crash/restart nothing claims readiness without a live worker.
+* ACTIVE — a live worker serves this ref's prepared artifact for
+  the ref's CURRENT source. Never stored: a persisted `active`
+  record is history, not proof, so after a crash/restart nothing
+  claims readiness without a live worker. While a new revision
+  compiles (or waits for Frigate to bind it), the stored state shows
+  instead — the worker still serves previous bytes, and ACTIVE must
+  not pretend otherwise.
 * VERIFIED — the ref's prepared artifact has a recorded native-check
   pass (in-compile probe or activation LOAD) in the validations
   table. Sticky across restarts; failed checks never clear it.
@@ -43,8 +47,17 @@ def parse_progress(progress: str | None) -> tuple[float | None, str | None]:
 
 
 def _ranked_state(stored: str, verified: bool,
-                  live_worker_key: str | None, key: str | None) -> str:
+                   live_worker_key: str | None, key: str | None,
+                   key_source: str | None = None,
+                   ref_source: str | None = None) -> str:
     if live_worker_key and key == live_worker_key:
+        # The worker serves this ref's newest prepared artifact — but
+        # only claim ACTIVE when it serves the ref's CURRENT source.
+        # While a new revision compiles (or waits for Frigate to bind
+        # it), the live worker still serves previous bytes; ACTIVE
+        # then would pretend the new revision serves.
+        if key_source and ref_source and key_source != ref_source:
+            return stored
         return "ACTIVE"
     if stored == "PREPARED" and verified:
         return "VERIFIED"
@@ -87,6 +100,10 @@ def project_ref(registry, ref: str,
     source = (rec or {}).get("source_sha256") or ""
     job = registry.latest_job_for_ref(ref)
     key = registry.prepared_key_for_ref(ref)
+    key_source = None
+    if key:
+        art = registry.get_artifact(key)
+        key_source = (art or {}).get("source_sha256")
     verified = bool(key) and registry.is_verified(key)
     error = (job or {}).get("error_code")
     elapsed, sub = parse_progress((job or {}).get("progress"))
@@ -96,7 +113,7 @@ def project_ref(registry, ref: str,
                                          job)
     return {"ref": ref, "source_sha256": source,
             "state": _ranked_state(stored, verified, live_worker_key,
-                                   key),
+                                   key, key_source, source or None),
             "phase": phase, "elapsed_s": elapsed, "verified": verified,
             "error_code": error, "compile_key": key,
             "attempts": (job or {}).get("attempt", 0) or 0,

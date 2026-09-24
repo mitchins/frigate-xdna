@@ -451,5 +451,34 @@ class TestPreflight(unittest.TestCase):
             self.assertIn(want, names)
 
 
+class TestSupersededRevisionProjection(unittest.TestCase):
+    def test_active_requires_current_source(self):
+        from frigate_xdna.cache.registry import Registry
+        from frigate_xdna.model_view import project_ref
+        with tempfile.TemporaryDirectory() as d:
+            reg = Registry(os.path.join(d, "r.db"))
+            try:
+                sha_a, sha_b = "a" * 64, "b" * 64
+                reg.upsert_ref("local://m", "local", "m")
+                reg.add_source(sha_a, 8, "sources/a/model.onnx", "local")
+                reg.add_source(sha_b, 8, "sources/b/model.onnx", "local")
+                reg.add_artifact("key-a", sha_a, "c" * 64, 8,
+                                 "recipe", "target")
+                reg.create_job("job-a", "local://m", "key-a", "boot",
+                               source_sha256=sha_a)
+                reg.set_job("job-a", "PREPARED")
+                # Revision advanced to B; worker still serves A.
+                reg.set_ref_source("local://m", sha_b, None, "QUEUED")
+                view = project_ref(reg, "local://m", "key-a")
+                self.assertEqual(view["state"], "QUEUED")
+                self.assertEqual(view["compile_key"], "key-a")
+                # Same bytes serving: ACTIVE projects again.
+                reg.set_ref_source("local://m", sha_a, None, "QUEUED")
+                view = project_ref(reg, "local://m", "key-a")
+                self.assertEqual(view["state"], "ACTIVE")
+            finally:
+                reg.close()
+
+
 if __name__ == "__main__":
     unittest.main()
