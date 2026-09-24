@@ -71,7 +71,7 @@ are expected targets but not yet certified.
 ## Install
 
 ```sh
-docker pull ghcr.io/mitchins/frigate-xdna:0.1.0-rc.3
+docker pull ghcr.io/mitchins/frigate-xdna:0.1.1-rc.1
 ```
 
 Images publish from version tags starting at `v0.1.0-rc.2`
@@ -130,7 +130,7 @@ these stack environment variables:
 
 | Variable | Value | `plus://`? |
 |---|---|---|
-| `FXDNA_IMAGE` | `ghcr.io/mitchins/frigate-xdna:0.1.0-rc.3` (or newer) | no |
+| `FXDNA_IMAGE` | `ghcr.io/mitchins/frigate-xdna:0.1.1-rc.1` (or newer) | no |
 | `FXDNA_MODELS` | `plus://<model-id>` (or a `/models/...` path) | yes, for Plus models |
 | `NPU_GID` | numeric group of `/dev/accel/accel0` | no |
 | `PLUS_API_KEY` | the same raw key value already configured for Frigate (no `plus://`) | no |
