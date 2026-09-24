@@ -2,8 +2,8 @@
 """Re-verify public YOLO contract evidence against the manifest.
 
 Reads tests/fixtures/yolo-public-contracts-0.1.2.manifest.json, inspects
-the ONNX binaries found under --models (default: the v0.1.2 evidence
-area), and fails on any mismatch of bytes, graph contract or verdict.
+the ONNX binaries in the evidence area, and fails on any mismatch of
+bytes, graph contract or verdict.
 
 No network, no hardware, no secrets. Binaries are never committed;
 this script is how a later checkout re-proves the manifest against
@@ -63,6 +63,86 @@ def read_evidence(path: str) -> bytes:
         return f.read()
 
 
+class _Unreadable(Exception):
+    """Evidence bytes cannot be produced for a case."""
+
+
+def load_case_bytes(cid: str, want: dict, models_dir: str) -> bytes:
+    """Exact manifest bytes for a case, or raise _Unreadable."""
+    try:
+        path = _confined(models_dir, want["filename"])
+        try:
+            return read_evidence(path)
+        except OSError:
+            # Case B lives in its banked location, not the
+            # evidence area.
+            if cid != "B":
+                raise
+            return read_evidence(_BANKED_B)
+    except (ValueError, OSError) as e:
+        raise _Unreadable(f"cannot read evidence"
+                          f" {want['filename']}: {e}") from e
+
+
+def check_bytes(cid: str, want: dict, raw: bytes) -> str | None:
+    """Mismatch description, or None when the bytes match."""
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != want["sha256"] or len(raw) != want["bytes"]:
+        return (f"{cid}: bytes differ (got {digest[:12]}... {len(raw)}B,"
+                f" want {want['sha256'][:12]}... {want['bytes']}B)")
+    return None
+
+
+def check_contract(case: dict, contract, cls: dict) -> list[str]:
+    """Graph/verdict mismatches against the recorded case."""
+    cid = case["id"]
+    found: list[str] = []
+    got = {"input": {"name": contract["input_name"],
+                     "shape": contract["input_shape"],
+                     "dtype": contract["input_dtype"]},
+           "outputs": contract["outputs"],
+           "opset": contract["opset"],
+           "ir_version": contract["ir_version"],
+           "node_count": contract["node_count"],
+           "class_count": (cls.get("channels") or 0) - 4
+           if cls.get("profile") else None}
+    exp = case["graph"]
+    for key in ("input", "outputs", "opset", "ir_version",
+                "node_count", "class_count"):
+        if got[key] != exp[key]:
+            found.append(f"{cid}: {key} differs (got {got[key]!r},"
+                         f" want {exp[key]!r})")
+    verdict = case["verdict"]
+    ok = cls.get("profile") == verdict.get("profile")
+    if verdict.get("compatible") and not ok:
+        found.append(f"{cid}: expected compatible,"
+                     f" classifier says {cls!r}")
+    if not verdict.get("compatible") and ok:
+        found.append(f"{cid}: expected refusal,"
+                     f" classifier says {cls!r}")
+    return found
+
+
+def check_case(case: dict, models_dir: str, inspect) -> list[str]:
+    """All mismatches for one manifest case (empty means match)."""
+    cid = case["id"]
+    want = case["onnx"]
+    try:
+        raw = load_case_bytes(cid, want, models_dir)
+    except _Unreadable as e:
+        return [f"{cid}: {e}"]
+    mismatch = check_bytes(cid, want, raw)
+    if mismatch is not None:
+        return [mismatch]
+    model, _ = inspect.load_graph_bytes(raw)
+    try:
+        contract = inspect.inspect_model(model)
+    except Exception as e:  # noqa: BLE001 - recorded as a mismatch
+        return [f"{cid}: inspect refused: {e}"]
+    return check_contract(case, contract,
+                          inspect.classify_output(contract["outputs"]))
+
+
 def main() -> int:
     from frigate_xdna.models import inspect as _inspect
     models_dir = os.path.realpath(MODELS_DIR)
@@ -70,63 +150,11 @@ def main() -> int:
         manifest = json.load(f)
     failures = []
     for case in manifest["cases"]:
-        cid = case["id"]
-        want = case["onnx"]
-        try:
-            path = _confined(models_dir, want["filename"])
-            try:
-                raw = read_evidence(path)
-            except OSError:
-                # Case B lives in its banked location, not the
-                # evidence area.
-                if cid != "B":
-                    raise
-                raw = read_evidence(_BANKED_B)
-        except (ValueError, OSError) as e:
-            failures.append(f"{cid}: cannot read evidence"
-                            f" {want['filename']}: {e}")
-            continue
-        digest = hashlib.sha256(raw).hexdigest()
-        if digest != want["sha256"] or len(raw) != want["bytes"]:
-            failures.append(
-                f"{cid}: bytes differ (got {digest[:12]}... {len(raw)}B,"
-                f" want {want['sha256'][:12]}... {want['bytes']}B)")
-            continue
-        model, _ = _inspect.load_graph_bytes(raw)
-        try:
-            contract = _inspect.inspect_model(model)
-        except Exception as e:  # noqa: BLE001 - verdict comparison below
-            failures.append(f"{cid}: inspect refused: {e}")
-            continue
-        cls = _inspect.classify_output(contract["outputs"])
-        got = {"input": {"name": contract["input_name"],
-                         "shape": contract["input_shape"],
-                         "dtype": contract["input_dtype"]},
-               "outputs": contract["outputs"],
-               "opset": contract["opset"],
-               "ir_version": contract["ir_version"],
-               "node_count": contract["node_count"],
-               "class_count": (cls.get("channels") or 0) - 4
-               if cls.get("profile") else None}
-        exp = case["graph"]
-        for key in ("input", "outputs", "opset", "ir_version",
-                    "node_count", "class_count"):
-            if got[key] != exp[key]:
-                failures.append(
-                    f"{cid}: {key} differs (got {got[key]!r},"
-                    f" want {exp[key]!r})")
-        verdict = case["verdict"]
-        ok = cls.get("profile") == verdict.get("profile")
-        if verdict.get("compatible") and not ok:
-            failures.append(f"{cid}: expected compatible,"
-                            f" classifier says {cls!r}")
-        if not verdict.get("compatible") and ok:
-            failures.append(f"{cid}: expected refusal,"
-                            f" classifier says {cls!r}")
-        if not failures or not any(f.startswith(cid + ":")
-                                   for f in failures):
-            print(f"{cid}: {want['filename']} OK"
-                  f" ({verdict.get('serving_summary')})")
+        found = check_case(case, models_dir, _inspect)
+        failures.extend(found)
+        if not found:
+            print(f"{case['id']}: {case['onnx']['filename']} OK"
+                  f" ({case['verdict'].get('serving_summary')})")
     if failures:
         print("MISMATCHES:")
         for f in failures:

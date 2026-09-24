@@ -17,6 +17,7 @@
       "export_invocation": [
         "git clone https://github.com/WongKinYiu/yolov9.git yolov9-src  # HEAD 5b1ea9a8b3f0ffe4fe0e203ec6232d788bb3fcff",
         "curl -sL -o yolov9-t-converted.pt https://github.com/WongKinYiu/yolov9/releases/download/v0.1/yolov9-t-converted.pt",
+        "cp yolov9-t-converted.pt yolov9-src/yolov9-t.pt  # recipe ADDs the release asset into the build as yolov9-${MODEL_SIZE}.pt",
         "sed -i \"s/ckpt = torch.load(attempt_download(w), map_location='cpu')/ckpt = torch.load(attempt_download(w), map_location='cpu', weights_only=False)/g\" yolov9-src/models/experimental.py",
         "export-venv/bin/python yolov9-src/export.py --weights ./yolov9-src/yolov9-t.pt --imgsz 320 --simplify --include onnx"
       ],
