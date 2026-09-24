@@ -384,6 +384,44 @@ class TestDesiredState(unittest.TestCase):
             finally:
                 sup.stop()
 
+    def test_unreadable_file_fails_bounded(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as data, \
+                tempfile.TemporaryDirectory() as models:
+            path, _ = put(models, "locked", seed=3)
+            cfg = load_config({"FXDNA_DATA_DIR": data,
+                               "FXDNA_MODEL_DIR": models})
+            sup = self._sup(cfg)
+            real_open = open
+            try:
+                def _denied(p, *a, **kw):
+                    if isinstance(p, str) and p.endswith(".onnx"):
+                        raise PermissionError(13, "Permission denied")
+                    return real_open(p, *a, **kw)
+
+                with mock.patch("builtins.open", _denied):
+                    with self.assertRaises(FxdnaError) as ctx:
+                        sup.prepare("local://locked")
+                self.assertEqual(ctx.exception.error_code,
+                                 "INVALID_MODEL")
+                self.assertIn("cannot read",
+                              ctx.exception.message)
+                ref = sup.registry.get_ref("local://locked")
+                self.assertEqual(ref["state"], "NEW")
+                self.assertIsNone(ref["source_sha256"])
+                self.assertEqual(sup.registry.query(
+                    "SELECT uuid FROM jobs WHERE ref=?",
+                    ("local://locked",)), [])
+                # Nothing damaged: the file prepares normally once
+                # readable again.
+                out = sup.prepare("local://locked")
+                self.assertEqual(pump_until(sup, "local://locked",
+                                            ("PREPARED",)), "PREPARED")
+                self.assertEqual(out["source_sha256"],
+                                 digest_of(path))
+            finally:
+                sup.stop()
+
     def test_mixed_local_plus(self):
         with tempfile.TemporaryDirectory() as data, \
                 tempfile.TemporaryDirectory() as models:
