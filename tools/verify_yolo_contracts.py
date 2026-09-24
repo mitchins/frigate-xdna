@@ -8,10 +8,13 @@ area), and fails on any mismatch of bytes, graph contract or verdict.
 No network, no hardware, no secrets. Binaries are never committed;
 this script is how a later checkout re-proves the manifest against
 re-acquired or archived evidence files.
+
+Paths are module constants, not CLI options: this is a fixed-purpose
+evidence check, and file access must never depend on caller-supplied
+arguments.
 """
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import os
@@ -24,6 +27,7 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 MANIFEST = os.path.join(
     REPO, "tests", "fixtures",
     "yolo-public-contracts-0.1.2.manifest.json")
+MODELS_DIR = "/mnt/downloads/fxdna-012-local"
 
 
 # Case B's banked location (outside the evidence area). The only
@@ -56,14 +60,9 @@ def sha_of(path: str) -> tuple[str, int]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--models", default="/mnt/downloads/fxdna-012-local",
-                    help="directory holding the evidence ONNX files")
-    ap.add_argument("--manifest", default=MANIFEST)
-    args = ap.parse_args()
     from frigate_xdna.models import inspect as _inspect
-    models_dir = os.path.realpath(args.models)
-    with open(os.path.realpath(args.manifest), encoding="utf-8") as f:
+    models_dir = os.path.realpath(MODELS_DIR)
+    with open(os.path.realpath(MANIFEST), encoding="utf-8") as f:
         manifest = json.load(f)
     failures = []
     for case in manifest["cases"]:
