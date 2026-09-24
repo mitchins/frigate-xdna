@@ -33,8 +33,8 @@ def plan_prune(data_dir: str, registry, max_bytes: int | None = None) -> dict:
         protected_targets.add(active["ref"])
     protected_digests: set[str] = set()
     for target in protected_targets:
-        if target.startswith("plus://") or "/" in target or target.endswith(
-                (".onnx", ".rai")):
+        if target.startswith(("plus://", "local://")) or "/" in target \
+                or target.endswith((".onnx", ".rai")):
             ref = registry.get_ref(target)
             if ref and ref.get("source_sha256"):
                 protected_digests.add(ref["source_sha256"])

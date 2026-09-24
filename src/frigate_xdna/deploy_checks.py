@@ -99,7 +99,7 @@ def check_plus_credential(config, extra_refs: tuple = ()) -> dict:
     wants_plus = False
     for ref in list(config.models) + list(extra_refs or ()):
         try:
-            if parse_ref(ref)["kind"] == "plus":
+            if parse_ref(ref, config.model_dir)["kind"] == "plus":
                 wants_plus = True
                 break
         except Exception:

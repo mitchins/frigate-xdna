@@ -425,7 +425,7 @@ class Supervisor:
     def prepare(self, ref: str, descriptor_path: str | None = None,
                 wire_name: str | None = None, refresh: bool = False,
                 maintenance: bool = False) -> dict:
-        parsed = parse_ref(ref)
+        parsed = parse_ref(ref, self.config.model_dir)
         alias = wire_alias(parsed, wire_name)
         self.registry.upsert_ref(parsed["ref"], parsed["kind"],
                                  parsed.get("id"))
@@ -479,11 +479,18 @@ class Supervisor:
                        "shape": contract.get("input_shape")})
             return self._ingest_source(parsed["ref"], alias, data, "plus",
                                        fetched, refresh)
-        path = parsed["path"]
-        if not os.path.isfile(path):
+        if parsed["kind"] == "local":
+            # Alias ref: the registry row keeps the stable local://ID
+            # while ingestion hashes the resolved file's exact bytes.
+            # Changed bytes are a new revision (SOURCE_CHANGED), never
+            # a silent mutation — see _ingest_source.
+            path = parsed["path"]
+        else:
+            path = parsed.get("path", "")
+        if not path or not os.path.isfile(path):
             raise FxdnaError(INVALID_ARGS, "INVALID_MODEL",
                              f"local file not found: {path!r}")
-        if parsed["kind"] == "onnx":
+        if parsed["kind"] in ("onnx", "local"):
             try:
                 data = _read_bounded(path, "local ONNX")
                 model, digest = _inspect.load_graph_bytes(data)
@@ -1009,7 +1016,7 @@ class Supervisor:
         from .model_view import project_ref
         live_key = self._live_worker_key()
         if ref:
-            parsed = parse_ref(ref)
+            parsed = parse_ref(ref, self.config.model_dir)
             rec = self.registry.get_ref(parsed["ref"])
             models = [project_ref(self.registry, parsed["ref"], live_key)
                       ] if rec else []
@@ -1095,7 +1102,7 @@ class Supervisor:
                 raise FxdnaError(DEVICE_UNAVAILABLE, "DEVICE_BUSY",
                                  "compile in flight; retry when idle or"
                                  " pass maintenance explicitly")
-        parsed = parse_ref(ref)
+        parsed = parse_ref(ref, self.config.model_dir)
         # Only terminal-ok rows qualify: a newer failed job must never
         # hide an older valid PREPARED artifact (the old excluded stage
         # names are not even in the job vocabulary).
@@ -1330,7 +1337,7 @@ class Supervisor:
         the failure was understood.
         """
         from . import retry_policy as _retry
-        parsed = parse_ref(ref)
+        parsed = parse_ref(ref, self.config.model_dir)
         with self.registry.transaction():
             inh = self.registry.get_state("inhibition")
             if inh and inh.get("ref") == parsed["ref"]:

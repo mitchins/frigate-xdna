@@ -201,7 +201,7 @@ def _read_status(config, ref=None, show_identifiers: bool = False) -> dict:
     try:
         if ref:
             from .models.refs import parse_ref
-            parsed = parse_ref(ref)["ref"]
+            parsed = parse_ref(ref, config.model_dir)["ref"]
             rec = reg.get_ref(parsed)
             models = [view.project(project_ref(reg, parsed, None))
                       ] if rec else []
