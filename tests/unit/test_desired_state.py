@@ -6,6 +6,7 @@ absent sources never destroy caches, failures stay bounded, and a
 fresh Frigate transfer rebinds by content — never by basename.
 """
 import hashlib
+import json
 import os
 import tempfile
 import time
@@ -235,6 +236,39 @@ class TestDesiredState(unittest.TestCase):
                     sup.prepare("local://driveway")
                 self.assertEqual(ctx.exception.error_code,
                                  "SOURCE_CHANGED")
+            finally:
+                sup.stop()
+
+    def test_late_publish_keeps_job_source(self):
+        # A revision advances while an older attempt is still in
+        # flight: when the older compile publishes, its artifact must
+        # record the bytes it actually compiled (A), never the ref's
+        # current source (B).
+        with tempfile.TemporaryDirectory() as data, \
+                tempfile.TemporaryDirectory() as models:
+            _, raw_a = put(models, "rev", seed=3)
+            digest_a = digest_of(os.path.join(models, "rev.onnx"))
+            cfg = load_config({"FXDNA_DATA_DIR": data,
+                               "FXDNA_MODEL_DIR": models,
+                               "FXDNA_MODELS": "local://rev"})
+            sup = self._sup(cfg)
+            try:
+                out_a = sup.prepare("local://rev")
+                key_a = out_a["compile_key"]
+                put(models, "rev", seed=4)
+                out_b = sup.prepare("local://rev", refresh=True)
+                self.assertNotEqual(out_b["compile_key"], key_a)
+                for ref in ("local://rev",):
+                    self.assertEqual(pump_until(sup, ref, ("PREPARED",)),
+                                     "PREPARED")
+                art_a = sup.registry.get_artifact(key_a)
+                self.assertIsNotNone(art_a)
+                self.assertEqual(art_a["source_sha256"], digest_a)
+                manifest = os.path.join(
+                    data, "artifacts", key_a, "artifact.json")
+                with open(manifest, encoding="utf-8") as f:
+                    recorded = json.load(f)
+                self.assertEqual(recorded["source_sha256"], digest_a)
             finally:
                 sup.stop()
 

@@ -613,7 +613,13 @@ class Supervisor:
             os.rename(dest, aside)
         staged = os.path.join(self.data_dir, "work", f"stage-{job['uuid']}")
         os.makedirs(staged, exist_ok=True)
-        source = (self.registry.get_ref(job["ref"]) or {}).get(
+        # The artifact was compiled from the job's source bytes, which
+        # may no longer be the ref's current source: a revision can
+        # advance (reconcile/refresh) while an older attempt is still
+        # resumable. Publish with the job-bound digest; the ref digest
+        # is only a fallback for legacy rows that predate it.
+        source = job.get("source_sha256") or (
+            self.registry.get_ref(job["ref"]) or {}).get(
             "source_sha256") or ""
         backend = self.jobs.backend_for(job["uuid"])
         # Backend identity comes from the producer object, never from config.
