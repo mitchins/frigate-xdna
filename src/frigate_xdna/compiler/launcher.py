@@ -52,9 +52,11 @@ def sample_vm_peak(pid: int, stop: threading.Event,
     return peak
 
 # Secret names that must never appear in a child environment, even if the
-# manager process was started with them set.
+# manager process was started with them set. PLUS_API_KEY_FILE names no
+# supported input; it stays listed as defensive scrubbing of a
+# secret-looking legacy variable, not a compatibility path.
 FORBIDDEN_ENV_KEYS = frozenset({
-    "PLUS_API_KEY", "GH_PAT", "GH_TOKEN",
+    "PLUS_API_KEY", "PLUS_API_KEY_FILE", "GH_PAT", "GH_TOKEN",
     "AUTHORIZATION", "BEARER_TOKEN",
 })
 
