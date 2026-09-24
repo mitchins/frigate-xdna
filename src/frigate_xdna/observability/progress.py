@@ -30,7 +30,8 @@ def _formatters() -> dict:
         "inspection_complete":
             lambda e: (f"Model inspection complete: {e['ref']}:"
                        f" {e.get('profile', '?')}"
-                       f" {e.get('shape', '')}".rstrip()),
+                       f" {e.get('shape_str', '')}"
+                       f" {e.get('classes', '?')} classes".rstrip()),
         "bf16_running":
             lambda e: (f"BF16 preparation running: {e['ref']}:"
                        f" {_elapsed(e)}"),

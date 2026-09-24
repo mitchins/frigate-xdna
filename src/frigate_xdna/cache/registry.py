@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS model_refs (
   ref TEXT PRIMARY KEY, kind TEXT NOT NULL, model_id TEXT,
   source_sha256 TEXT, metadata_sha256 TEXT, pin TEXT,
-  state TEXT NOT NULL DEFAULT 'NEW', updated_at REAL NOT NULL);
+  state TEXT NOT NULL DEFAULT 'NEW', updated_at REAL NOT NULL,
+  inspection_json TEXT);
 CREATE TABLE IF NOT EXISTS sources (
   sha256 TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL,
   rel_path TEXT NOT NULL, origin TEXT NOT NULL, checked_at REAL NOT NULL);
@@ -55,13 +56,32 @@ CREATE TABLE IF NOT EXISTS service_state (
 """
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # v2 -> v3: bind each job to its source bytes (nullable: rows written
 # before this migration resolve via the ref, exactly once, at resume).
 _SCHEMA_V3 = """
 ALTER TABLE jobs ADD COLUMN source_sha256 TEXT;
 """
+
+# v3 -> v4: last graph-inspection summary per ref (nullable: refs
+# prepared before this migration simply report no inspection until
+# their next prepare).
+_SCHEMA_V4 = """
+ALTER TABLE model_refs ADD COLUMN inspection_json TEXT;
+"""
+
+
+def _parse_inspection(raw) -> dict | None:
+    """Last inspection summary, or None when the ref was never
+    inspected (e.g. rows written before the v4 migration)."""
+    if not raw:
+        return None
+    try:
+        record = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return record if isinstance(record, dict) else None
 
 
 def _parse_failure(raw) -> dict | None:
@@ -137,6 +157,11 @@ class Registry:
             cols = [r[1] for r in self.query("PRAGMA table_info(jobs)")]
             if "source_sha256" not in cols:
                 self.cx.executescript(_SCHEMA_V3)
+        if from_version <= 3:
+            cols = [r[1] for r in
+                    self.query("PRAGMA table_info(model_refs)")]
+            if "inspection_json" not in cols:
+                self.cx.executescript(_SCHEMA_V4)
         self._execute("UPDATE schema_version SET version=?",
                       (SCHEMA_VERSION,))
 
@@ -198,11 +223,28 @@ class Registry:
     def get_ref(self, ref: str) -> dict | None:
         rows = self.query(
             "SELECT ref, kind, model_id, source_sha256, metadata_sha256,"
-            " pin, state FROM model_refs WHERE ref=?", (ref,))
+            " pin, state, inspection_json FROM model_refs WHERE ref=?",
+            (ref,))
         if not rows:
             return None
-        return dict(zip(("ref", "kind", "model_id", "source_sha256",
-                         "metadata_sha256", "pin", "state"), rows[0]))
+        rec = dict(zip(("ref", "kind", "model_id", "source_sha256",
+                        "metadata_sha256", "pin", "state",
+                        "inspection_json"), rows[0]))
+        rec["inspection"] = _parse_inspection(rec.pop("inspection_json"))
+        return rec
+
+    def set_ref_inspection(self, ref: str, inspection: dict) -> None:
+        """Record the last graph-inspection summary for a ref.
+
+        Stored for compatible and refused graphs alike, so status and
+        logs report the same inspected result preparation used. Never
+        changes the ref state machine: a refusal keeps its NEW (or
+        prior) state with a stable reason attached.
+        """
+        self._execute(
+            "UPDATE model_refs SET inspection_json=?, updated_at=?"
+            " WHERE ref=?",
+            (json.dumps(inspection, sort_keys=True), time.time(), ref))
 
     def set_ref_source(self, ref: str, source_sha256: str,
                        metadata_sha256: str | None, state: str):

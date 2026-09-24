@@ -81,6 +81,36 @@
           "compile_key": {"type": ["string", "null"]},
           "attempts": {"type": "integer", "minimum": 0},
           "retryable": {"type": "boolean"},
+          "inspection": {
+            "type": ["object", "null"],
+            "description": "Last graph-inspection summary for this ref (compatible flag, described source bytes, input geometry, output profile, class count, refusal reason). Null when never inspected. Numeric class IDs only; label names are never inferred.",
+            "properties": {
+              "compatible": {"type": "boolean"},
+              "source_sha256": {"type": ["string", "null"],
+                                "description": "Exact source bytes this summary describes; compare with the ref's source_sha256 to spot a refusal stored for pending (not yet accepted) bytes."},
+              "reason": {"type": ["string", "null"]},
+              "input": {"type": ["string", "null"]},
+              "input_dtype": {"type": ["string", "null"]},
+              "layout": {"type": ["string", "null"]},
+              "profile": {"type": ["string", "null"]},
+              "output": {"type": ["string", "null"]},
+              "outputs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {"type": "string"},
+                    "shape": {"type": "array",
+                              "items": {"type": "integer"}},
+                    "dtype": {"type": "string"}
+                  }
+                }
+              },
+              "class_count": {"type": ["integer", "null"]},
+              "opset": {"type": ["integer", "null"]},
+              "ir_version": {"type": ["integer", "null"]}
+            }
+          },
           "failure": {
             "type": ["object", "null"],
             "description": "Structured failure record of the newest terminal job, if any.",
