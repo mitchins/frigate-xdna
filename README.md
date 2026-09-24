@@ -133,6 +133,7 @@ these stack environment variables:
 | `FXDNA_IMAGE` | `ghcr.io/mitchins/frigate-xdna:0.1.1` (or newer) | no |
 | `FXDNA_MODELS` | `plus://<model-id>` (or a `/models/...` path) | yes, for Plus models |
 | `NPU_GID` | numeric group of `/dev/accel/accel0` | no |
+| `FXDNA_MODEL_HOST_DIR` | host path of the model directory, mounted read-only at `/models` (local overlay only) | no |
 | `PLUS_API_KEY` | the same raw key value already configured for Frigate (no `plus://`) | no |
 | `FXDNA_BIND_IP` | only for host-networked Frigate (default `127.0.0.1`) | no |
 

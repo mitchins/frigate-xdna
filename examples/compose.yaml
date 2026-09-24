@@ -18,7 +18,8 @@ services:
       FXDNA_LOG_LEVEL: info
     volumes:
       - xdna-data:/data
-      # Add a read-only /models bind for local ONNX/RAI imports when required.
+      # Local ONNX models arrive via the local overlay
+      # (compose.local.yaml), which adds a read-only /models bind.
     networks:
       - xdna-net
     read_only: true
