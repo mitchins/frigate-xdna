@@ -422,6 +422,43 @@ class Supervisor:
         return data, {"metadata": info, "source_sha256": digest,
                       "metadata_sha256": meta_digest}
 
+    def _inspect_checked(self, ref: str, data: bytes,
+                           metadata: dict | None = None
+                           ) -> tuple[dict, dict, str, dict]:
+        """One graph-inspection path for preparation, logs and status.
+
+        Runs the same `inspect_model`/`classify_output` every caller
+        uses, records the summary on the ref row (compatible or
+        refused), and emits the console event. Failures raise before
+        any compile is queued, so an unsupported graph is a stable
+        INSPECTION refusal, never a generic COMPILE_FAILED.
+        """
+        contract = cls = None
+        try:
+            model, digest = _inspect.load_graph_bytes(data)
+            contract = _inspect.inspect_model(model)
+            if metadata is not None:
+                _inspect.compare_plus_metadata(metadata, contract)
+            cls = _inspect.classify_output(contract["outputs"])
+            if cls["profile"] is None:
+                raise FxdnaError(UNSUPPORTED_CONTRACT,
+                                 "UNSUPPORTED_CONTRACT", cls["error"])
+        except FxdnaError as e:
+            self.registry.set_ref_inspection(
+                ref, _inspect.summarize_inspection(contract, cls, e))
+            self.emit({"kind": "preparation_failed", "ref": ref,
+                       "phase": "INSPECTION", "code": e.error_code,
+                       "reason": e.message})
+            raise
+        summary = _inspect.summarize_inspection(contract, cls, None)
+        self.registry.set_ref_inspection(ref, summary)
+        shape = contract.get("input_shape")
+        self.emit({"kind": "inspection_complete", "ref": ref,
+                   "profile": cls["profile"], "shape": shape,
+                   "shape_str": "x".join(str(v) for v in shape),
+                   "classes": summary["class_count"]})
+        return contract, cls, digest, summary
+
     def prepare(self, ref: str, descriptor_path: str | None = None,
                 wire_name: str | None = None, refresh: bool = False,
                 maintenance: bool = False) -> dict:
@@ -458,25 +495,10 @@ class Supervisor:
             # Plus bytes are inspected exactly like local files: metadata
             # conflicts and unsupported contracts fail here, never queue a
             # fake compile to PREPARED. (B3)
-            try:
-                model, digest = _inspect.load_graph_bytes(data)
-                contract = _inspect.inspect_model(model)
-                _inspect.compare_plus_metadata(fetched["metadata"],
-                                               contract)
-                cls = _inspect.classify_output(contract["outputs"])
-                if cls["profile"] is None:
-                    raise FxdnaError(UNSUPPORTED_CONTRACT,
-                                     "UNSUPPORTED_CONTRACT", cls["error"])
-            except FxdnaError as e:
-                self.emit({"kind": "preparation_failed",
-                           "ref": parsed["ref"], "phase": "INSPECTION",
-                           "code": e.error_code, "reason": e.message})
-                raise
+            contract, cls, digest, _summary = self._inspect_checked(
+                parsed["ref"], data, fetched["metadata"])
             fetched["inspected"] = contract
             fetched["profile"] = cls["profile"]
-            self.emit({"kind": "inspection_complete", "ref": parsed["ref"],
-                       "profile": cls["profile"],
-                       "shape": contract.get("input_shape")})
             return self._ingest_source(parsed["ref"], alias, data, "plus",
                                        fetched, refresh)
         if parsed["kind"] == "local":
@@ -493,20 +515,13 @@ class Supervisor:
         if parsed["kind"] in ("onnx", "local"):
             try:
                 data = _read_bounded(path, "local ONNX")
-                model, digest = _inspect.load_graph_bytes(data)
-                contract = _inspect.inspect_model(model)
-                cls = _inspect.classify_output(contract["outputs"])
-                if cls["profile"] is None:
-                    raise FxdnaError(UNSUPPORTED_CONTRACT,
-                                     "UNSUPPORTED_CONTRACT", cls["error"])
             except FxdnaError as e:
                 self.emit({"kind": "preparation_failed",
                            "ref": parsed["ref"], "phase": "INSPECTION",
                            "code": e.error_code, "reason": e.message})
                 raise
-            self.emit({"kind": "inspection_complete", "ref": parsed["ref"],
-                       "profile": cls["profile"],
-                       "shape": contract.get("input_shape")})
+            contract, cls, digest, _summary = self._inspect_checked(
+                parsed["ref"], data)
             return self._ingest_source(parsed["ref"], alias, data, "local",
                                        {"inspected": contract,
                                         "profile": cls["profile"],
@@ -1075,6 +1090,11 @@ class Supervisor:
         # Register synthetic content-bound ref immediately so later
         # _ingest_source / _publish_result find the record
         self.registry.upsert_ref(ref, "onnx", None)
+        # Same inspected result status reports: the transport ran the
+        # shared inspector, so record its summary here rather than
+        # re-validating with a second rule set.
+        self.registry.set_ref_inspection(
+            ref, _inspect.summarize_inspection(contract, cls, None))
         # Use the same ingestion as local ONNX but with data already
         # fetched: _ingest_source with origin "local" and inspected extra.
         return self._ingest_source(

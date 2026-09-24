@@ -100,7 +100,8 @@ def project_ref(registry, ref: str,
             "phase": phase, "elapsed_s": elapsed, "verified": verified,
             "error_code": error, "compile_key": key,
             "attempts": (job or {}).get("attempt", 0) or 0,
-            "retryable": retryable, "failure": failure}
+            "retryable": retryable, "failure": failure,
+            "inspection": (rec or {}).get("inspection")}
 
 
 def satisfies(actual: str, want: str) -> bool:

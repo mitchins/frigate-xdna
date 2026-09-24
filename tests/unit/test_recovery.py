@@ -438,6 +438,7 @@ class TestLegacyMigration(unittest.TestCase):
         cx = sqlite3.connect(db)
         cx.execute("ALTER TABLE jobs DROP COLUMN failure_json")
         cx.execute("ALTER TABLE jobs DROP COLUMN source_sha256")
+        cx.execute("ALTER TABLE model_refs DROP COLUMN inspection_json")
         cx.execute("UPDATE schema_version SET version=1")
         cx.commit()
         cx.close()
@@ -450,12 +451,13 @@ class TestLegacyMigration(unittest.TestCase):
             reg = Registry(db)
             try:
                 row = reg.query("SELECT version FROM schema_version")
-                self.assertEqual(row[0][0], 3)
+                self.assertEqual(row[0][0], 4)
                 job = reg.get_job("rc3-job")
                 self.assertEqual(job["stage"], "COMPILE_FAILED")
                 self.assertIsNone(job["failure"])
                 rec = reg.get_ref("plus://rc3")
                 self.assertEqual(rec["state"], "COMPILE_FAILED")
+                self.assertIsNone(rec["inspection"])
             finally:
                 reg.close()
 

@@ -81,6 +81,20 @@
           "compile_key": {"type": ["string", "null"]},
           "attempts": {"type": "integer", "minimum": 0},
           "retryable": {"type": "boolean"},
+          "inspection": {
+            "type": ["object", "null"],
+            "description": "Last graph-inspection summary for this ref (compatible flag, input geometry, output profile, class count, refusal reason). Null when never inspected. Numeric class IDs only; label names are never inferred.",
+            "properties": {
+              "compatible": {"type": "boolean"},
+              "reason": {"type": ["string", "null"]},
+              "input": {"type": ["string", "null"]},
+              "input_dtype": {"type": ["string", "null"]},
+              "layout": {"type": ["string", "null"]},
+              "profile": {"type": ["string", "null"]},
+              "output": {"type": ["string", "null"]},
+              "class_count": {"type": ["integer", "null"]}
+            }
+          },
           "failure": {
             "type": ["object", "null"],
             "description": "Structured failure record of the newest terminal job, if any.",

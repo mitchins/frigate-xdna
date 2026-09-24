@@ -81,8 +81,12 @@ def inspect_model(model) -> dict:
         raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
                     "only float32 graph inputs are supported")
     shape = [_dim_value(d) for d in ttype.shape.dim]
-    if (len(shape) != 4 or shape[0] != 1 or shape[1] != 3
-            or any(v is None or v <= 0 or v > 4096 for v in shape)):
+    if len(shape) != 4 or any(v is None for v in shape):
+        raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                    "dynamic input dimensions are not supported;"
+                    " export a static batch-one NCHW model")
+    if (shape[0] != 1 or shape[1] != 3
+            or any(v <= 0 or v > 4096 for v in shape)):
         raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
                     f"unsupported static input shape: {shape!r}")
     outputs = []
@@ -126,8 +130,10 @@ def classify_output(outputs: list[dict]) -> dict:
     """
     if len(outputs) != 1:
         return {"profile": None,
-                "error": f"{len(outputs)} outputs: only single-tensor raw "
-                         f"YOLO is supported in v0.1"}
+                "error": f"{len(outputs)} outputs: only a single raw-YOLO"
+                         f" output tensor is supported in this release"
+                         f" (embedded-NMS exports are not supported;"
+                         f" export raw predictions instead)"}
     o = outputs[0]
     shape = o["shape"]
     if (len(shape) == 3 and shape[0] == 1 and shape[1] >= 6
@@ -137,8 +143,48 @@ def classify_output(outputs: list[dict]) -> dict:
                 "channels": shape[1],
                 "anchors": shape[2]}
     return {"profile": None,
-            "error": f"output {o['name']} shape {shape} dtype {o['dtype']}: "
-                     f"not a supported raw-YOLO contract"}
+            "error": f"output {o['name']} shape {shape} dtype {o['dtype']}:"
+                     f" not a supported raw-YOLO contract"
+                     f" ([1,4+C,N] float32 required)"}
+
+
+def summarize_inspection(contract: dict | None, cls: dict | None,
+                         error: FxdnaError | None = None) -> dict:
+    """Stable appliance view of one graph inspection.
+
+    The same dict drives preparation, console logs and status: a single
+    result, never a second validator with its own rules. Numeric class
+    count only (channels-4 for the raw-YOLO profile); label names are
+    never inferred — Frigate owns the label map. Compatibility is never
+    claimed from a filename or model family, only from this graph.
+    """
+    profile = (cls or {}).get("profile")
+    compatible = error is None and profile is not None
+    shape = (contract or {}).get("input_shape")
+    outputs = (contract or {}).get("outputs") or []
+    class_count = None
+    output_line = None
+    if profile == "yolo-raw" and contract is not None:
+        channels = int((cls or {}).get("channels", 0))
+        class_count = channels - 4 if channels >= 5 else None
+        anchors = (cls or {}).get("anchors", "?")
+        output_line = f"raw YOLO [1,{channels},{anchors}]"
+    return {
+        "compatible": compatible,
+        "reason": None if compatible else
+        (error.message if error is not None else
+         (cls or {}).get("error", "incompatible contract")),
+        "input": "x".join(str(v) for v in shape)
+        if isinstance(shape, list) else None,
+        "input_dtype": (contract or {}).get("input_dtype"),
+        "layout": "NCHW" if shape is not None else None,
+        "profile": profile,
+        "output": output_line,
+        "outputs": outputs,
+        "class_count": class_count,
+        "opset": (contract or {}).get("opset"),
+        "ir_version": (contract or {}).get("ir_version"),
+    }
 
 
 def _strict_int_list(values, what: str) -> list[int]:
