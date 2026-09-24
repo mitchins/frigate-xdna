@@ -518,12 +518,11 @@ def cmd_serve(config) -> int:
                 sup.stop()
             finally:
                 raise RuntimeError("ZMQ frontend failed to bind")
-    for ref in config.models:
-        try:
-            sup.prepare(ref)
-        except FxdnaError as e:
-            print(f"fxdna: startup prepare {ref}: {e.message} "
-                  f"[{e.error_code}]", file=sys.stderr)
+    for outcome in sup.reconcile_configured():
+        if not outcome["ok"]:
+            print(f"fxdna: startup prepare {outcome['ref']}:"
+                  f" {outcome['reason']} [{outcome['code']}]",
+                  file=sys.stderr)
     print(f"fxdna: serving endpoint={config.endpoint} "
           f"data={sup.data_dir}", file=sys.stderr)
     # Explicit handlers: as container PID 1 the default SIGTERM action

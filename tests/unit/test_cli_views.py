@@ -138,6 +138,20 @@ class FakeSupervisor:
     def prepare(self, ref):
         self.prepared.append(ref)
 
+    reconcile_outcomes = None
+
+    def reconcile_configured(self):
+        # Mirror the serve-loop contract: one ok outcome per
+        # configured ref, prepared in order.
+        if self.reconcile_outcomes is not None:
+            return self.reconcile_outcomes
+        outcomes = []
+        for ref in self.config.models:
+            self.prepare(ref)
+            outcomes.append({"ref": ref, "ok": True, "state": "PREPARED",
+                             "compile_key": None, "cache_hit": True})
+        return outcomes
+
     def stop(self):
         self.stopped = True
 
@@ -193,7 +207,7 @@ class StopFailFrontend(FakeFrontend):
 
 
 class TestServeLifecycle(unittest.TestCase):
-    def run_serve(self, frontend_cls):
+    def run_serve(self, frontend_cls, reconcile_outcomes=None):
         import frigate_xdna.transport.frigate_zmq as zmq_mod
         FakeFrontend.instances.clear()
         with tempfile.TemporaryDirectory() as d:
@@ -208,6 +222,8 @@ class TestServeLifecycle(unittest.TestCase):
 
             def fake_sup_factory(config, **_kw):
                 sup = FakeSupervisor(config)
+                if reconcile_outcomes is not None:
+                    sup.reconcile_outcomes = reconcile_outcomes
                 sups.append(sup)
                 return sup
 
@@ -283,6 +299,24 @@ class TestServeLifecycle(unittest.TestCase):
         rc, sup, fe = self.run_serve(StopFailFrontend)
         self.assertEqual(rc, SUCCESS)
         self.assertTrue(sup.stopped)
+
+    def test_serve_reports_failed_reconcile_on_stderr(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc, sup, fe = self.run_serve(
+                FakeFrontend,
+                reconcile_outcomes=[{
+                    "ref": "plus://startup", "ok": False,
+                    "code": "INVALID_MODEL",
+                    "reason": "local file not found: '/x.onnx'"}])
+        self.assertEqual(rc, SUCCESS)
+        self.assertEqual(sup.prepared, [])
+        line = buf.getvalue()
+        self.assertIn("startup prepare plus://startup", line)
+        self.assertIn("local file not found", line)
+        self.assertIn("[INVALID_MODEL]", line)
 
     def test_serve_startup_failure_propagates(self):
         with self.assertRaises(RuntimeError) as ctx:

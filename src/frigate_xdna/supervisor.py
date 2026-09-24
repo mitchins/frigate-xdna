@@ -397,6 +397,38 @@ class Supervisor:
                          f"unknown admin command {cmd!r}")
 
     # -- preparation --------------------------------------------------
+    def reconcile_configured(self) -> list[dict]:
+        """Startup/desired-state reconciliation for configured refs.
+
+        Each FXDNA_MODELS ref is prepared; failures are reported per
+        ref, never raised. Operator-owned local sources (`local://ID`
+        and explicit `.onnx` paths) are mutable aliases, so changed
+        bytes are accepted here as a new revision: inspected, prepared
+        alongside the preserved previous artifact, with no worker
+        switch (activation stays byte-bound and explicit). Plus refs
+        never auto-refresh (SPEC §4.4: no silent re-acquisition).
+        Interactive `prepare` without `--refresh` still reports
+        SOURCE_CHANGED for explicit acknowledgement.
+        """
+        outcomes = []
+        for ref in self.config.models:
+            try:
+                kind = parse_ref(ref, self.config.model_dir)["kind"]
+            except FxdnaError:
+                kind = None
+            try:
+                out = self.prepare(
+                    ref, refresh=kind in ("local", "onnx"))
+                outcomes.append({"ref": ref, "ok": True,
+                                 "state": out.get("state"),
+                                 "compile_key": out.get("compile_key"),
+                                 "cache_hit": out.get("cache_hit")})
+            except FxdnaError as e:
+                outcomes.append({"ref": ref, "ok": False,
+                                 "code": e.error_code,
+                                 "reason": e.message})
+        return outcomes
+
     def _plus_client(self) -> PlusClient:
         if self.config.offline:
             raise FxdnaError(4, "ACQUISITION_FAILED",
@@ -581,7 +613,13 @@ class Supervisor:
             os.rename(dest, aside)
         staged = os.path.join(self.data_dir, "work", f"stage-{job['uuid']}")
         os.makedirs(staged, exist_ok=True)
-        source = (self.registry.get_ref(job["ref"]) or {}).get(
+        # The artifact was compiled from the job's source bytes, which
+        # may no longer be the ref's current source: a revision can
+        # advance (reconcile/refresh) while an older attempt is still
+        # resumable. Publish with the job-bound digest; the ref digest
+        # is only a fallback for legacy rows that predate it.
+        source = job.get("source_sha256") or (
+            self.registry.get_ref(job["ref"]) or {}).get(
             "source_sha256") or ""
         backend = self.jobs.backend_for(job["uuid"])
         # Backend identity comes from the producer object, never from config.
