@@ -336,7 +336,7 @@ class TestLocalReadme(unittest.TestCase):
 
     def test_local_path_names_its_release(self):
         self.assertIn("need frigate-xdna 0.1.2 or newer", self.text)
-        self.assertIn("the 0.1.1 image does not\nunderstand them",
+        self.assertIn("The\n0.1.1 image does not understand them",
                       self.text)
 
     def test_sequential_shell_uses_exports_and_repeat_f(self):
