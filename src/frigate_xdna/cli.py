@@ -674,7 +674,9 @@ def cmd_wait(config, args) -> int:
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
-    if "--version" in argv:
+    # Exact standalone invocation only: a "--version" behind "--" or a
+    # subcommand is a positional/invalid flag for the parser to reject.
+    if argv == ["--version"]:
         from .build_identity import version_string
         print(version_string())
         return SUCCESS

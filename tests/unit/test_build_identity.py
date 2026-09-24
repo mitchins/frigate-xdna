@@ -150,6 +150,10 @@ class TestIdentityInOutputs(unittest.TestCase):
         # wraps past 80 columns on non-tty output (release gate).
         lines = buf.getvalue().strip().splitlines()
         self.assertEqual(len(lines), 1)
+        # A "--version" behind "--" is a positional, not the flag.
+        with self.assertRaises(SystemExit) as cm2:
+            main(["--", "--version"])
+        self.assertNotEqual(cm2.exception.code, 0)
         out = lines[0]
         self.assertTrue(out.startswith("fxdna "))
         self.assertIn("revision=", out)
