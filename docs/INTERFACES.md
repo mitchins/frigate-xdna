@@ -22,7 +22,7 @@ Normative companion to `SPEC.md`. These are proposed interfaces to implement, no
 | `fxdna health [--ready]` | Supervisor liveness by default (bounded admin request; dead daemon, stale socket, or failed request is `alive: false` with a nonzero exit — never success with `alive: false`). `--ready` requires a loaded, alive, permitted worker with no inhibition. No NPU probe, no compile, no test inference. Compose uses liveness (first-time compilation is not daemon failure). |
 | `fxdna recover REF --acknowledge` | The documented recovery route through the daemon. Clears a non-safety inhibition after displaying the reason, and opens one new bounded retry cycle (attempts reset, ≤3 attempts, backoff) for a retryable terminal job. Safety-class inhibitions (quarantine, device fault, suspect host reset, unclean operation) are refused with the reason and next action — never bypassed. Unknown legacy failures report what remains unknown; the explicit acknowledgement starts one bounded cycle without pretending the failure was understood. Does not itself submit inference. Exit 0 only when something cleared or requeued; safety refusal exits 8, any other no-op exits 3. |
 
-`REF` is `plus://ID`, a local ONNX path, or a local RAI path with a descriptor. Local paths are ingested once; content keys, not basenames, identify them. The service accepts local files only from its configured import root (Docker `/models`); native CLI may ingest an explicitly supplied path into the cache.
+`REF` is `plus://ID`, `local://ID` (resolved to `<FXDNA_MODEL_DIR>/ID.onnx`, default `/models`), a local ONNX path, or a local RAI path with a descriptor. Local sources are ingested once; content keys, not basenames, identify them. A `local://ID` is a mutable alias: changed bytes are a new revision (new source SHA, previous artifact kept), never a silent mutation. The service accepts local files only from its configured import root (Docker `/models`); native CLI may ingest an explicitly supplied path into the cache.
 
 The daemon is the only registry writer. Online commands use `/run/frigate-xdna/control.sock`. Standalone prepare uses the same manager implementation, not a second shell recipe. `serve` ignores no unknown arguments. Log/status JSON has `schema_version: 1`.
 
@@ -48,6 +48,7 @@ Suggested CLI exit codes:
 | `FXDNA_MODELS` | empty | Comma/newline separated preparation refs; each is pinned and queued once. |
 | `PLUS_API_KEY` | unset | The sole Plus credential (container environment): the same key already configured for Frigate. Never logged, redacted from status/diagnose, never forwarded to compiler/native child environments or baked into images. |
 | `FXDNA_DATA_DIR` | `/data` in image | Local persistent registry/cache/work root. |
+| `FXDNA_MODEL_DIR` | `/models` in image | Absolute directory for `local://ID` refs (`<dir>/ID.onnx`); empty or relative values are rejected (`INVALID_CONFIG`). |
 | `FXDNA_ENDPOINT` | `tcp://0.0.0.0:5555` in image; loopback natively | Stock Frigate detector endpoint; `ipc://` also supported. |
 | `FXDNA_DEVICE` | `/dev/accel/accel0` | Device node; does not imply target compatibility. |
 | `FXDNA_LOG_LEVEL` | `info` | Structured logging verbosity; debug still redacts secrets. |

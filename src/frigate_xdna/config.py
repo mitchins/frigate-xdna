@@ -18,12 +18,18 @@ DEFAULT_LOG_LEVEL = "info"
 VALID_LOG_LEVELS = ("debug", "info", "warning", "error")
 
 
+DEFAULT_MODEL_DIR_IMAGE = "/models"
+
+
 @dataclass(frozen=True)
 class Config:
     models: tuple[str, ...] = ()
     # The sole Plus credential input (container environment). Never
     # logged, never baked into images, never passed to child envs.
     plus_api_key: str | None = None
+    # Local model directory: `local://ID` resolves to
+    # `<model_dir>/ID.onnx`. Absolute; the appliance default is /models.
+    model_dir: str = DEFAULT_MODEL_DIR_IMAGE
     data_dir: str = DEFAULT_DATA_DIR_IMAGE
     endpoint: str = DEFAULT_ENDPOINT_IMAGE
     device: str = DEFAULT_DEVICE
@@ -36,6 +42,7 @@ class Config:
         return {
             "models": list(self.models),
             "plus_api_key_set": self.plus_api_key is not None,
+            "model_dir": self.model_dir,
             "data_dir": self.data_dir,
             "endpoint": self.endpoint,
             "device": self.device,
@@ -85,9 +92,16 @@ def load_config(env: dict[str, str] | None = None) -> Config:
     if "://" not in endpoint:
         raise FxdnaError(INVALID_ARGS, "INVALID_CONFIG",
                          f"FXDNA_ENDPOINT must be a URL, got {endpoint!r}")
+    model_dir = env.get("FXDNA_MODEL_DIR",
+                        DEFAULT_MODEL_DIR_IMAGE).strip()
+    if not model_dir or not os.path.isabs(model_dir):
+        raise FxdnaError(INVALID_ARGS, "INVALID_CONFIG",
+                         "FXDNA_MODEL_DIR must be an absolute path, got"
+                         f" {model_dir!r}")
     return Config(
         models=_split_models(env.get("FXDNA_MODELS", "")),
         plus_api_key=key,
+        model_dir=model_dir,
         data_dir=env.get("FXDNA_DATA_DIR", DEFAULT_DATA_DIR_IMAGE).strip(),
         endpoint=endpoint,
         device=env.get("FXDNA_DEVICE", DEFAULT_DEVICE).strip(),
