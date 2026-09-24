@@ -134,6 +134,23 @@ class TestSummarize(unittest.TestCase):
         self.assertIsNone(summary["input"])
         self.assertIsNone(summary["class_count"])
 
+    def test_wrong_rank_is_not_called_dynamic(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "flat.onnx")
+            make_graph(path, [("images", [3, 320, 320])],
+                       [("output0", [84, 100])])
+            with open(path, "rb") as f:
+                model, digest = _inspect.load_graph_bytes(f.read())
+            with self.assertRaises(FxdnaError) as ctx:
+                _inspect.inspect_model(model)
+            self.assertIn("input rank 3", ctx.exception.message)
+            self.assertNotIn("dynamic", ctx.exception.message)
+            summary = _inspect.summarize_inspection(
+                None, None, ctx.exception, digest)
+        self.assertFalse(summary["compatible"])
+        self.assertIn("input rank 3", summary["reason"])
+        self.assertEqual(summary["source_sha256"], digest)
+
     def test_multi_output_points_at_raw_exports(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "two.onnx")
@@ -185,6 +202,10 @@ class TestPrepareRecordsInspection(unittest.TestCase):
                 self.assertTrue(stored["compatible"])
                 self.assertEqual(stored["class_count"], 4)
                 self.assertEqual(stored["output"], "raw YOLO [1,8,100]")
+                self.assertEqual(
+                    stored["source_sha256"],
+                    sup.registry.get_ref(
+                        "local://good")["source_sha256"])
                 doc = sup.status("local://good")
                 jsonschema.validate(doc, schema)
                 view = doc["models"][0]
@@ -244,6 +265,42 @@ class TestPrepareRecordsInspection(unittest.TestCase):
                 doc = sup.status("local://dyn")
                 self.assertFalse(
                     doc["models"][0]["inspection"]["compatible"])
+            finally:
+                sup.stop()
+
+
+    def test_refusal_for_pending_bytes_binds_new_source(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as data, \
+                tempfile.TemporaryDirectory() as models:
+            path = os.path.join(models, "swap.onnx")
+            make_raw_yolo(path, res=320, classes=4, seed=3)
+            cfg = load_config({"FXDNA_DATA_DIR": data,
+                               "FXDNA_MODEL_DIR": models})
+            sup = Supervisor(cfg, reporter=RecordingReporter())
+            try:
+                sup.prepare("local://swap")
+                self.assertEqual(
+                    pump_until(sup, "local://swap", ("PREPARED",)),
+                    "PREPARED")
+                old_source = sup.registry.get_ref(
+                    "local://swap")["source_sha256"]
+                # Operator replaces the file with an incompatible
+                # revision: the refusal describes the pending bytes,
+                # not the still-current source.
+                make_dynamic_input(path)
+                with open(path, "rb") as f:
+                    new_digest = hashlib.sha256(f.read()).hexdigest()
+                self.assertNotEqual(new_digest, old_source)
+                with self.assertRaises(FxdnaError) as ctx:
+                    sup.prepare("local://swap")
+                self.assertEqual(ctx.exception.error_code,
+                                 "UNSUPPORTED_CONTRACT")
+                ref = sup.registry.get_ref("local://swap")
+                self.assertEqual(ref["source_sha256"], old_source)
+                self.assertFalse(ref["inspection"]["compatible"])
+                self.assertEqual(ref["inspection"]["source_sha256"],
+                                 new_digest)
             finally:
                 sup.stop()
 

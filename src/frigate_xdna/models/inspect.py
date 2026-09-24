@@ -81,7 +81,11 @@ def inspect_model(model) -> dict:
         raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
                     "only float32 graph inputs are supported")
     shape = [_dim_value(d) for d in ttype.shape.dim]
-    if len(shape) != 4 or any(v is None for v in shape):
+    if len(shape) != 4:
+        raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
+                    f"input rank {len(shape)} is not supported;"
+                    " export a static batch-one NCHW model")
+    if any(v is None for v in shape):
         raise _fail(UNSUPPORTED_CONTRACT, "UNSUPPORTED_CONTRACT",
                     "dynamic input dimensions are not supported;"
                     " export a static batch-one NCHW model")
@@ -149,7 +153,8 @@ def classify_output(outputs: list[dict]) -> dict:
 
 
 def summarize_inspection(contract: dict | None, cls: dict | None,
-                         error: FxdnaError | None = None) -> dict:
+                         error: FxdnaError | None = None,
+                         source_sha256: str | None = None) -> dict:
     """Stable appliance view of one graph inspection.
 
     The same dict drives preparation, console logs and status: a single
@@ -157,6 +162,9 @@ def summarize_inspection(contract: dict | None, cls: dict | None,
     count only (channels-4 for the raw-YOLO profile); label names are
     never inferred — Frigate owns the label map. Compatibility is never
     claimed from a filename or model family, only from this graph.
+    `source_sha256` binds the summary to the exact bytes described, so
+    a refusal stored for pending bytes is never mistaken for the
+    verdict on the ref's current source.
     """
     profile = (cls or {}).get("profile")
     compatible = error is None and profile is not None
@@ -171,6 +179,7 @@ def summarize_inspection(contract: dict | None, cls: dict | None,
         output_line = f"raw YOLO [1,{channels},{anchors}]"
     return {
         "compatible": compatible,
+        "source_sha256": source_sha256,
         "reason": None if compatible else
         (error.message if error is not None else
          (cls or {}).get("error", "incompatible contract")),

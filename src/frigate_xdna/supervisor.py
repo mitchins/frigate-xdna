@@ -434,6 +434,7 @@ class Supervisor:
         INSPECTION refusal, never a generic COMPILE_FAILED.
         """
         contract = cls = None
+        digest = None
         try:
             model, digest = _inspect.load_graph_bytes(data)
             contract = _inspect.inspect_model(model)
@@ -445,12 +446,14 @@ class Supervisor:
                                  "UNSUPPORTED_CONTRACT", cls["error"])
         except FxdnaError as e:
             self.registry.set_ref_inspection(
-                ref, _inspect.summarize_inspection(contract, cls, e))
+                ref, _inspect.summarize_inspection(contract, cls, e,
+                                                   digest))
             self.emit({"kind": "preparation_failed", "ref": ref,
                        "phase": "INSPECTION", "code": e.error_code,
                        "reason": e.message})
             raise
-        summary = _inspect.summarize_inspection(contract, cls, None)
+        summary = _inspect.summarize_inspection(contract, cls, None,
+                                                digest)
         self.registry.set_ref_inspection(ref, summary)
         shape = contract.get("input_shape")
         self.emit({"kind": "inspection_complete", "ref": ref,
@@ -1094,7 +1097,8 @@ class Supervisor:
         # shared inspector, so record its summary here rather than
         # re-validating with a second rule set.
         self.registry.set_ref_inspection(
-            ref, _inspect.summarize_inspection(contract, cls, None))
+            ref, _inspect.summarize_inspection(contract, cls, None,
+                                               source_sha256))
         # Use the same ingestion as local ONNX but with data already
         # fetched: _ingest_source with origin "local" and inspected extra.
         return self._ingest_source(
