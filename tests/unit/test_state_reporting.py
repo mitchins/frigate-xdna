@@ -476,6 +476,13 @@ class TestSupersededRevisionProjection(unittest.TestCase):
                 reg.set_ref_source("local://m", sha_a, None, "QUEUED")
                 view = project_ref(reg, "local://m", "key-a")
                 self.assertEqual(view["state"], "ACTIVE")
+                # Missing hashes never project ACTIVE on a key
+                # match alone.
+                reg.set_ref_source("local://m", sha_a, None, "QUEUED")
+                reg.execute("UPDATE model_refs SET source_sha256=NULL"
+                            " WHERE ref=?", ("local://m",))
+                view = project_ref(reg, "local://m", "key-a")
+                self.assertEqual(view["state"], "QUEUED")
             finally:
                 reg.close()
 

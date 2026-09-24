@@ -96,7 +96,8 @@ class TestIdentityRead(unittest.TestCase):
         ident = get_build_identity()
         self.assertEqual(ident["channel"], "development")
         self.assertEqual(ident["revision"], "0746729")
-        for bad in ("abc123", "XYZ7890", "", "0746729 "):
+        for bad in ("abc123", "XYZ7890", "", "0746729 ",
+                      "0746729\n"):
             with self.subTest(bad=bad):
                 self._point({"schema_version": 1, "version": "0.1.2.dev0",
                              "revision": bad})

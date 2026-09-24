@@ -39,7 +39,8 @@ CHANNEL_RELEASE = "release"
 
 
 def _development(version: str, revision: str = "unknown") -> dict:
-    if not isinstance(revision, str) or not DEV_REVISION_RE.match(revision):
+    if (not isinstance(revision, str)
+            or not DEV_REVISION_RE.fullmatch(revision)):
         revision = "unknown"
     return {"schema_version": 1, "version": version,
             "revision": revision, "channel": CHANNEL_DEVELOPMENT}

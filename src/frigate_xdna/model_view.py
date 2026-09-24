@@ -52,11 +52,13 @@ def _ranked_state(stored: str, verified: bool,
                    ref_source: str | None = None) -> str:
     if live_worker_key and key == live_worker_key:
         # The worker serves this ref's newest prepared artifact — but
-        # only claim ACTIVE when it serves the ref's CURRENT source.
-        # While a new revision compiles (or waits for Frigate to bind
-        # it), the live worker still serves previous bytes; ACTIVE
-        # then would pretend the new revision serves.
-        if key_source and ref_source and key_source != ref_source:
+        # only claim ACTIVE when it provably serves the ref's CURRENT
+        # source. While a new revision compiles (or waits for Frigate
+        # to bind it), the live worker still serves previous bytes;
+        # ACTIVE then would pretend the new revision serves. Missing
+        # hashes are also not ACTIVE: without both bytes identified,
+        # a key match alone cannot prove what serves.
+        if not key_source or not ref_source or key_source != ref_source:
             return stored
         return "ACTIVE"
     if stored == "PREPARED" and verified:
