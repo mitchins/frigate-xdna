@@ -43,7 +43,23 @@ fp32 → `output0 [1,84,2100]` fp32, opset 18, IR 10, 80 classes,
 
 Chart: `/mnt/downloads/fxdna-012-scale/yolov9-320-scaling.png`
 (raw numbers: `/mnt/downloads/fxdna-012-scale/scale-results.json`;
-binaries, logs, bench harness: same directory).
+binaries, logs, bench harness: same directory). That path is the
+build host's local evidence area, not a durable public location —
+but every byte above is reproducible from public inputs, and the
+full digests below identify exactly which files were measured.
+
+Full SHA-256 (weights `.pt` / exported `.onnx`):
+
+- T: `61e080e964e65e32b884477c5e6344c607c7e02103d64649de810edaeb869803`
+  / `338ba4addc585da4d19ca59624cc51d9ff8aa8ef1e7675b5b5f9e456fa5ea4ce`
+- S: `09bf9ca4adef37944f4406455b5b81b451c1e67307916e4702da68cda4d3e46d`
+  / `1f3121d6372d8eefc5c91f911772ea313a8e66938f63c7bf0f82e4a38a10e949`
+- M: `4f60eef3aca520d4a74e80d1c246c6b094ba40228f22bea13e864cd7a49c2349`
+  / `9a85f17b63951c5d3702318637fb2cc7009b74237c76de03dcfb64d2511cf30c`
+- C: `39b6b490b1e4034b4fefdcdac81380155e0a30ba6c938a9751e2c351f81a517f`
+  / `c7009a1cf132aa2659214b9143f9d5d580da3e95e82b9b39baaa94d7d485c3d4`
+- E: `6763139daa09adfe3c694226725b460211f1f717b971bfade10a548b600716e2`
+  / `3e894d2a17330595c42650dc00f8077a37cda87039d6f8b1e94624b3679f2fc9`
 
 ## Verdict
 
