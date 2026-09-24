@@ -270,6 +270,106 @@ class TestLocalOverlay(unittest.TestCase):
         self.assertIn("FXDNA_MODEL_HOST_DIR", text)
 
 
+def readme_portainer_block(text: str):
+    """The fenced YAML merged stack shown for Portainer users."""
+    marker = "Local stack (`examples/compose.yaml`"
+    start = text.index(marker)
+    fence = text.index("```yaml", start)
+    end = text.index("```", fence + 7)
+    return text[fence + len("```yaml"):end]
+
+
+class TestLocalReadme(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with open(README, encoding="utf-8") as f:
+            cls.text = f.read()
+
+    def test_both_users_on_first_screen(self):
+        self.assertIn(
+            "Use Frigate+ or compatible local YOLO ONNX models."
+            " Local models\nrequire no account or API key.", self.text)
+
+    def test_mount_table_names_all_four_places(self):
+        for path in ("/srv/frigate/models/yolov9-t-320.onnx",
+                     "/models/yolov9-t-320.onnx",
+                     "local://yolov9-t-320",
+                     "/config/models/yolov9-t-320.onnx"):
+            self.assertIn(path, self.text)
+
+    def test_local_frigate_block_is_frigate_contract(self):
+        for marker in ("model_type: yolo-generic",
+                       "input_tensor: nchw",
+                       "input_dtype: float",
+                       "labelmap_path: /labelmap/coco-80.txt",
+                       "width: 320",
+                       "height: 320"):
+            self.assertIn(marker, self.text)
+        self.assertIn("The\nONNX bytes must match.", self.text)
+        self.assertIn("`labelmap_path` belongs to Frigate",
+                      self.text)
+
+    def test_export_routes_are_links_not_recipes(self):
+        self.assertIn("https://docs.frigate.video/configuration/"
+                      "object_detectors/", self.text)
+        self.assertIn("https://docs.ultralytics.com/modes/export/",
+                      self.text)
+
+    def test_no_model_freedom_marketing(self):
+        lowered = self.text.lower()
+        for banned in ("fully supported", "model freedom",
+                       "bring your own", "unlock the"):
+            self.assertNotIn(banned, lowered)
+
+    def test_compatibility_separates_graph_from_hardware(self):
+        for tier in ("Graph contract", "XDNA inference",
+                     "Frigate end-to-end", "Pending (C7)"):
+            self.assertIn(tier, self.text)
+        self.assertIn("is not hardware\nqualification", self.text)
+
+    def test_lifecycle_is_startup_not_watching(self):
+        self.assertIn("picked up at the next container start",
+                      self.text)
+        self.assertIn("prepare --refresh", self.text)
+        self.assertIn("The directory is not\nwatched", self.text)
+        self.assertIn("never\nswitches until Frigate binds",
+                      self.text)
+
+    def test_local_path_names_its_release(self):
+        self.assertIn("need frigate-xdna 0.1.2 or newer", self.text)
+        self.assertIn("the 0.1.1 image does not\nunderstand them",
+                      self.text)
+
+    def test_sequential_shell_uses_exports_and_repeat_f(self):
+        block = self.text[self.text.index("### Path B"):
+                          self.text.index("### Portainer")]
+        self.assertIn("export NPU_GID=", block)
+        self.assertIn("export FXDNA_MODEL_HOST_DIR=", block)
+        self.assertIn("export FXDNA_MODELS=local://yolov9-t-320",
+                      block)
+        ups = [line for line in block.splitlines()
+               if "docker compose" in line]
+        self.assertGreaterEqual(len(ups), 2)
+        for line in ups:
+            self.assertIn("-f compose.yaml -f compose.local.yaml",
+                          line)
+
+    def test_portainer_block_matches_shipped_overlay(self):
+        doc = parse_subset(readme_portainer_block(self.text))
+        xdna = doc["services"]["xdna"]
+        self.assertEqual(
+            xdna["environment"]["FXDNA_MODEL_DIR"], "/models")
+        volumes = [str(v) for v in xdna["volumes"]]
+        self.assertIn("xdna-data:/data", volumes)
+        self.assertTrue(
+            any(v.endswith(":/models:ro") and "FXDNA_MODEL_HOST_DIR" in v
+                for v in volumes))
+        self.assertIn("ghcr.io/mitchins/frigate-xdna",
+                      str(xdna["image"]))
+        self.assertEqual(xdna["ulimits"]["memlock"]["soft"], -1)
+        self.assertNotIn("PLUS_API_KEY", str(xdna["environment"]))
+
+
 class TestReadmeAgreesWithFiles(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

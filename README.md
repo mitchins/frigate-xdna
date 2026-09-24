@@ -78,13 +78,23 @@ Images publish from version tags starting at `v0.1.0-rc.2`
 (see `docs/RELEASE.md`); `:latest` is only ever published for stable
 releases.
 
+Use Frigate+ or compatible local YOLO ONNX models. Local models
+require no account or API key.
+
+Two installation paths share the image, device group, and data
+volume; they differ only in where models come from.
+
 Compose files (the files you actually deploy):
 
 - `examples/compose.yaml` — canonical sidecar (required).
 - `examples/compose.plus.yaml` — Plus model acquisition overlay.
   Local-only deployments omit it and need no Plus secret.
+- `examples/compose.local.yaml` — local model directory overlay
+  (read-only `/models` bind). Plus-only deployments omit it.
 - `examples/compose.host-port.yaml` — only when Frigate cannot join
   the sidecar's Docker network (see "Frigate config" below).
+
+### Path A: Frigate+ models
 
 Deploy with stock Frigate on the same Docker network:
 
@@ -109,39 +119,158 @@ start without it) and uses the `plus://` form for Plus models. The
 default image is the latest stable release; override with
 `FXDNA_IMAGE=...` for a newer candidate or a pinned digest.
 
-Local-only deployments omit the Plus overlay and need no Plus
-secret:
+### Path B: local YOLO ONNX models
 
-```sh
-NPU_GID=$(stat -c %g /dev/accel/accel0) \
-FXDNA_MODELS="/models/yolov9s-320.onnx" \
-docker compose -f examples/compose.yaml up -d
-```
+Local `local://` refs need frigate-xdna 0.1.2 or newer (in
+development at the time of writing): the 0.1.1 image does not
+understand them. Point `FXDNA_IMAGE` at a 0.1.2 release when
+published; image references are aligned during release
+qualification.
 
-with the local file bind-mounted under the configured import root
-(see `examples/compose.yaml` and `docs/OPERATIONS.md`). The sidecar
-needs no published ZMQ port when stock Frigate joins the same
-network.
+Obtain → mount → select → prepare → connect Frigate:
+
+1. Obtain a compatible ONNX. For YOLOv9 follow [Frigate's documented
+   export](https://docs.frigate.video/configuration/object_detectors/);
+   for Ultralytics exports use a static batch-one FP32 ONNX with raw
+   predictions ([export docs](https://docs.ultralytics.com/modes/export/)).
+   The sidecar inspects the graph and refuses unsupported contracts
+   before compiling — no need to guess compatibility.
+2. Put the file in your model directory. Paths may differ per
+   container; only the bytes must match:
+
+   | Location | Path |
+   |---|---|
+   | Host | `/srv/frigate/models/yolov9-t-320.onnx` |
+   | Sidecar | `/models/yolov9-t-320.onnx` (read-only bind) |
+   | Sidecar ref | `local://yolov9-t-320` |
+   | Frigate | `/config/models/yolov9-t-320.onnx` |
+
+3. From one shell, in order:
+
+   ```sh
+   cd frigate-xdna/examples
+   export NPU_GID=$(stat -c %g /dev/accel/accel0)
+   export FXDNA_MODEL_HOST_DIR=/srv/frigate/models
+   export FXDNA_MODELS=local://yolov9-t-320
+   docker compose -f compose.yaml -f compose.local.yaml up -d xdna
+   docker compose -f compose.yaml -f compose.local.yaml logs -f xdna
+   ```
+
+   Wait for `Model inspection complete:
+   local://yolov9-t-320: yolo-raw 1x3x320x320 80 classes`, then
+   `Model prepared; waiting for Frigate at …`.
+4. Point Frigate at the same bytes:
+
+   ```yaml
+   detectors:
+     xdna:
+       type: zmq
+       endpoint: tcp://xdna:5555
+   model:
+     path: /config/models/yolov9-t-320.onnx
+     model_type: yolo-generic
+     width: 320
+     height: 320
+     input_tensor: nchw
+     input_dtype: float
+     labelmap_path: /labelmap/coco-80.txt
+   ```
+
+   `width`/`height` must match the export. For the standard COCO
+   model Frigate already ships the label map — use
+   `/labelmap/coco-80.txt` as above and do not create a labels file.
+   Custom models need their actual class mapping; the sidecar
+   preserves numeric class IDs and never invents labels.
+
+Replacing `/srv/frigate/models/yolov9-t-320.onnx` with new bytes is
+picked up at the next container start (recreate the container); an
+interactive update uses `prepare --refresh`. The directory is not
+watched, the previous artifact is kept, and the active worker never
+switches until Frigate binds the new bytes.
+
+The sidecar needs no published ZMQ port when stock Frigate joins the
+same network.
 
 ### Portainer
 
-Paste the same files as a Portainer stack (or upload them), then set
-these stack environment variables:
+Portainer stacks take a single Compose file, so use the merged file
+for your path below (Compose CLI users should keep using the `-f`
+overlays instead of copying this). Paste it into the stack editor,
+then set the stack environment variables from the table underneath.
+
+Local stack (`examples/compose.yaml` +
+`examples/compose.local.yaml` merged):
+
+```yaml
+services:
+  xdna:
+    image: ${FXDNA_IMAGE:-ghcr.io/mitchins/frigate-xdna:0.1.1}
+    init: true
+    restart: unless-stopped
+    user: "10001:10001"
+    group_add:
+      - "${NPU_GID:?Set NPU_GID to the accelerator device group ID}"
+    devices:
+      - /dev/accel/accel0:/dev/accel/accel0
+    environment:
+      FXDNA_MODELS: "${FXDNA_MODELS:?Set selected model references}"
+      FXDNA_DATA_DIR: /data
+      FXDNA_ENDPOINT: tcp://0.0.0.0:5555
+      FXDNA_LOG_LEVEL: info
+      FXDNA_MODEL_DIR: /models
+    volumes:
+      - xdna-data:/data
+      - "${FXDNA_MODEL_HOST_DIR:?Set the host model directory}:/models:ro"
+    networks:
+      - xdna-net
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run:rw,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=0700
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+    cpus: "4.0"
+    mem_limit: 8g
+    memswap_limit: 8g
+    pids_limit: 512
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "fxdna", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  xdna-data:
+    name: frigate-xdna-data
+
+networks:
+  xdna-net:
+    name: frigate-xdna-net
+```
 
 | Variable | Value | `plus://`? |
 |---|---|---|
-| `FXDNA_IMAGE` | `ghcr.io/mitchins/frigate-xdna:0.1.1` (or newer) | no |
-| `FXDNA_MODELS` | `plus://<model-id>` (or a `/models/...` path) | yes, for Plus models |
+| `FXDNA_IMAGE` | `ghcr.io/mitchins/frigate-xdna:0.1.1` (or newer; 0.1.2+ for `local://`) | no |
+| `FXDNA_MODELS` | `local://<name>` (local stack) or `plus://<model-id>` | yes, for Plus models |
 | `NPU_GID` | numeric group of `/dev/accel/accel0` | no |
-| `FXDNA_MODEL_HOST_DIR` | host path of the model directory, mounted read-only at `/models` (local overlay only) | no |
-| `PLUS_API_KEY` | the same raw key value already configured for Frigate (no `plus://`) | no |
+| `FXDNA_MODEL_HOST_DIR` | host path of the model directory, mounted read-only at `/models` (local stack only) | no |
+| `PLUS_API_KEY` | the same raw key value already configured for Frigate (no `plus://`; Plus stack only) | no |
 | `FXDNA_BIND_IP` | only for host-networked Frigate (default `127.0.0.1`) | no |
 
 ## Frigate config
 
 Point stock Frigate at the sidecar (no Frigate patches, no new
 detector type). Prepare the same model in the sidecar first; Frigate
-uses its own Plus API key for its model/metadata.
+uses its own Plus API key for its model/metadata (no key involved
+for local models).
 
 **Shared Docker network** (default, no published ZMQ port):
 
@@ -156,6 +285,25 @@ detectors:
 model:
   path: plus://MODEL_ID
 ```
+
+…or the same local bytes Frigate already holds (`width`/`height`
+must match the export; standard COCO models use Frigate's
+`/labelmap/coco-80.txt`):
+
+```yaml
+model:
+  path: /config/models/yolov9-t-320.onnx
+  model_type: yolo-generic
+  width: 320
+  height: 320
+  input_tensor: nchw
+  input_dtype: float
+  labelmap_path: /labelmap/coco-80.txt
+```
+
+The in-container paths may differ between the two containers. The
+ONNX bytes must match. `labelmap_path` belongs to Frigate:
+frigate-xdna preserves the model's numeric class IDs.
 
 **Host-networked Frigate** (Frigate has `network_mode: host`, or
 lives outside the sidecar's Docker network — it cannot resolve the
@@ -251,11 +399,17 @@ stock Frigate ZMQ
 | Ryzen AI 400                | Not yet tested |
 | Older XDNA1                 | Unsupported / not tested |
 
-| Model                          | Status                              |
-| ------------------------------ | ----------------------------------- |
-| Frigate+ YOLOv9s-320           | Certified                           |
-| Compatible YOLO-style fine-tunes | Compile locally; contract dependent |
-| Arbitrary ONNX                 | Not promised                        |
+Graph compatibility (inspector contract) is not hardware
+qualification: entries move right only with measured evidence.
+
+| Source | Graph contract | XDNA inference | Frigate end-to-end |
+|---|---|---|---|
+| Frigate+ YOLOv9s-320 | Checked | Verified | Qualified (v0.1.1) |
+| Public YOLOv9-t-320, Frigate export route | Checked ([manifest](tests/fixtures/yolo-public-contracts-0.1.2.manifest.json)) | Pending (C7) | Pending (C7) |
+| Banked YOLOv8n-640 | Checked (manifest) | Pending (C7) | Pending (C7) |
+| Ultralytics YOLO11n-320, raw export | Checked (manifest) | Pending (C7) | Pending (C7) |
+| Other raw YOLO ONNX | Inspected at install; contract-dependent | If the contract fits | After local qualification |
+| Arbitrary ONNX / embedded NMS / segmentation etc. | Not promised | — | — |
 
 ## Development
 
