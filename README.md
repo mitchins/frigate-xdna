@@ -26,7 +26,7 @@ No SDK installation, manual ONNX conversion, database editing, or compiler-log i
 
 ## Status
 
-Release candidate. Validated:
+Stable release: v0.1.1. Validated:
 
 - Ryzen AI Max+ 395 / Strix Halo / XDNA2
 - Frigate 0.18.0

@@ -1,5 +1,5 @@
-# Canonical sidecar deployment. The default image is the latest published
-# release candidate (override with FXDNA_IMAGE for a newer/stable tag).
+# Canonical sidecar deployment. The default image is the latest stable release
+# (override with FXDNA_IMAGE for a candidate or pinned digest).
 # NPU_GID is the numeric group owning /dev/accel/accel0 on the Docker host.
 services:
   xdna:
