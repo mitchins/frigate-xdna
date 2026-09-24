@@ -71,7 +71,7 @@ are expected targets but not yet certified.
 ## Install
 
 ```sh
-docker pull ghcr.io/mitchins/frigate-xdna:0.1.1-rc.1
+docker pull ghcr.io/mitchins/frigate-xdna:0.1.1
 ```
 
 Images publish from version tags starting at `v0.1.0-rc.2`
@@ -106,8 +106,8 @@ processes.
 `NPU_GID` is the numeric group owning `/dev/accel/accel0` on the
 Docker host. `FXDNA_MODELS` is required (the Compose file refuses to
 start without it) and uses the `plus://` form for Plus models. The
-default image is the latest published release candidate; override
-with `FXDNA_IMAGE=...` for a newer or stable tag.
+default image is the latest stable release; override with
+`FXDNA_IMAGE=...` for a newer candidate or a pinned digest.
 
 Local-only deployments omit the Plus overlay and need no Plus
 secret:
@@ -130,7 +130,7 @@ these stack environment variables:
 
 | Variable | Value | `plus://`? |
 |---|---|---|
-| `FXDNA_IMAGE` | `ghcr.io/mitchins/frigate-xdna:0.1.1-rc.1` (or newer) | no |
+| `FXDNA_IMAGE` | `ghcr.io/mitchins/frigate-xdna:0.1.1` (or newer) | no |
 | `FXDNA_MODELS` | `plus://<model-id>` (or a `/models/...` path) | yes, for Plus models |
 | `NPU_GID` | numeric group of `/dev/accel/accel0` | no |
 | `PLUS_API_KEY` | the same raw key value already configured for Frigate (no `plus://`) | no |
