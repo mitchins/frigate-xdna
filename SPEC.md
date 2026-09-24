@@ -173,13 +173,13 @@ Normal configuration is environment variables plus CLI; no mandatory YAML file o
 
 ```
 FXDNA_MODELS=plus://MODEL_A,plus://MODEL_B
-PLUS_API_KEY_FILE=/run/secrets/PLUS_API_KEY
+PLUS_API_KEY=<the key already configured for Frigate>
 FXDNA_DATA_DIR=/data
 FXDNA_ENDPOINT=tcp://0.0.0.0:5555
 FXDNA_DEVICE=/dev/accel/accel0
 ```
 
-The device and data defaults above are for the Docker image. Native development binds to loopback by default. `PLUS_API_KEY` is supported as an alternative; setting it and `PLUS_API_KEY_FILE` simultaneously is an error. Secrets never appear in CLI arguments, status output, compiler environment, or cache manifests.
+The device and data defaults above are for the Docker image. Native development binds to loopback by default. `PLUS_API_KEY` (container environment) is the sole Plus credential. Secrets never appear in CLI arguments, status output, compiler environment, or cache manifests.
 
 ### 5.2 Administrative interface
 

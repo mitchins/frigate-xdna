@@ -226,7 +226,9 @@ device `/dev/accel/accel0` via `NPU_GID` (no `/dev/kfd`), no
 privileged, no socket, `cap_drop: ALL` + `no-new-privileges`,
 `read_only: true` + tmpfs, no published ZMQ port (private net;
 `compose.host-port.yaml` binds loopback-only with a warning),
-`PLUS_API_KEY_FILE` secret mount, CPU/mem/pids bounds, healthcheck
+`PLUS_API_KEY` environment input (never logged, redacted from
+status/diagnose, stripped from compiler/native child environments,
+not baked into images), CPU/mem/pids bounds, healthcheck
 (`fxdna health` exists, no NPU probe). Image runs as `USER
 10001:10001` with data under `/data`.
 
