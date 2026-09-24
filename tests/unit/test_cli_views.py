@@ -138,6 +138,16 @@ class FakeSupervisor:
     def prepare(self, ref):
         self.prepared.append(ref)
 
+    def reconcile_configured(self):
+        # Mirror the serve-loop contract: one ok outcome per
+        # configured ref, prepared in order.
+        outcomes = []
+        for ref in self.config.models:
+            self.prepare(ref)
+            outcomes.append({"ref": ref, "ok": True, "state": "PREPARED",
+                             "compile_key": None, "cache_hit": True})
+        return outcomes
+
     def stop(self):
         self.stopped = True
 

@@ -397,6 +397,38 @@ class Supervisor:
                          f"unknown admin command {cmd!r}")
 
     # -- preparation --------------------------------------------------
+    def reconcile_configured(self) -> list[dict]:
+        """Startup/desired-state reconciliation for configured refs.
+
+        Each FXDNA_MODELS ref is prepared; failures are reported per
+        ref, never raised. Operator-owned local sources (`local://ID`
+        and explicit `.onnx` paths) are mutable aliases, so changed
+        bytes are accepted here as a new revision: inspected, prepared
+        alongside the preserved previous artifact, with no worker
+        switch (activation stays byte-bound and explicit). Plus refs
+        never auto-refresh (SPEC §4.4: no silent re-acquisition).
+        Interactive `prepare` without `--refresh` still reports
+        SOURCE_CHANGED for explicit acknowledgement.
+        """
+        outcomes = []
+        for ref in self.config.models:
+            try:
+                kind = parse_ref(ref, self.config.model_dir)["kind"]
+            except FxdnaError:
+                kind = None
+            try:
+                out = self.prepare(
+                    ref, refresh=kind in ("local", "onnx"))
+                outcomes.append({"ref": ref, "ok": True,
+                                 "state": out.get("state"),
+                                 "compile_key": out.get("compile_key"),
+                                 "cache_hit": out.get("cache_hit")})
+            except FxdnaError as e:
+                outcomes.append({"ref": ref, "ok": False,
+                                 "code": e.error_code,
+                                 "reason": e.message})
+        return outcomes
+
     def _plus_client(self) -> PlusClient:
         if self.config.offline:
             raise FxdnaError(4, "ACQUISITION_FAILED",
