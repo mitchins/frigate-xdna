@@ -26,16 +26,20 @@ No SDK installation, manual ONNX conversion, database editing, or compiler-log i
 
 ## Status
 
-Stable release: v0.1.1. Validated:
+Stable release: v0.1.2. Validated:
 
 - Ryzen AI Max+ 395 / Strix Halo / XDNA2
 - Frigate 0.18.0
-- Frigate+ YOLOv9s 320
-- 24 h full-service soak
-- 1,234,208 inferences
-- 0 detector errors / timeouts / late responses
+- Local YOLOv9-t-320 end-to-end (inspect → compile → handshake →
+  detections, no Plus credential)
+- Frigate+ path unchanged since v0.1.1, RC run overnight
+- 20-min local confidence: 33,076/33,076 inferences, zero errors
+- YOLOv9-320 scaling T/S/M/C/E (see Compatibility)
 
-Evidence: `docs/RELEASE-8.4.md`.
+Evidence: `docs/V0.1.2-ACCEPTANCE.md` (release record),
+`docs/YOLOV9-320-SCALING.md` (scaling curve). v0.1.1 evidence:
+`docs/RELEASE-8.4.md` (24 h soak, 1,234,208 inferences, zero
+detector errors / timeouts / late responses).
 
 ## Measured performance
 
@@ -71,7 +75,7 @@ are expected targets but not yet certified.
 ## Install
 
 ```sh
-docker pull ghcr.io/mitchins/frigate-xdna:0.1.1
+docker pull ghcr.io/mitchins/frigate-xdna:0.1.2
 ```
 
 Images publish from version tags starting at `v0.1.0-rc.2`
@@ -121,11 +125,9 @@ default image is the latest stable release; override with
 
 ### Path B: local YOLO ONNX models
 
-Local `local://` refs need frigate-xdna 0.1.2 or newer (in
-development at the time of writing): the 0.1.1 image does not
-understand them. Point `FXDNA_IMAGE` at a 0.1.2 release when
-published; image references are aligned during release
-qualification.
+Local `local://` refs need frigate-xdna 0.1.2 or newer. The
+0.1.1 image does not understand them; the commands below select
+the 0.1.2 image explicitly.
 
 Obtain → mount → select → prepare → connect Frigate:
 
@@ -151,7 +153,7 @@ Obtain → mount → select → prepare → connect Frigate:
 
    ```sh
    cd frigate-xdna/examples
-   export FXDNA_IMAGE=ghcr.io/mitchins/frigate-xdna:0.1.2-rc.1
+   export FXDNA_IMAGE=ghcr.io/mitchins/frigate-xdna:0.1.2
    export NPU_GID=$(stat -c %g /dev/accel/accel0)
    export FXDNA_MODEL_HOST_DIR=/srv/frigate/models
    export FXDNA_MODELS=local://yolov9-t-320
@@ -159,9 +161,8 @@ Obtain → mount → select → prepare → connect Frigate:
    docker compose -f compose.yaml -f compose.local.yaml logs -f xdna
    ```
 
-   (`FXDNA_IMAGE` must be a 0.1.2 pre-release or newer: the 0.1.1
-   image cannot read `local://` refs. Use a newer 0.1.2 tag if one
-   is published.)
+   (Any 0.1.2 or newer image works; the 0.1.1 image cannot read
+   `local://` refs.)
 
    Wait for `Model inspection complete:
    local://yolov9-t-320: yolo-raw 1x3x320x320 80 classes`, then
@@ -206,13 +207,13 @@ overlays instead of copying this). Paste it into the stack editor,
 then set the stack environment variables from the table underneath.
 
 Local stack (`examples/compose.yaml` +
-`examples/compose.local.yaml` merged; pinned to a 0.1.2
-pre-release because the 0.1.1 image cannot read `local://`):
+`examples/compose.local.yaml` merged; pinned to 0.1.2 because the
+0.1.1 image cannot read `local://`):
 
 ```yaml
 services:
   xdna:
-    image: ghcr.io/mitchins/frigate-xdna:0.1.2-rc.1
+    image: ghcr.io/mitchins/frigate-xdna:0.1.2
     init: true
     restart: unless-stopped
     user: "10001:10001"
@@ -271,7 +272,7 @@ only the credential pass-through):
 ```yaml
 services:
   xdna:
-    image: ${FXDNA_IMAGE:-ghcr.io/mitchins/frigate-xdna:0.1.1}
+    image: ${FXDNA_IMAGE:-ghcr.io/mitchins/frigate-xdna:0.1.2}
     init: true
     restart: unless-stopped
     user: "10001:10001"
@@ -324,7 +325,7 @@ networks:
 
 | Variable | Value | `plus://`? |
 |---|---|---|
-| `FXDNA_IMAGE` | `ghcr.io/mitchins/frigate-xdna:0.1.1` (or newer; 0.1.2+ for `local://`) | no |
+| `FXDNA_IMAGE` | `ghcr.io/mitchins/frigate-xdna:0.1.2` (or newer) | no |
 | `FXDNA_MODELS` | `local://<name>` (local stack) or `plus://<model-id>` | yes, for Plus models |
 | `NPU_GID` | numeric group of `/dev/accel/accel0` | no |
 | `FXDNA_MODEL_HOST_DIR` | host path of the model directory, mounted read-only at `/models` (local stack only) | no |
@@ -471,11 +472,26 @@ qualification: entries move right only with measured evidence.
 | Source | Graph contract | XDNA inference | Frigate end-to-end |
 |---|---|---|---|
 | Frigate+ YOLOv9s-320 | Checked | Verified | Qualified (v0.1.1) |
-| Public YOLOv9-t-320, Frigate export route | Checked ([manifest](tests/fixtures/yolo-public-contracts-0.1.2.manifest.json)) | Pending (C7) | Pending (C7) |
+| Public YOLOv9-t-320, Frigate export route | Checked ([manifest](tests/fixtures/yolo-public-contracts-0.1.2.manifest.json)) | Verified | Qualified (v0.1.2, local) |
 | Banked YOLOv8n-640 | Checked (manifest) | Pending (C7) | Pending (C7) |
 | Ultralytics YOLO11n-320, raw export | Checked (manifest) | Pending (C7) | Pending (C7) |
 | Other raw YOLO ONNX | Inspected at install; contract-dependent | If the contract fits | After local qualification |
 | Arbitrary ONNX / embedded NMS / segmentation etc. | Not promised | — | — |
+
+YOLOv9-320 scaling (Strix Halo, 4-CPU/8-GiB envelope; C is the
+recommended quality/performance inflection — the largest variant in
+the ~15 ms band):
+
+| YOLOv9-320 | Frigate/XDNA status | Measured ZMQ p50 |
+|---|---|---:|
+| T | Qualified | 7.4 ms |
+| S | Qualified | 9.0 ms |
+| M | Qualified | 13.1 ms |
+| C | Qualified | 14.1 ms |
+| E | Qualified; large latency step | 69.4 ms |
+
+Compile time, RSS, p95/p99, artifact size, and methodology:
+`docs/YOLOV9-320-SCALING.md`.
 
 ## Development
 

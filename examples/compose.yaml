@@ -3,7 +3,7 @@
 # NPU_GID is the numeric group owning /dev/accel/accel0 on the Docker host.
 services:
   xdna:
-    image: ${FXDNA_IMAGE:-ghcr.io/mitchins/frigate-xdna:0.1.1}
+    image: ${FXDNA_IMAGE:-ghcr.io/mitchins/frigate-xdna:0.1.2}
     init: true
     restart: unless-stopped
     user: "10001:10001"
