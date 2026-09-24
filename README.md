@@ -136,25 +136,32 @@ Obtain → mount → select → prepare → connect Frigate:
    The sidecar inspects the graph and refuses unsupported contracts
    before compiling — no need to guess compatibility.
 2. Put the file in your model directory. Paths may differ per
-   container; only the bytes must match:
+   container; only the bytes must match. Frigate needs the same
+   file too: bind-mount the host directory into Frigate (read-only),
+   or copy the ONNX into Frigate's config volume:
 
    | Location | Path |
    |---|---|
    | Host | `/srv/frigate/models/yolov9-t-320.onnx` |
    | Sidecar | `/models/yolov9-t-320.onnx` (read-only bind) |
    | Sidecar ref | `local://yolov9-t-320` |
-   | Frigate | `/config/models/yolov9-t-320.onnx` |
+   | Frigate | `/config/models/yolov9-t-320.onnx` (bind-mount `/srv/frigate/models` at `/config/models`, or copy the file there) |
 
 3. From one shell, in order:
 
    ```sh
    cd frigate-xdna/examples
+   export FXDNA_IMAGE=ghcr.io/mitchins/frigate-xdna:0.1.2-rc.1
    export NPU_GID=$(stat -c %g /dev/accel/accel0)
    export FXDNA_MODEL_HOST_DIR=/srv/frigate/models
    export FXDNA_MODELS=local://yolov9-t-320
    docker compose -f compose.yaml -f compose.local.yaml up -d xdna
    docker compose -f compose.yaml -f compose.local.yaml logs -f xdna
    ```
+
+   (`FXDNA_IMAGE` must be a 0.1.2 pre-release or newer: the 0.1.1
+   image cannot read `local://` refs. Use a newer 0.1.2 tag if one
+   is published.)
 
    Wait for `Model inspection complete:
    local://yolov9-t-320: yolo-raw 1x3x320x320 80 classes`, then
@@ -199,7 +206,67 @@ overlays instead of copying this). Paste it into the stack editor,
 then set the stack environment variables from the table underneath.
 
 Local stack (`examples/compose.yaml` +
-`examples/compose.local.yaml` merged):
+`examples/compose.local.yaml` merged; pinned to a 0.1.2
+pre-release because the 0.1.1 image cannot read `local://`):
+
+```yaml
+services:
+  xdna:
+    image: ghcr.io/mitchins/frigate-xdna:0.1.2-rc.1
+    init: true
+    restart: unless-stopped
+    user: "10001:10001"
+    group_add:
+      - "${NPU_GID:?Set NPU_GID to the accelerator device group ID}"
+    devices:
+      - /dev/accel/accel0:/dev/accel/accel0
+    environment:
+      FXDNA_MODELS: "${FXDNA_MODELS:?Set selected model references}"
+      FXDNA_DATA_DIR: /data
+      FXDNA_ENDPOINT: tcp://0.0.0.0:5555
+      FXDNA_LOG_LEVEL: info
+      FXDNA_MODEL_DIR: /models
+    volumes:
+      - xdna-data:/data
+      - "${FXDNA_MODEL_HOST_DIR:?Set the host model directory}:/models:ro"
+    networks:
+      - xdna-net
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run:rw,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=0700
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+    cpus: "4.0"
+    mem_limit: 8g
+    memswap_limit: 8g
+    pids_limit: 512
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "fxdna", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  xdna-data:
+    name: frigate-xdna-data
+
+networks:
+  xdna-net:
+    name: frigate-xdna-net
+```
+
+Plus stack (`examples/compose.yaml` +
+`examples/compose.plus.yaml` merged; the Plus overlay contributes
+only the credential pass-through):
 
 ```yaml
 services:
@@ -217,10 +284,9 @@ services:
       FXDNA_DATA_DIR: /data
       FXDNA_ENDPOINT: tcp://0.0.0.0:5555
       FXDNA_LOG_LEVEL: info
-      FXDNA_MODEL_DIR: /models
+      PLUS_API_KEY: "${PLUS_API_KEY:?Set PLUS_API_KEY to the Frigate+ API key}"
     volumes:
       - xdna-data:/data
-      - "${FXDNA_MODEL_HOST_DIR:?Set the host model directory}:/models:ro"
     networks:
       - xdna-net
     read_only: true

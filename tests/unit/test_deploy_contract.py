@@ -270,9 +270,8 @@ class TestLocalOverlay(unittest.TestCase):
         self.assertIn("FXDNA_MODEL_HOST_DIR", text)
 
 
-def readme_portainer_block(text: str):
-    """The fenced YAML merged stack shown for Portainer users."""
-    marker = "Local stack (`examples/compose.yaml`"
+def readme_portainer_block(text: str, marker: str):
+    """A fenced YAML merged stack shown for Portainer users."""
     start = text.index(marker)
     fence = text.index("```yaml", start)
     end = text.index("```", fence + 7)
@@ -343,6 +342,8 @@ class TestLocalReadme(unittest.TestCase):
     def test_sequential_shell_uses_exports_and_repeat_f(self):
         block = self.text[self.text.index("### Path B"):
                           self.text.index("### Portainer")]
+        self.assertIn("export FXDNA_IMAGE=ghcr.io/mitchins/"
+                      "frigate-xdna:0.1.2", block)
         self.assertIn("export NPU_GID=", block)
         self.assertIn("export FXDNA_MODEL_HOST_DIR=", block)
         self.assertIn("export FXDNA_MODELS=local://yolov9-t-320",
@@ -354,9 +355,10 @@ class TestLocalReadme(unittest.TestCase):
             self.assertIn("-f compose.yaml -f compose.local.yaml",
                           line)
 
-    def test_portainer_block_matches_shipped_overlay(self):
-        doc = parse_subset(readme_portainer_block(self.text))
-        xdna = doc["services"]["xdna"]
+    def test_portainer_blocks_match_shipped_overlays(self):
+        local = parse_subset(readme_portainer_block(
+            self.text, "Local stack (`examples/compose.yaml`"))
+        xdna = local["services"]["xdna"]
         self.assertEqual(
             xdna["environment"]["FXDNA_MODEL_DIR"], "/models")
         volumes = [str(v) for v in xdna["volumes"]]
@@ -364,10 +366,23 @@ class TestLocalReadme(unittest.TestCase):
         self.assertTrue(
             any(v.endswith(":/models:ro") and "FXDNA_MODEL_HOST_DIR" in v
                 for v in volumes))
-        self.assertIn("ghcr.io/mitchins/frigate-xdna",
-                      str(xdna["image"]))
+        self.assertIn("0.1.2", str(xdna["image"]))
+        self.assertNotIn("0.1.1", str(xdna["image"]))
         self.assertEqual(xdna["ulimits"]["memlock"]["soft"], -1)
         self.assertNotIn("PLUS_API_KEY", str(xdna["environment"]))
+        plus = parse_subset(readme_portainer_block(
+            self.text, "Plus stack (`examples/compose.yaml`"))
+        penv = plus["services"]["xdna"]["environment"]
+        self.assertIn(":?", str(penv["PLUS_API_KEY"]))
+        self.assertNotIn("FXDNA_MODEL_DIR", penv)
+        pvolumes = [str(v) for v in plus["services"]["xdna"]["volumes"]]
+        self.assertNotIn("FXDNA_MODEL_HOST_DIR", " ".join(pvolumes))
+
+    def test_frigate_side_file_is_covered(self):
+        block = self.text[self.text.index("### Path B"):
+                          self.text.index("### Portainer")]
+        self.assertIn("bind-mount", block)
+        self.assertIn("/config/models", block)
 
 
 class TestReadmeAgreesWithFiles(unittest.TestCase):
