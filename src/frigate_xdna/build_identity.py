@@ -27,6 +27,11 @@ IDENTITY_ENV = "FXDNA_BUILD_IDENTITY_FILE"
 STABLE_RE = re.compile(r"^\d+\.\d+\.\d+$")
 RC_RE = re.compile(r"^\d+\.\d+\.\d+-rc\.\d+$")
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
+# Development builds (never released) keep a baked short SHA for
+# local image traceability: `git rev-parse --short HEAD` output is a
+# hex prefix, not a full object name. Release versions keep the
+# strict rule above.
+DEV_REVISION_RE = re.compile(r"^[0-9a-f]{7,64}$")
 
 CHANNEL_DEVELOPMENT = "development"
 CHANNEL_RC = "release-candidate"
@@ -34,7 +39,8 @@ CHANNEL_RELEASE = "release"
 
 
 def _development(version: str, revision: str = "unknown") -> dict:
-    if not isinstance(revision, str) or not REVISION_RE.match(revision):
+    if (not isinstance(revision, str)
+            or not DEV_REVISION_RE.fullmatch(revision)):
         revision = "unknown"
     return {"schema_version": 1, "version": version,
             "revision": revision, "channel": CHANNEL_DEVELOPMENT}
