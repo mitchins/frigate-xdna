@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -36,12 +37,19 @@ MODELS_DIR = "/mnt/downloads/fxdna-012-local"
 _BANKED_B = "/mnt/downloads/xdna-task03-work/yolov8n.onnx"
 
 
+_EVIDENCE_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+\.onnx\Z")
+
+
 def _confined(models_dir: str, filename: str) -> str:
     """Resolve a manifest-controlled filename inside the models dir.
 
-    Refuses anything escaping the directory (defense in depth: the
-    names come from the committed manifest, not the operator).
+    The name must be a bare ONNX filename (no directories, no
+    escapes); the resolved path must stay inside the directory.
+    Defense in depth: names come from the committed manifest, but a
+    corrupted manifest must never become a directory traversal.
     """
+    if not _EVIDENCE_NAME_RE.fullmatch(filename):
+        raise ValueError(f"refusing non-file evidence name: {filename!r}")
     base = os.path.realpath(models_dir)
     candidate = os.path.realpath(os.path.join(base, filename))
     if os.path.commonpath([base, candidate]) != base:
@@ -49,14 +57,10 @@ def _confined(models_dir: str, filename: str) -> str:
     return candidate
 
 
-def sha_of(path: str) -> tuple[str, int]:
-    h = hashlib.sha256()
-    size = 0
+def read_evidence(path: str) -> bytes:
+    """Read one evidence file whole (binaries here are ~10 MB)."""
     with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-            size += len(chunk)
-    return h.hexdigest(), size
+        return f.read()
 
 
 def main() -> int:
@@ -70,24 +74,25 @@ def main() -> int:
         want = case["onnx"]
         try:
             path = _confined(models_dir, want["filename"])
-        except ValueError as e:
-            failures.append(f"{cid}: {e}")
+            try:
+                raw = read_evidence(path)
+            except OSError:
+                # Case B lives in its banked location, not the
+                # evidence area.
+                if cid != "B":
+                    raise
+                raw = read_evidence(_BANKED_B)
+        except (ValueError, OSError) as e:
+            failures.append(f"{cid}: cannot read evidence"
+                            f" {want['filename']}: {e}")
             continue
-        # Case B lives in its banked location, not the evidence area.
-        if not os.path.isfile(path) and cid == "B" and os.path.isfile(
-                _BANKED_B):
-            path = _BANKED_B
-        if not os.path.isfile(path):
-            failures.append(f"{cid}: missing file for {want['filename']}")
-            continue
-        digest, size = sha_of(path)
-        if digest != want["sha256"] or size != want["bytes"]:
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != want["sha256"] or len(raw) != want["bytes"]:
             failures.append(
-                f"{cid}: bytes differ (got {digest[:12]}... {size}B,"
+                f"{cid}: bytes differ (got {digest[:12]}... {len(raw)}B,"
                 f" want {want['sha256'][:12]}... {want['bytes']}B)")
             continue
-        with open(path, "rb") as f:
-            model, _ = _inspect.load_graph_bytes(f.read())
+        model, _ = _inspect.load_graph_bytes(raw)
         try:
             contract = _inspect.inspect_model(model)
         except Exception as e:  # noqa: BLE001 - verdict comparison below
