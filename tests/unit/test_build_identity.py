@@ -141,13 +141,16 @@ class TestIdentityInOutputs(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
 
-        from frigate_xdna.cli import build_parser
-        parser = build_parser()
+        from frigate_xdna.cli import main
         buf = io.StringIO()
-        with self.assertRaises(SystemExit) as cm, redirect_stdout(buf):
-            parser.parse_args(["--version"])
-        self.assertEqual(cm.exception.code, 0)
-        out = buf.getvalue().strip()
+        with redirect_stdout(buf):
+            rc = main(["--version"])
+        self.assertEqual(rc, 0)
+        # Single machine-parseable line: argparse's version action
+        # wraps past 80 columns on non-tty output (release gate).
+        lines = buf.getvalue().strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        out = lines[0]
         self.assertTrue(out.startswith("fxdna "))
         self.assertIn("revision=", out)
         self.assertIn("channel=development", out)  # unbaked checkout

@@ -41,8 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Self-contained XDNA detector sidecar for Frigate "
                     "(stock Frigate unchanged).",
     )
-    from .build_identity import version_string
-    p.add_argument("--version", action="version", version=version_string())
+    # NOTE: no argparse action="version" here on purpose. The
+    # version action renders through HelpFormatter, which wraps past
+    # 80 columns on non-tty output and breaks machine parsing of the
+    # identity line (caught by the release dry-run gate). main()
+    # handles --version with a plain single-line print instead.
+    p.add_argument("--version", action="store_true",
+                   help="Print the authoritative build identity.")
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     sub.add_parser("serve", help="Start manager, ZMQ frontend and supervision.")
@@ -667,6 +672,12 @@ def cmd_wait(config, args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if "--version" in argv:
+        from .build_identity import version_string
+        print(version_string())
+        return SUCCESS
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
