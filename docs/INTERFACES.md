@@ -48,6 +48,7 @@ Suggested CLI exit codes:
 | `FXDNA_MODELS` | empty | Comma/newline separated preparation refs; each is pinned and queued once. |
 | `PLUS_API_KEY` | unset | The sole Plus credential (container environment): the same key already configured for Frigate. Never logged, redacted from status/diagnose, never forwarded to compiler/native child environments or baked into images. |
 | `FXDNA_DATA_DIR` | `/data` in image | Local persistent registry/cache/work root. |
+| `FXDNA_MODEL_DIR` | `/models` in image | Absolute directory for `local://ID` refs (`<dir>/ID.onnx`); empty or relative values are rejected (`INVALID_CONFIG`). |
 | `FXDNA_ENDPOINT` | `tcp://0.0.0.0:5555` in image; loopback natively | Stock Frigate detector endpoint; `ipc://` also supported. |
 | `FXDNA_DEVICE` | `/dev/accel/accel0` | Device node; does not imply target compatibility. |
 | `FXDNA_LOG_LEVEL` | `info` | Structured logging verbosity; debug still redacts secrets. |
