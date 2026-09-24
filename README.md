@@ -89,10 +89,12 @@ Compose files (the files you actually deploy):
 Deploy with stock Frigate on the same Docker network:
 
 ```sh
+# Read the key without echo so it never lands in shell history:
+read -rsp 'Frigate Plus key: ' PLUS_API_KEY; echo; export PLUS_API_KEY
 NPU_GID=$(stat -c %g /dev/accel/accel0) \
 FXDNA_MODELS="plus://<model-id>" \
-PLUS_API_KEY="<your-frigate-plus-key>" \
 docker compose -f examples/compose.yaml -f examples/compose.plus.yaml up -d
+unset PLUS_API_KEY
 ```
 
 Reuse the Plus key already configured for Frigate itself — the
@@ -161,11 +163,13 @@ that). Add the host-port overlay so the sidecar listens on host
 loopback, then point Frigate at it:
 
 ```sh
+# Read the key without echo so it never lands in shell history:
+read -rsp 'Frigate Plus key: ' PLUS_API_KEY; echo; export PLUS_API_KEY
 NPU_GID=$(stat -c %g /dev/accel/accel0) \
 FXDNA_MODELS="plus://<model-id>" \
-PLUS_API_KEY="<your-frigate-plus-key>" \
 docker compose -f examples/compose.yaml -f examples/compose.plus.yaml \
   -f examples/compose.host-port.yaml up -d
+unset PLUS_API_KEY
 ```
 
 ```yaml
