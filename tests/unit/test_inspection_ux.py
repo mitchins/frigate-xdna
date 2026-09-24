@@ -21,8 +21,7 @@ from frigate_xdna.cli import _read_status
 from frigate_xdna.config import load_config
 from frigate_xdna.errors import FxdnaError
 from frigate_xdna.models import inspect as _inspect
-from frigate_xdna.observability.progress import (
-    RecordingReporter, format_event)
+from frigate_xdna.observability.progress import RecordingReporter, format_event
 from frigate_xdna.supervisor import Supervisor
 from tests.integration.onnx_builders import make_raw_yolo
 
