@@ -1,8 +1,7 @@
 # Operator workflow
 
-These commands describe the implemented product interface (`fxdna` CLI +
-appliance image, Tasks 01–04). Hardware acceptance (Task 05) may still
-extend them.
+Day-to-day operation of the sidecar through the `fxdna` CLI in the
+appliance image. Run commands with `docker compose exec -T xdna fxdna …`.
 
 ## First launch
 
