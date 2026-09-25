@@ -10,7 +10,7 @@ macOS can run suitable pure-Python/unit tests, but is not an XDNA execution plat
 
 ## Developer commands
 
-Implemented in the Makefile (Tasks 01–04 landed):
+Implemented in the Makefile:
 
 ```
 make test-unit                # hardware-free unit tests
@@ -21,7 +21,7 @@ make coverage                 # all suites with coverage + fail_under floor
 make build-native             # cmake build of fxdna-worker (needs XRT_ROOT)
 make test-hardware            # explicit opt-in/ownership guard (refuses by default)
 
-Unavailable placeholders (exit 3 until Task 05 implements them):
+Placeholders, not yet implemented (exit 3):
 make image, make test-image-offline, make test-frigate-e2e
 ```
 

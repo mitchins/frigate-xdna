@@ -1,4 +1,4 @@
-"""Deployment-contract tests (v0.1.1 checkpoint 1).
+"""Deployment-contract tests.
 
 Assert the shipped Compose files carry the mandatory appliance
 settings (memlock ulimits, resource bounds, non-root hardening, no
@@ -264,37 +264,77 @@ class TestLocalOverlay(unittest.TestCase):
         self.assertIn("FXDNA_MODEL_HOST_DIR", text)
         self.assertIn("local://yolov9-t-320", text)
 
-    def test_portainer_table_covers_host_dir(self):
-        with open(README, encoding="utf-8") as f:
-            text = f.read()
-        self.assertIn("FXDNA_MODEL_HOST_DIR", text)
 
-
-def readme_portainer_block(text: str, marker: str):
-    """A fenced YAML merged stack shown for Portainer users."""
-    start = text.index(marker)
+def readme_compose_block(text: str):
+    """The single pasteable Compose file shown in the README."""
+    start = text.index("Save this as `compose.yaml`")
     fence = text.index("```yaml", start)
     end = text.index("```", fence + 7)
     return text[fence + len("```yaml"):end]
 
 
-class TestLocalReadme(unittest.TestCase):
+class TestReadmeCompose(unittest.TestCase):
+    """The README's pasteable Compose must match the shipped appliance."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(README, encoding="utf-8") as f:
+            cls.block = readme_compose_block(f.read())
+        cls.readme = parse_subset(cls.block)
+        cls.xdna = cls.readme["services"]["xdna"]
+        cls.shipped = load_example("compose.yaml")
+        cls.shipped_xdna = cls.shipped["services"]["xdna"]
+
+    def test_image_is_shipped_default(self):
+        m = re.search(r":-([^}]+)\}", str(self.shipped_xdna["image"]))
+        self.assertIsNotNone(m)
+        self.assertEqual(self.xdna["image"], m.group(1))
+
+    def test_appliance_settings_match_shipped(self):
+        for key in ("init", "restart", "user", "devices", "read_only",
+                    "cap_drop", "security_opt", "tmpfs", "cpus",
+                    "mem_limit", "memswap_limit", "pids_limit",
+                    "ulimits", "stop_grace_period", "healthcheck",
+                    "networks", "group_add"):
+            self.assertEqual(str(self.xdna[key]),
+                             str(self.shipped_xdna[key]), key)
+        self.assertEqual(self.readme["volumes"], self.shipped["volumes"])
+        self.assertEqual(self.readme["networks"], self.shipped["networks"])
+        self.assertEqual(self.xdna["environment"],
+                         self.shipped_xdna["environment"])
+        self.assertEqual(self.xdna["volumes"], self.shipped_xdna["volumes"])
+        self.assertNotIn("ports", self.xdna)
+        self.assertNotIn("privileged", self.xdna)
+
+    def test_optional_lines_are_commented_and_fail_fast(self):
+        # Uncommented, the key must still refuse to start empty (an empty
+        # string would be reported as a configured credential).
+        self.assertIn('# PLUS_API_KEY: "${PLUS_API_KEY:?', self.block)
+        self.assertIn("# - /srv/frigate/models:/models:ro", self.block)
+
+
+class TestReadme(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         with open(README, encoding="utf-8") as f:
             cls.text = f.read()
 
-    def test_both_users_on_first_screen(self):
-        self.assertIn(
-            "Use Frigate+ or compatible local YOLO ONNX models."
-            " Local models\nrequire no account or API key.", self.text)
+    def test_quick_start_order(self):
+        positions = [self.text.index(h) for h in (
+            "## Requirements", "## Run it", "## Point Frigate at it",
+            "## Check it", "## Which model?")]
+        self.assertEqual(positions, sorted(positions))
 
-    def test_mount_table_names_all_four_places(self):
-        for path in ("/srv/frigate/models/yolov9-t-320.onnx",
-                     "/models/yolov9-t-320.onnx",
-                     "local://yolov9-t-320",
-                     "/config/models/yolov9-t-320.onnx"):
-            self.assertIn(path, self.text)
+    def test_both_networking_arrangements_documented(self):
+        self.assertIn("tcp://xdna:5555", self.text)
+        self.assertIn("tcp://127.0.0.1:5555", self.text)
+        self.assertIn("127.0.0.1:5555:5555", self.text)
+
+    def test_single_env_credential_route(self):
+        self.assertIn("PLUS_API_KEY", self.text)
+        self.assertNotIn("PLUS_API_KEY_FILE", self.text)
+        self.assertIn("read -rsp", self.text)
+        self.assertIn("never logged", self.text)
 
     def test_local_frigate_block_is_frigate_contract(self):
         for marker in ("model_type: yolo-generic",
@@ -304,140 +344,44 @@ class TestLocalReadme(unittest.TestCase):
                        "width: 320",
                        "height: 320"):
             self.assertIn(marker, self.text)
-        self.assertIn("The\nONNX bytes must match.", self.text)
-        self.assertIn("`labelmap_path` belongs to Frigate",
-                      self.text)
-
-    def test_export_routes_are_links_not_recipes(self):
+        self.assertIn("the bytes must match", self.text)
         self.assertIn("https://docs.frigate.video/configuration/"
                       "object_detectors/", self.text)
-        self.assertIn("https://docs.ultralytics.com/modes/export/",
-                      self.text)
 
-    def test_no_model_freedom_marketing(self):
-        lowered = self.text.lower()
-        for banned in ("fully supported", "model freedom",
-                       "bring your own", "unlock the"):
-            self.assertNotIn(banned, lowered)
+    def test_log_states_are_real_messages(self):
+        with open(os.path.join(REPO, "src", "frigate_xdna",
+                               "observability", "progress.py"),
+                  encoding="utf-8") as f:
+            source = f.read()
+        for marker in ("Model inspection complete:",
+                       "XDNA compilation running:",
+                       "Model prepared:",
+                       "waiting for Frigate at",
+                       "Frigate model handshake complete.",
+                       "Worker active:",
+                       "Preparation failed"):
+            self.assertIn(marker, self.text)
+            self.assertIn(marker, source)
 
-    def test_compatibility_separates_graph_from_hardware(self):
-        for tier in ("Graph contract", "XDNA inference",
-                     "Frigate end-to-end", "Pending (C7)"):
-            self.assertIn(tier, self.text)
-        self.assertIn("is not hardware\nqualification", self.text)
-
-    def test_lifecycle_is_startup_not_watching(self):
-        self.assertIn("picked up at the next container start",
-                      self.text)
-        self.assertIn("prepare --refresh", self.text)
-        self.assertIn("The directory is not\nwatched", self.text)
-        self.assertIn("never\nswitches until Frigate binds",
-                      self.text)
-
-    def test_local_path_names_its_release(self):
-        self.assertIn("need frigate-xdna 0.1.2 or newer", self.text)
-        self.assertIn("The\n0.1.1 image does not understand them",
-                      self.text)
-
-    def test_sequential_shell_uses_exports_and_repeat_f(self):
-        block = self.text[self.text.index("### Path B"):
-                          self.text.index("### Portainer")]
-        self.assertIn("export FXDNA_IMAGE=ghcr.io/mitchins/"
-                      "frigate-xdna:0.1.2", block)
-        self.assertIn("export NPU_GID=", block)
-        self.assertIn("export FXDNA_MODEL_HOST_DIR=", block)
-        self.assertIn("export FXDNA_MODELS=local://yolov9-t-320",
-                      block)
-        ups = [line for line in block.splitlines()
-               if "docker compose" in line]
-        self.assertGreaterEqual(len(ups), 2)
-        for line in ups:
-            self.assertIn("-f compose.yaml -f compose.local.yaml",
-                          line)
-
-    def test_portainer_blocks_match_shipped_overlays(self):
-        local = parse_subset(readme_portainer_block(
-            self.text, "Local stack (`examples/compose.yaml`"))
-        xdna = local["services"]["xdna"]
-        self.assertEqual(
-            xdna["environment"]["FXDNA_MODEL_DIR"], "/models")
-        volumes = [str(v) for v in xdna["volumes"]]
-        self.assertIn("xdna-data:/data", volumes)
-        self.assertTrue(
-            any(v.endswith(":/models:ro") and "FXDNA_MODEL_HOST_DIR" in v
-                for v in volumes))
-        self.assertIn("0.1.2", str(xdna["image"]))
-        self.assertNotIn("0.1.1", str(xdna["image"]))
-        self.assertEqual(xdna["ulimits"]["memlock"]["soft"], -1)
-        self.assertNotIn("PLUS_API_KEY", str(xdna["environment"]))
-        plus = parse_subset(readme_portainer_block(
-            self.text, "Plus stack (`examples/compose.yaml`"))
-        penv = plus["services"]["xdna"]["environment"]
-        self.assertIn(":?", str(penv["PLUS_API_KEY"]))
-        self.assertNotIn("FXDNA_MODEL_DIR", penv)
-        pvolumes = [str(v) for v in plus["services"]["xdna"]["volumes"]]
-        self.assertNotIn("FXDNA_MODEL_HOST_DIR", " ".join(pvolumes))
-
-    def test_frigate_side_file_is_covered(self):
-        block = self.text[self.text.index("### Path B"):
-                          self.text.index("### Portainer")]
-        self.assertIn("bind-mount", block)
-        self.assertIn("/config/models", block)
-
-
-class TestReadmeAgreesWithFiles(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        with open(README, encoding="utf-8") as f:
-            cls.text = f.read()
-        image = load_example("compose.yaml")["services"]["xdna"]["image"]
-        m = re.search(r":-([^}]+)\}", str(image))
-        assert m, f"cannot extract default image from {image}"
-        cls.default_image = m.group(1)
-
-    def test_readme_pulls_the_shipped_default_image(self):
-        self.assertIn(f"docker pull {self.default_image}", self.text)
-
-    def test_structure_what_why_how_before_install(self):
-        positions = [self.text.index("## What is this?"),
-                     self.text.index("## Why use it?"),
-                     self.text.index("## How do I run it?"),
-                     self.text.index("## Install")]
-        self.assertEqual(positions, sorted(positions))
-
-    def test_both_networking_arrangements_documented(self):
-        self.assertIn("tcp://xdna:5555", self.text)
-        self.assertIn("tcp://127.0.0.1:5555", self.text)
-
-    def test_single_env_credential_route(self):
-        self.assertIn("PLUS_API_KEY", self.text)
-        self.assertNotIn("PLUS_API_KEY_FILE", self.text)
-        self.assertNotIn("0600", self.text)
-        # The key is never logged and stays out of status output.
-        self.assertIn("never logged", self.text)
+    def test_safety_notes_kept(self):
+        self.assertIn("memlock", self.text)
+        self.assertIn("never delete", self.text)
+        self.assertIn("30 seconds", self.text)
+        self.assertIn("has not been measured", self.text)
 
     def test_no_promotional_or_invented_claims(self):
         lowered = self.text.lower()
         for banned in ("unlock", "seamless", "enterprise-grade",
-                       "coral", "watts", "10x", "100x"):
+                       "coral", "watts", "10x", "100x", "fully supported",
+                       "model freedom", "bring your own"):
             self.assertNotIn(banned, lowered)
-        self.assertIn("has not been measured", self.text)
 
-    def test_performance_figures_carry_boundaries(self):
-        self.assertIn("Frigate-reported", self.text)
-        self.assertIn("9.97 ms", self.text)
-        self.assertIn("Not native p50", self.text)
-        self.assertIn("485 MiB", self.text)
-        self.assertIn("not all of Frigate", self.text)
-        self.assertIn("percentiles were not instrumented", self.text)
-
-    def test_user_states_are_documented(self):
-        for marker in ("waiting for Frigate",
-                       "elapsed=", "requirement failure",
-                       "Preparation failed", "health --ready",
-                       "recover <model> --acknowledge",
-                       "memlock"):
-            self.assertIn(marker, self.text)
+    def test_no_internal_development_vocabulary(self):
+        for banned in (r"\bcheckpoint", r"\bC[0-9]\b", r"\bRC[0-9]",
+                       r"\bTask 0", r"\bGate [0-9]", r"acceptance",
+                       r"WORKQUEUE", r"RELEASE-8"):
+            self.assertIsNone(
+                re.search(banned, self.text, re.IGNORECASE), banned)
 
 
 if __name__ == "__main__":
