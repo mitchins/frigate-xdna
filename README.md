@@ -94,7 +94,8 @@ export NPU_GID=$(stat -c %g /dev/accel/accel0)
 read -rsp 'Frigate+ key: ' PLUS_API_KEY; echo; export PLUS_API_KEY
 FXDNA_MODELS=plus://MODEL_ID docker compose up -d
 
-# ...or a local YOLO file: /srv/frigate/models/yolov9-c-320.onnx
+# ...or a local file /srv/frigate/models/yolov9-c-320.onnx
+# (uncomment the /models volume line in compose.yaml first)
 FXDNA_MODELS=local://yolov9-c-320 docker compose up -d
 ```
 
@@ -106,19 +107,26 @@ variables in its environment section.
 ## Point Frigate at it
 
 Put Frigate on the `frigate-xdna-net` network (as an `external: true`
-network in Frigate's Compose file), then:
+network in Frigate's Compose file), then add the detector and one
+`model` block to Frigate's config:
 
 ```yaml
 detectors:
   xdna:
     type: zmq
     endpoint: tcp://xdna:5555
+```
 
-# Frigate+
+Frigate+:
+
+```yaml
 model:
   path: plus://MODEL_ID
+```
 
-# ...or local YOLO
+Local YOLO:
+
+```yaml
 model:
   path: /config/models/yolov9-c-320.onnx
   model_type: yolo-generic
