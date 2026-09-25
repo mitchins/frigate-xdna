@@ -137,9 +137,11 @@ model:
   labelmap_path: /labelmap/coco-80.txt
 ```
 
-Frigate needs the same ONNX file: the path may differ between
-containers, but the bytes must match. Custom models need their own
-label map instead of `coco-80.txt`.
+Frigate needs the same ONNX file: bind-mount the host directory into
+Frigate read-only (`/srv/frigate/models:/config/models:ro`) or copy the
+file into Frigate's config volume. Paths may differ between containers,
+but the bytes must match. Custom models need their own label map
+instead of `coco-80.txt`.
 
 **Frigate with `network_mode: host`** can't resolve `xdna`. Add
 `ports: ["127.0.0.1:5555:5555"]` to the sidecar and use
