@@ -42,6 +42,17 @@ files as the 320 sweep).
 
 Charts: `yolov9-320-vs-640.png` (paired latency + throughput).
 
+That directory is the build host's local evidence area, not a
+durable public location — but every byte is reproducible from the
+public weights URLs and the documented export invocation above.
+Full SHA-256 (exported 640 `.onnx`):
+
+- T: `7455f159bb65e0d7d4b5fb68fe8373e398d3f0e362b9b1ffc0e73670f92b0620`
+- S: `5cfb0b36487f68669550aa4764120bca235bb828c2acda7f4dd00b19abae6d59`
+- M: `7081c6453711ec8f1ab05683e5511b4b7fc8c48e6f698d68528f9ec08b1e2dfe`
+- C: `2e9224eb616083d25bc013044237097ee4aa2315b19f684e11e348b56263e42b`
+- E: `e1e9d4c7ceb152ab87a1ebe41f40152da4e883d36209ed58089f39a70b91cf87`
+
 ## Conclusion
 
 1. **Largest 640 variant passing end-to-end (canonical settings):
@@ -54,9 +65,9 @@ Charts: `yolov9-320-vs-640.png` (paired latency + throughput).
    in that band. The surprise from 320 repeats: M640→C640 is
    +0.75 ms (+2%), the same flat step as M320→C320.
 4. **C640 stays practical with caveats:** 28.3 req/s against
-   8×5 fps = 40/s of motion-ungated demand — viable where
-   motion-gating applies (the normal Frigate case), without the
-   headroom C320 enjoys. Not a recommendation change.
+   8×5 fps = 40/s of motion-ungated demand. C640 is viable only
+   when measured motion-gated detector demand stays at or below
+   28.3 req/s. It has less headroom than C320. Not a recommendation change.
 5. **No evidence of a new capacity regime at C640.** The
    M→C flat step is the strongest signal: a mapping cliff
    between them would break it. E's step (both resolutions) is
