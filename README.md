@@ -10,7 +10,7 @@ motion and resizing still happen on your CPU/GPU as Frigate configures.
 - Works with stock Frigate through its existing ZMQ detector
 - Frigate+ models or local YOLO ONNX files
 - Compiles each model once and caches it; cached models work offline
-- No AMD SDK, account or manual conversion
+- No AMD SDK or manual XDNA compilation
 
 Tested on Ryzen AI Max 300 (Strix Halo) with Frigate 0.18. Other XDNA2
 chips are untested; XDNA1 is unsupported. Power draw has not been measured.
@@ -106,9 +106,20 @@ variables in its environment section.
 
 ## Point Frigate at it
 
-Put Frigate on the `frigate-xdna-net` network (as an `external: true`
-network in Frigate's Compose file), then add the detector and one
-`model` block to Frigate's config:
+Put Frigate on the sidecar's network in Frigate's Compose file:
+
+```yaml
+services:
+  frigate:
+    networks:
+      - frigate-xdna-net
+
+networks:
+  frigate-xdna-net:
+    external: true
+```
+
+Then add the detector and one `model` block to Frigate's config:
 
 ```yaml
 detectors:
@@ -183,8 +194,8 @@ YOLOv9, measured on Strix Halo (median detector latency):
 | E | 69.4 ms | 224.8 ms | specialist use |
 
 **YOLOv9-C at 320 gives the best balance of quality and speed.**
-C at 640 works if your cameras need no more than about 28 detector
-requests per second. E works, but it's much slower. Details:
+C at 640 sustains ~28 detector requests/s in our sequential test, so
+use it when your aggregate detection demand fits that budget. E works, but it's much slower. Details:
 [320](docs/YOLOV9-320-SCALING.md), [640](docs/YOLOV9-640-SCALING.md).
 
 ## More
