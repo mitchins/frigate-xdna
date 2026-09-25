@@ -4,7 +4,8 @@
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=mitchins_frigate-xdna&metric=coverage)](https://sonarcloud.io/summary/new-code?id=mitchins_frigate-xdna)
 
 Run Frigate object detection on the AMD Ryzen AI / XDNA2 NPU. It puts
-an otherwise-idle NPU to work and moves detection off your CPU and GPU.
+an otherwise-idle NPU to work running the detection model; decoding,
+motion and resizing still happen on your CPU/GPU as Frigate configures.
 
 - Works with stock Frigate through its existing ZMQ detector
 - Frigate+ models or local YOLO ONNX files
