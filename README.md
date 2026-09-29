@@ -202,6 +202,7 @@ use it when your aggregate detection demand fits that budget. E works, but it's 
 
 - [Operations](docs/OPERATIONS.md): updates, several models, failures, offline use
 - [Interfaces](docs/INTERFACES.md): CLI and wire contracts
+- [Compatibility](docs/COMPATIBILITY.md): observed working/failing host stacks, and how to report yours
 - [Development](docs/DEVELOPMENT.md): `make test` runs without an NPU, SDK or key
 
 ## License

@@ -31,7 +31,8 @@ from .supervisor import Supervisor
 
 COMMANDS = (
     "serve", "prepare", "status", "wait", "activate", "cache",
-    "doctor", "health", "recover", "diagnose",
+    "doctor", "health", "recover", "diagnose", "host-info",
+    "stability",
 )
 
 
@@ -111,6 +112,44 @@ def build_parser() -> argparse.ArgumentParser:
     rp = sub.add_parser("recover", help="Clear a recoverable inhibition.")
     rp.add_argument("ref")
     rp.add_argument("--acknowledge", action="store_true", required=True)
+
+    hp_info = sub.add_parser(
+        "host-info",
+        help="Passive host fingerprint: sysfs/procfs + build identity "
+             "(no NPU context, no xrt-smi, no reset).")
+    hp_info.add_argument("--json", action="store_true")
+
+    stp = sub.add_parser(
+        "stability", help="Stability diagnostics: journal report and "
+                          "acknowledgement (runner arrives in a later "
+                          "release).")
+    stsub = stp.add_subparsers(dest="stability_command", required=True)
+    st_run = stsub.add_parser(
+        "run", help="Run a stability diagnostic against a prepared "
+                    "model (not yet implemented in this build).")
+    st_run.add_argument("ref", nargs="?", default=None)
+    st_run.add_argument("--configured", action="store_true",
+                        help="Use the single configured model "
+                             "(FXDNA_MODELS).")
+    st_run.add_argument("--profile", default="gentle",
+                        choices=("smoke", "gentle", "pm", "extended",
+                                 "coexistence"))
+    st_rep = stsub.add_parser("report", help="Report a stability run.")
+    st_rep.add_argument("run_id", nargs="?", default=None)
+    st_rep.add_argument("--last", action="store_true",
+                        help="Report the most recent run (default when "
+                             "no RUN_ID is given).")
+    st_rep.add_argument("--json", action="store_true")
+    st_ack = stsub.add_parser(
+        "acknowledge",
+        help="Acknowledge an interrupted run; clears the "
+             "diagnostic-run latch only, never production safety "
+             "state.")
+    st_ack.add_argument("run_id", nargs="?", default=None)
+    st_ack.add_argument("--last", action="store_true")
+    st_ack.add_argument("--reason", required=True,
+                        help="Operator reason, e.g. 'reviewed reset and "
+                             "collected host logs'.")
     return p
 
 
@@ -294,6 +333,11 @@ def cmd_diagnose(config, args) -> int:
     refs_out, arts_out = _diagnose_inventory(config, show, key)
     writer.write("registry-refs.json", refs_out)
     writer.write("cache-inventory.json", arts_out)
+    from .observability.host_info import collect_host_info
+    info = collect_host_info()
+    writer.write("host-info.json",
+                 info if show or key is None else sanitize_obj(info, key))
+    _diagnose_stability(config, show, key, writer)
     writer.write("manifest.json", {
         "schema_version": 1,
         "generator": f"fxdna {__version__} diagnose",
@@ -379,6 +423,31 @@ def _diagnose_inventory(config, show: bool, key: bytes | None):
     finally:
         reg.close()
     return refs_out, arts_out
+
+
+def _diagnose_stability(config, show: bool, key: bytes | None,
+                        writer: _BundleWriter) -> None:
+    """Stability summary + bounded timeline tail for the latest run,
+    included only when a run exists. Plus refs in metadata are
+    pseudonymized through the standard sanitizer."""
+    from .observability import stability
+    from .observability.redact import sanitize_obj, sanitize_text
+    rid = stability.latest_run(config.data_dir)
+    if rid is None:
+        return
+    report = stability.load_report(config.data_dir, rid)
+    if report is not None:
+        writer.write("stability-summary.json",
+                     report if show or key is None
+                     else sanitize_obj(report, key))
+    tail = "\n".join(
+        json.dumps(rec, sort_keys=True) for rec in
+        stability.read_timeline(config.data_dir, rid)[
+            -stability.DIAGNOSE_TAIL_LINES:])
+    if tail:
+        if key is not None and not show:
+            tail = sanitize_text(tail, key)
+        writer.write("stability-timeline.tail.jsonl", tail + "\n")
 
 
 def _install_serve_handlers(handler) -> None:
@@ -670,6 +739,52 @@ def cmd_wait(config, args) -> int:
                            args.timeout)
 
 
+def cmd_host_info(json_out: bool) -> int:
+    """Passive fingerprint; identical payload to diagnose's
+    host-info.json."""
+    from .observability.host_info import collect_host_info, format_host_info
+    info = collect_host_info()
+    if json_out:
+        print(json.dumps(info, indent=2, sort_keys=True))
+    else:
+        print(format_host_info(info), end="")
+    return SUCCESS
+
+
+def cmd_stability(config, args) -> int:
+    """Report/acknowledge read and write only the stability journal
+    under <data_dir>/stability; no NPU interaction."""
+    from .observability import stability
+    if args.stability_command == "run":
+        print("fxdna: stability run is not implemented in this build "
+              f"[{NOT_IMPLEMENTED}]; journal, report and acknowledge "
+              "are active — see docs/COMPATIBILITY.md",
+              file=sys.stderr)
+        return NOT_READY
+    if args.stability_command == "report":
+        report = stability.load_report(config.data_dir, args.run_id)
+        if report is None:
+            target = args.run_id or "latest"
+            print(f"fxdna: no stability run found ({target}) "
+                  f"[{NOT_READY}]", file=sys.stderr)
+            return NOT_READY
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(stability.format_report(report), end="")
+        return SUCCESS
+    if args.stability_command == "acknowledge":
+        resp = stability.acknowledge_run(
+            config.data_dir, args.reason, args.run_id)
+        print(json.dumps(resp, indent=2, sort_keys=True))
+        if resp.get("acknowledged"):
+            return SUCCESS
+        if resp.get("error_code") in ("NOT_FOUND", "NOT_INTERRUPTED"):
+            return NOT_READY
+        return NOT_READY
+    return NOT_READY
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -703,6 +818,10 @@ def main(argv: list[str] | None = None) -> int:
             return SUCCESS
         if args.command == "diagnose":
             return cmd_diagnose(config, args)
+        if args.command == "host-info":
+            return cmd_host_info(args.json)
+        if args.command == "stability":
+            return cmd_stability(config, args)
         if args.command == "wait":
             return cmd_wait(config, args)
         if args.command == "activate":
