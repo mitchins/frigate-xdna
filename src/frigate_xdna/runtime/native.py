@@ -90,6 +90,13 @@ class NativeWorker:
         try:
             ipc.send_message(self._sock, header, payload)
             return ipc.recv_message(self._sock, timeout=timeout_s)
+        except TimeoutError as e:
+            # A bounded receive that expired is a timeout, not an IO
+            # fault: the worker may still be healthy and must not be
+            # dropped for one slow request (SPEC §6).
+            raise WorkerError("TIMEOUT",
+                              f"worker IPC timed out after {timeout_s}s"
+                              ) from e
         except (OSError, ValueError, ConnectionError) as e:
             raise WorkerError("WORKER_IO",
                               f"worker IPC failed: {e}") from e

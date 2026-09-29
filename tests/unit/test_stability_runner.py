@@ -30,9 +30,11 @@ from tests.integration.onnx_builders import make_raw_yolo
 class FakeChild:
     """NativeWorker control interface (same as supervision tests)."""
 
-    def __init__(self, fail_load=None, fail_infer_after=None):
+    def __init__(self, fail_load=None, fail_infer_after=None,
+                 timeout_after=None):
         self.fail_load = fail_load
         self.fail_infer_after = fail_infer_after
+        self.timeout_after = timeout_after
         self.loaded = False
         self.generation = 0
         self.retired = False
@@ -50,11 +52,14 @@ class FakeChild:
         self.loaded = True
 
     def infer(self, payload, shape, generation, timeout_s):
+        from frigate_xdna.runtime.native import WorkerError
         self.infers += 1
         if (self.fail_infer_after is not None
                 and self.infers > self.fail_infer_after):
-            from frigate_xdna.runtime.native import WorkerError
             raise WorkerError("WORKER_IO", "scripted failure")
+        if (self.timeout_after is not None
+                and self.infers > self.timeout_after):
+            raise WorkerError("TIMEOUT", "scripted slow")
         from frigate_xdna.runtime.native import RESULT_BYTES
         return bytes(RESULT_BYTES)
 
@@ -306,6 +311,54 @@ class TestFailures(RunnerHarness):
         self.assertGreaterEqual(report["result"]["completed"], 6)
         # Failed run still has a deliberate result (not interrupted).
         self.assertIsNone(report["interrupted"])
+
+    def test_ipc_timeout_counts_as_timeout_not_error(self):
+        cfg = self._config()
+        sup = Supervisor(cfg, worker_factory=self._factory())
+        try:
+            ref = self._plant(sup)
+        finally:
+            sup.stop()
+        rc = self._run(cfg, ref, profile="smoke",
+                       factory=self._factory(timeout_after=1),
+                       steady_duration_s=5.0)
+        self.assertEqual(rc, DEVICE_UNAVAILABLE)
+        report = stability.load_report(self.tmp)
+        doc = report["result"]
+        self.assertEqual(doc["error_code"], "TIMEOUT")
+        self.assertEqual(doc["timeouts"], 1)
+        self.assertEqual(doc["errors"], 0)
+        # A bounded receive expiring must not drop the worker for a
+        # single slow request (SPEC §6): no inhibition recorded.
+        self.assertIsNone(report["metadata"].get("inhibition"))
+
+    def test_h2_operator_stop_finishes_interrupted(self):
+        from frigate_xdna.observability.stability import StabilityJournal
+        from frigate_xdna.stability_runner import _Run, _StopFlag
+
+        class SlowSup:
+            config = None
+            _worker = None
+            _worker_generation = 0
+
+            def __init__(self, stop):
+                self.stop = stop
+                self.calls = 0
+
+            def worker_infer(self, payload, shape, timeout_s):
+                self.calls += 1
+                if self.calls >= 2:
+                    self.stop.stop = True
+                return ("ok", b"x" * 480)
+
+        stop = _StopFlag()
+        j = StabilityJournal(self.tmp, "2026-01-02T00-00-00-stop")
+        run = _Run(self._config(), SlowSup(stop), j,
+                   "gentle", (1, 3, 320, 320), b"t",
+                   self.lines.append, stop, 0.6, 2, 8)
+        err = run.phase_h2()
+        self.assertEqual(err, "INTERRUPTED")
+        self.assertTrue(any("operator stop" in p for p in run.phases))
 
 
 class TestProductionDefaults(unittest.TestCase):

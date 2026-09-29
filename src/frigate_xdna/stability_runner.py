@@ -257,6 +257,10 @@ class _Run:
                                              list(self.shape),
                                              timeout_s)
         dt = time.monotonic() - t0
+        if status == "timeout":
+            # Bounded receive expired at the IPC layer (worker kept).
+            self.timeouts += 1
+            return "TIMEOUT"
         if status != "ok":
             self.errors += 1
             return "WORKER_FAILED"
@@ -321,26 +325,26 @@ class _Run:
     def phase_h2(self) -> str | None:
         self.last_phase = "H2"
         self.j.timeline("H2", "PHASE", "STARTED")
-        for i in range(self.cal_warmup):
+        for i in range(self.cal_warmup + self.cal_measured):
+            if self.stop.stop:
+                self.j.timeline("H2", "PHASE", "COMPLETED",
+                                outcome="OPERATOR_STOP")
+                self.phases.append("H2 CALIBRATE     FAIL "
+                                   "(operator stop)")
+                return "INTERRUPTED"
             err = self.infer_once(PROBE_TIMEOUT_S)
             if err is not None:
                 self.j.timeline("H2", "PHASE", "COMPLETED",
                                 outcome=err)
                 self.phases.append(f"H2 CALIBRATE     FAIL ({err})")
                 return err
-        measured: list[float] = []
-        for i in range(self.cal_measured):
-            err = self.infer_once(PROBE_TIMEOUT_S)
-            if err is not None:
-                self.j.timeline("H2", "PHASE", "COMPLETED",
-                                outcome=err)
-                self.phases.append(f"H2 CALIBRATE     FAIL ({err})")
-                return err
-            measured.append(self.latencies[-1])
-            if (i + 1) % 5 == 0:
+            if i >= self.cal_warmup and (i + 1 - self.cal_warmup) % 5 == 0:
+                measured = self.latencies[self.cal_warmup:]
                 self.say("H2", "RUN",
-                         f"{i + 1}/{self.cal_measured} "
+                         f"{i + 1 - self.cal_warmup}/"
+                         f"{self.cal_measured} "
                          f"p50={_percentile(measured, 0.50) * 1000:.1f}ms")
+        measured = self.latencies[-self.cal_measured:]
         self.p50 = _percentile(measured, 0.50)
         if self.p50 <= 0:
             self.phases.append("H2 CALIBRATE     FAIL (zero median)")
@@ -572,6 +576,14 @@ def run_stability(config, ref: str | None = None,
                 ("H3", run.phase_h3)):
             if err is None and phase_id in phases_plan:
                 err = phase_fn()
+                if (err is None and stop.stop
+                        and phase_id != phases_plan[-1]):
+                    # Operator stop between phases: do not escalate
+                    # to the next device-sensitive phase.
+                    err = "INTERRUPTED"
+                    run.phases.append(
+                        f"{phase_id} {PHASE_NAMES.get(phase_id, '')}"
+                        "      FAIL (operator stop)")
         return _finish_run(out, journal, run, err, ref)
     finally:
         if run is not None:

@@ -120,9 +120,9 @@ def build_parser() -> argparse.ArgumentParser:
     hp_info.add_argument("--json", action="store_true")
 
     stp = sub.add_parser(
-        "stability", help="Stability diagnostics: journal report and "
-                          "acknowledgement (runner arrives in a later "
-                          "release).")
+        "stability", help="Stability diagnostics: run (smoke/gentle "
+                          "profiles), durable journal report and "
+                          "acknowledgement.")
     stsub = stp.add_subparsers(dest="stability_command", required=True)
     st_run = stsub.add_parser(
         "run", help="Run a stability diagnostic against a prepared "
