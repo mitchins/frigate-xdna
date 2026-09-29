@@ -223,34 +223,100 @@ class CompatibilityDocTest(unittest.TestCase):
                 rows.append(cells)
         return rows
 
+    def test_summary_columns_self_contained(self):
+        rows = self._summary_rows()
+        self.assertEqual(len(rows), 4)
+        for cells in rows:
+            # ID, Hardware/NPU, BIOS/PI, Kernel, amdxdna, NPU FW,
+            # Appliance runtime, Workload, Result.
+            self.assertEqual(len(cells), 9, cells)
+            for cell in cells:
+                self.assertTrue(cell, f"empty cell in {cells[0]}")
+
     def test_seeded_rows_and_result_classes(self):
         rows = self._summary_rows()
         ids = [r[0] for r in rows]
-        self.assertEqual(ids, ["[O-001](#o-001)", "[O-002](#o-002)",
-                               "[O-003](#o-003)", "[O-004](#o-004)"])
+        self.assertEqual(
+            ids, ["[O-001](#o-001)", "[O-002](#o-002)",
+                  "[O-003](#o-003)", "[O-004](#o-004)"])
         allowed = ("PASS", "LIMITED", "FAIL", "RESET", "UNKNOWN")
         for r in rows:
-            verdict = r[-1].strip("* —-")
+            verdict = r[-1].strip("* ")
             head = verdict.split("—")[0].strip()
             self.assertIn(head, allowed, r)
 
-    def test_no_banned_support_vocabulary_in_rows(self):
+    def test_no_relative_or_banned_vocabulary(self):
+        # Self-containment rule: no technical value expressed
+        # relative to another observation — checked over the whole
+        # doc. Support/certification vocabulary is banned only in
+        # rows and detail records: the intro may *disclaim* those
+        # words when explaining what PASS does not mean.
+        for phrase in ("same as", "same amdxdna", "same srcversion",
+                       "same in-tree", "same host", "same driver",
+                       "as above", "unless otherwise stated",
+                       "unchanged"):
+            self.assertNotIn(phrase, self.doc.lower(),
+                             f"banned phrase {phrase!r} in doc")
+        body = self.doc[self.doc.index("## Summary table"):]
+        for phrase in ("certified", "unsupported", "supported "):
+            self.assertNotIn(phrase, body.lower(),
+                             f"support claim {phrase!r} in records")
         for r in self._summary_rows():
             joined = " ".join(r).lower()
-            for banned in ("stable", "unsupported", "supported ",
-                           "certified"):
-                self.assertNotIn(banned, joined)
+            self.assertNotRegex(joined, r"\bsame\b", joined)
+
+    def test_runtime_ids_immutable_section(self):
+        self.assertIn("## Runtime IDs", self.doc)
+        self.assertIn("### R-001", self.doc)
+        for literal in ("XRT:        2.25.37",
+                        "XDNA shim:  2.25.260102.56",
+                        "FlexMLRT:   1.8.0",
+                        "recipe:     bf16-vaiml-v1"):
+            self.assertIn(literal, self.doc)
+
+    def test_o003_represents_both_reset_observations(self):
+        detail = self._detail("O-003")
+        self.assertIn("Radeon/LLM", detail)
+        self.assertIn("no intentional concurrent GPU workload",
+                      detail)
+        self.assertIn("0x08000800", detail)
+        self.assertIn("data fabric sync", detail)
+        self.assertIn("StrixHaloPI-FP11 1.0.0.2", detail)
+        self.assertIn("Ubuntu 26.04.1", detail)
+        self.assertIn("7.0.0-34-generic", detail)
+        self.assertIn("2.21.75", detail)
+
+    def test_o004_literal_values_and_intentional_kill(self):
+        detail = self._detail("O-004")
+        for literal in ("03.05", "1.0.0.2", "7.0.14-14-pve",
+                        "4612EC552523E4C8FB4B5E5", "1.1.2.65",
+                        "13.7 ms", "14.3 ms", "910/910",
+                        "SIGKILL", "intentional"):
+            self.assertIn(literal, detail)
+
+    def test_every_detail_record_is_self_contained(self):
+        for oid in ("O-001", "O-002", "O-003", "O-004"):
+            detail = self._detail(oid)
+            # The driver srcversion is literal in every record.
+            self.assertIn("4612EC552523E4C8FB4B5E5", detail, oid)
+            self.assertIn("Appliance runtime:  R-001", detail, oid)
+            self.assertNotRegex(detail.lower(), r"\bsame\b", oid)
+
+    def _detail(self, oid: str) -> str:
+        start = self.doc.index(f"### {oid}")
+        end = self.doc.index("### ", start + 4) if (
+            self.doc.find("### ", start + 4) != -1) else len(self.doc)
+        return self.doc[start:end]
 
     def test_external_section_is_present_and_labelled(self):
         self.assertIn(
             "Related platform observations — not frigate-xdna "
             "compatibility results", self.doc)
 
-    def test_detail_records_use_required_field_vocabulary(self):
-        for field in ("Evidence class", "Evidence class".lower(),
-                      "amdxdna srcversion", "NPU firmware",
-                      "autosuspend", "embedded XRT"):
-            self.assertIn(field, self.doc)
+    def test_design_rules_state_self_containment(self):
+        self.assertIn(
+            "Each observation is self-contained", self.doc)
+        self.assertIn("never a redefinition", self.doc)
 
     def test_host_evidence_script_exists_and_is_syntax_clean(self):
         script = os.path.join(REPO, "tools",
