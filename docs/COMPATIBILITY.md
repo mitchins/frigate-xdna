@@ -31,6 +31,7 @@ All rows are Framework Desktop / Ryzen AI Max+ 395 / XDNA2
 | [O-001](#o-001) | 03.02 / 1.0.0.1b | `7.0.14-14-pve` | FW 1.1.2.65 / amdxdna `4612EC55…` | v9s-320, 24h resident soak, 3,364,689 completions | **PASS — 24h** |
 | [O-002](#o-002) | 03.05 / 1.0.0.2 | `7.0.14-14-pve` | FW 1.1.2.65 / same amdxdna srcversion | Frigate+ 320, fresh compile, live Frigate, real detection | **LIMITED — healthy, soak pending** |
 | [O-003](#o-003) | 03.05 / 1.0.0.2 | Ubuntu `7.0.0-34-generic` | FW 1.1.2.65 / same amdxdna srcversion | C320/M320; Frigate; one run + GPU LLM load | **RESET — 0x08000800** |
+| [O-004](#o-004) | 03.05 / 1.0.0.2 | `7.0.14-14-pve` | FW 1.1.2.65 / same amdxdna srcversion | C320 stability diagnostics: smoke, gentle (910 inferences/120 s), deliberate SIGKILL breadcrumb proof | **PASS — smoke+gentle** |
 
 ## Detailed observation records
 
@@ -187,6 +188,57 @@ Result
                      drawing conclusions. A concurrent GPU compute
                      load was active, so this is a coexistence
                      observation, not a pure NPU stability result.
+```
+
+### O-004
+
+```text
+Observation ID: O-004
+Evidence class: project-observed
+
+Hardware
+  CPU/APU:          Ryzen AI Max+ 395 (Strix Halo)
+  NPU PCI ID:       1022:17f0
+  NPU revision:     0x11
+  Subsystem ID:     f111:000a
+
+BIOS
+  AMD PI / AGESA:   StrixHaloPI 1.0.0.2 (BIOS 03.05)
+
+uname -a:           Linux 7.0.14-14-pve #1 SMP PREEMPT_DYNAMIC PMX
+                    7.0.14-14 (2026-08-22T15:01Z) x86_64
+amdxdna srcversion: 4612EC552523E4C8FB4B5E5
+NPU firmware:       1.1.2.65
+
+frigate-xdna
+  version:           development build of the stability-runner branch
+                     (PR #39; not a release image)
+  embedded XRT:      2.25.37
+  embedded XDNA shim: 2.25.260102.56
+  FlexMLRT:          1.8.0
+
+Model
+  family/variant:   YOLOv9-C (public export), source sha256
+                    c7009a1c…, compile key ebb8220f…
+  resolution:       320
+
+Test/workload
+  profile smoke:     E0/H1/H2 PASS; p50 13.7 ms, capacity 72.8 req/s
+  profile gentle:    E0–H3 PASS; 910/910 inferences in 120 s at the
+                     10% paced target, p95 14.3 ms, 0 errors, 0 timeouts
+  breadcrumb proof:  container SIGKILLed mid-H3; journal left the last
+                     durable position (H3 PHASE STARTED, request 72,
+                     worker pid/RSS in the ≤1 s checkpoint); the next
+                     run refused to start (exit 8) until acknowledged;
+                     post-acknowledge smoke re-run PASS
+
+Result
+  outcome:           PASS — smoke+gentle
+  reset reason:      none (the SIGKILL was the operator, not the host)
+  notes:             journals under /mnt/downloads/fxdna-stability-proof
+                     on the build host. Latency agrees with the C320
+                     scaling sweep (14.09 ms p50 there, 13.7 ms here).
+                     This is a diagnostic-tool observation, not a soak.
 ```
 
 ## Appliance runtime vs host tooling

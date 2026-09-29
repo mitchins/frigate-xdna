@@ -147,7 +147,7 @@ def _check_startup_latch(data_dir: str, console) -> int | None:
     console(f"Run:      {report['run_id']}")
     console(f"Phase:    {it.get('phase')} "
             f"{PHASE_NAMES.get(it.get('phase'), '')}".rstrip())
-    console(f"Step:     {it.get('step')}")
+    console(f"Step:     {it.get('step')} STARTED")
     if it.get("cycle") is not None:
         console(f"Cycle:    {it.get('cycle')}")
     console(f"Last durable completion: request {it.get('completed')}")
@@ -207,7 +207,7 @@ class _Run:
     # ---- console -------------------------------------------------
     def say(self, phase: str, state: str, detail: str) -> None:
         elapsed = time.monotonic() - self.started
-        self.console(f"[{elapsed / 60:02.0f}:{elapsed % 60:05.2f}] "
+        self.console(f"[{int(elapsed // 60):02d}:{elapsed % 60:05.2f}] "
                      f"{phase} {PHASE_NAMES.get(phase, ''):<12} "
                      f"{state:<5} {detail}")
 
@@ -554,13 +554,19 @@ def run_stability(config, ref: str | None = None,
         _print_result(out, doc)
         return SUCCESS
     finally:
+        if run is not None:
+            # Final durable checkpoint while the worker still exists
+            # (pid/RSS of the retired child are meaningless after
+            # stop()); then retire.
+            try:
+                run.checkpoint(run.last_phase or "E0", "finished",
+                               force=True)
+            except Exception:
+                pass
         try:
             sup.stop()
         except Exception:
             pass
-        if run is not None:
-            run.checkpoint(run.last_phase or "E0", "finished",
-                           force=True)
 
 
 def _e0_summary() -> str:

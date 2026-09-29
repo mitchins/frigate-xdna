@@ -219,6 +219,16 @@ def load_report(data_dir: str, run_id: str | None = None) -> dict | None:
     current = _read_json(os.path.join(run_dir(data_dir, rid), CURRENT))
     ack = _read_json(os.path.join(run_dir(data_dir, rid), ACKNOWLEDGE))
     interrupted = detect_interrupted(timeline, result is not None)
+    if interrupted is not None and current:
+        # The unmatched STARTED carries no counters; the last durable
+        # checkpoint does. Merge position evidence, never invent it.
+        for key in ("submitted", "completed"):
+            if interrupted.get(key) is None and current.get(key) is not None:
+                interrupted[key] = current.get(key)
+        interrupted["checkpoint"] = {
+            k: current.get(k) for k in (
+                "phase", "sub_phase", "submitted", "completed",
+                "errors", "timeouts", "wall_time") if k in current}
     return {
         "schema_version": 1,
         "run_id": rid,

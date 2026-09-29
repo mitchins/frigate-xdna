@@ -150,6 +150,25 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(got["interrupted"]["cycle"], 2)
         self.assertEqual(got["timeline_records"], 1)
 
+    def test_interrupted_report_merges_last_checkpoint_counts(self):
+        # The unmatched STARTED carries no counters; the last durable
+        # current.json checkpoint does. The report must merge them
+        # (position evidence), never leave None when a checkpoint
+        # exists.
+        d = write_run(self.data, "r-ckpt",
+                      timeline=[rec(1, "H3", "PHASE", "STARTED")])
+        with open(os.path.join(d, stability.CURRENT), "w") as f:
+            json.dump({"phase": "H3", "sub_phase": "steady",
+                       "submitted": 72, "completed": 72,
+                       "errors": 0, "timeouts": 0,
+                       "wall_time": 1790662990.0}, f)
+        got = stability.load_report(self.data, "r-ckpt")
+        self.assertEqual(got["interrupted"]["completed"], 72)
+        self.assertEqual(got["interrupted"]["checkpoint"]["submitted"],
+                         72)
+        text = stability.format_report(got)
+        self.assertIn("last completed request: 72", text)
+
 
 class AcknowledgeTest(unittest.TestCase):
     def setUp(self):
