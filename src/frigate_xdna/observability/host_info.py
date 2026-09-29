@@ -41,6 +41,17 @@ def _read_int(path: str) -> int | None:
         return None
 
 
+def _uname_without_hostname() -> str:
+    """uname string minus the host's nodename.
+
+    host-info is a shareable artifact; the hostname is identifying
+    and diagnostically irrelevant (kernel/release/version/machine
+    carry the compatibility signal).
+    """
+    u = os.uname()
+    return " ".join((u.sysname, u.release, u.version, u.machine))
+
+
 def _npu_device(sys_root: str) -> str | None:
     """First accel device directory (this build targets one NPU)."""
     base = os.path.join(sys_root, ACCEL_CLASS)
@@ -133,7 +144,7 @@ def collect_host_info(sys_root: str = SYS_ROOT) -> dict:
         "schema_version": 1,
         "collected_at": time.time(),
         "host": {
-            "uname": " ".join(os.uname()),
+            "uname": _uname_without_hostname(),
             "dmi": dmi,
         },
         "npu": npu,

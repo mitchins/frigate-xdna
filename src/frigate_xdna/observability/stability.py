@@ -87,13 +87,40 @@ def _read_json(path: str):
         return None
 
 
+def _fsync_dir(path: str) -> None:
+    """Best-effort directory sync so renames survive host loss."""
+    try:
+        dfd = os.open(path, os.O_DIRECTORY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError:
+        pass
+
+
 def read_timeline(data_dir: str, run_id: str) -> list[dict]:
+    """Parse the append-only journal line by line.
+
+    A host reset can truncate mid-line: a damaged final line must
+    not discard the durable breadcrumbs before it (the whole point
+    of the journal). Malformed lines are skipped, never fatal.
+    """
     path = os.path.join(run_dir(data_dir, run_id), TIMELINE)
     try:
         with open(path, encoding="utf-8") as f:
-            return [json.loads(line) for line in f if line.strip()]
-    except (OSError, ValueError):
+            lines = f.read().splitlines()
+    except OSError:
         return []
+    out: list[dict] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
 
 
 def detect_interrupted(timeline: list[dict], has_result: bool) -> dict | None:
@@ -199,6 +226,7 @@ def acknowledge_run(data_dir: str, reason: str,
         f.flush()
         os.fsync(f.fileno())
     os.rename(tmp, path)
+    _fsync_dir(os.path.dirname(path))
     return {"acknowledged": True, "run_id": rid, "reason": reason}
 
 
@@ -242,8 +270,9 @@ def format_report(report: dict) -> str:
                   f"  last completed request: "
                   f"{interrupted.get('completed')}",
                   "",
-                  "  The host/process disappeared before a completion "
-                  "record was persisted.",
+                  "  The run ended without a final result; no "
+                  "completion record was persisted for the step "
+                  "above.",
                   "  No causal conclusion is made from this alone."]
         if report.get("acknowledged"):
             ack = report.get("acknowledge") or {}

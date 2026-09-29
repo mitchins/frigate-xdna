@@ -138,6 +138,19 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(got["run_id"], "2026-09-29T12-00-00")
 
 
+    def test_partial_final_line_keeps_earlier_breadcrumbs(self):
+        # A host reset can truncate mid-line; the durable records
+        # before it are exactly what an interrupted-run report needs.
+        d = write_run(self.data, "r-partial",
+                      timeline=[rec(1, "H4", "PM_RESUME_REQUEST",
+                                    "STARTED", cycle=2)])
+        with open(os.path.join(d, stability.TIMELINE), "a") as f:
+            f.write('{"sequence": 2, "phase": "H4", "step": "PM_RE')  # truncated
+        got = stability.load_report(self.data, "r-partial")
+        self.assertEqual(got["interrupted"]["cycle"], 2)
+        self.assertEqual(got["timeline_records"], 1)
+
+
 class AcknowledgeTest(unittest.TestCase):
     def setUp(self):
         self.data = tempfile.mkdtemp(prefix="fx-stab-")

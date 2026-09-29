@@ -11,12 +11,15 @@
 set -u
 
 redact() {
+  # IPv6: any hex-and-colon token containing '::' (compressed
+  # form), plus the full 7-colon form. Timestamps (19:45:57) have
+  # no '::' and too few colons; MACs are redacted first.
   sed -E \
     -e 's/([0-9A-Za-z]{2}:){5}[0-9A-Za-z]{2}/<mac>/g' \
     -e 's/\b([0-9]{1,3}\.){3}[0-9]{1,3}\b/<ip>/g' \
-    -e 's/\b[0-9A-Fa-f]{1,4}::([0-9A-Fa-f]{1,4}:?)*\b/<ip6>/g' \
-    -e 's/\b([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\b/<ip6>/g' \
-    -e 's/(authorization|api[_-]?key|token|secret)[=: ][^ ]+/\1=<redacted>/Ig'
+    -e 's/[0-9A-Fa-f:]*::[0-9A-Fa-f:]*/<ip6>/g' \
+    -e 's/([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}/<ip6>/g' \
+    -e 's/(authorization|api[_-]?key|token|secret|password|passwd|passphrase|credential|private[_-]?key)[=: ]+[^ ]+/\1=<redacted>/Ig'
   return 0
 }
 
@@ -30,7 +33,7 @@ soft() {
   local cmd="$1"
   shift
   if command -v "$cmd" >/dev/null 2>&1; then
-    "$@"
+    "$cmd" "$@"
   else
     echo "(command $cmd not available)"
   fi
@@ -102,8 +105,12 @@ if command -v journalctl >/dev/null 2>&1; then
     | grep -Ei 'reset|sync flood|data fabric|aer|ras|mce|machine check|amdxdna|npu|amdgpu|smu|psp|iommu|hard lockup|soft lockup|panic|oops' \
     | tail -n 300 | redact
   echo "(previous-boot kernel lines end)"
-  section "previous boot: last lines (any facility)"
-  journalctl -b -1 --no-pager -n 40 2>/dev/null | redact
+  section "previous boot: shutdown/reboot lines (platform only)"
+  # Unfiltered any-facility tails can carry arbitrary application
+  # logs; keep only platform lifecycle lines near the loss.
+  journalctl -b -1 --no-pager -n 300 2>/dev/null \
+    | grep -Ei 'systemd-shutdown|shutdown|reboot|powering|restart|watchdog' \
+    | tail -n 20 | redact
 else
   echo "(journalctl not available; no persistent journal?)"
 fi

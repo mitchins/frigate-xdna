@@ -107,6 +107,40 @@ class StabilityCLITest(unittest.TestCase):
             ["stability", "acknowledge", "--last", "--reason", "x"])
         self.assertEqual(rc, 3)
 
+    def test_report_json_pseudonymizes_plus_refs(self):
+        data = tempfile.mkdtemp(prefix="fx-stabred-")
+        try:
+            write_run(data, "2026-09-29T07-00-00",
+                      timeline=[rec(1, "H4", "PM_RESUME_REQUEST",
+                                    "STARTED", cycle=1)],
+                      metadata={
+                          "schema_version": 1, "run_id": "r",
+                          "model": {"family": "plus://TOPSECRETID",
+                                    "resolution": 320}})
+            import io
+            from contextlib import redirect_stderr, redirect_stdout
+            out, err = io.StringIO(), io.StringIO()
+            old = dict(os.environ)
+            os.environ["FXDNA_DATA_DIR"] = data
+            try:
+                with redirect_stdout(out), redirect_stderr(err):
+                    rc = cli.main(["stability", "report", "--last",
+                                   "--json"])
+            finally:
+                os.environ.clear()
+                os.environ.update(old)
+            self.assertEqual(rc, 0)
+            blob = out.getvalue()
+            self.assertNotIn("plus://TOPSECRETID", blob)
+            self.assertIn("plus:", blob)
+        finally:
+            shutil.rmtree(data, ignore_errors=True)
+
+    def test_report_rejects_path_shaped_run_id(self):
+        rc, out, err, _ = run_cli(
+            ["stability", "report", "../../etc", "--json"])
+        self.assertEqual(rc, 3)
+
 
 class DiagnoseIntegrationTest(unittest.TestCase):
     def test_bundle_contains_host_info_and_stability(self):
@@ -230,8 +264,13 @@ class CompatibilityDocTest(unittest.TestCase):
 
     def test_issue_template_exists(self):
         path = os.path.join(REPO, ".github", "ISSUE_TEMPLATE",
-                            "compatibility-report.md")
+                            "compatibility-report.yml")
         self.assertTrue(os.path.isfile(path))
+        with open(path, encoding="utf-8") as f:
+            first = f.readline()
+        # GitHub issue forms are YAML; a bare .md template cannot
+        # render dropdowns/required fields.
+        self.assertEqual(first, "name: Compatibility observation\n")
 
     def test_interfaces_documents_new_commands(self):
         iface = open(os.path.join(REPO, "docs", "INTERFACES.md"),

@@ -140,6 +140,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Report the most recent run (default when "
                              "no RUN_ID is given).")
     st_rep.add_argument("--json", action="store_true")
+    st_rep.add_argument("--show-identifiers", action="store_true",
+                        help="Reveal raw Plus IDs/full digests (owning "
+                             "machine only; default is pseudonymized).")
     st_ack = stsub.add_parser(
         "acknowledge",
         help="Acknowledge an interrupted run; clears the "
@@ -768,6 +771,13 @@ def cmd_stability(config, args) -> int:
             print(f"fxdna: no stability run found ({target}) "
                   f"[{NOT_READY}]", file=sys.stderr)
             return NOT_READY
+        # Reports get attached to public issues: Plus refs in
+        # metadata are pseudonymized unless the owning operator
+        # explicitly reveals them (same policy as status/diagnose).
+        if not args.show_identifiers:
+            from .observability.redact import load_or_create_key, sanitize_obj
+            key = load_or_create_key(config.data_dir)
+            report = sanitize_obj(report, key)
         if args.json:
             print(json.dumps(report, indent=2, sort_keys=True))
         else:

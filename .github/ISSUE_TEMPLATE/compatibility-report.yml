@@ -1,8 +1,6 @@
----
 name: Compatibility observation
-about: Report a working or failing host/platform stack for docs/COMPATIBILITY.md
-labels: compatibility
-blank_issues_enabled: false
+description: Report a working or failing host/platform stack for docs/COMPATIBILITY.md
+labels: [compatibility]
 body:
   - type: markdown
     attributes:
@@ -11,11 +9,11 @@ body:
         A PASS means "this workload completed on this stack", never
         "this stack is certified stable". See
         [docs/COMPATIBILITY.md](../blob/main/docs/COMPATIBILITY.md).
-  - type: textarea
+  - type: input
     id: hardware
     attributes:
       label: Hardware / BIOS / kernel
-      description: One line, e.g. "Framework Desktop, Ryzen AI Max+ 395, BIOS 03.05 (PI 1.0.0.2), kernel 7.0.14-14-pve"
+      description: 'e.g. "Framework Desktop, Ryzen AI Max+ 395, BIOS 03.05 (PI 1.0.0.2), kernel 7.0.14-14-pve"'
     validations:
       required: true
   - type: dropdown
@@ -52,6 +50,8 @@ body:
         ```
         sudo tools/collect-host-evidence.sh > host-evidence.txt
         ```
+    validations:
+      required: true
   - type: textarea
     id: notes
     attributes:

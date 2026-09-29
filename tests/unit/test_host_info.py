@@ -79,6 +79,15 @@ class FakeSysfsTest(unittest.TestCase):
         self.assertEqual(info["host"]["dmi"]["bios_version"], "03.05")
         self.assertIn("Linux", info["host"]["uname"])
 
+    def test_uname_omits_hostname(self):
+        # Shareable artifact: the host's nodename must not leak.
+        info = host_info.collect_host_info(sys_root=self.root)
+        import socket
+        hostname = socket.gethostname()
+        self.assertNotIn(hostname, info["host"]["uname"])
+        parts = info["host"]["uname"].split()
+        self.assertEqual(len(parts), 4)
+
     def test_absent_tree_is_nulls_not_crash(self):
         info = host_info.collect_host_info(sys_root=self.root)
         self.assertIsNone(info["npu"]["pci_id"])
