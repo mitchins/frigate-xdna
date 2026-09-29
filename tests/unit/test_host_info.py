@@ -81,12 +81,11 @@ class FakeSysfsTest(unittest.TestCase):
 
     def test_uname_omits_hostname(self):
         # Shareable artifact: the host's nodename must not leak.
-        info = host_info.collect_host_info(sys_root=self.root)
         import socket
-        import os as _os
+        info = host_info.collect_host_info(sys_root=self.root)
         hostname = socket.gethostname()
         self.assertNotIn(hostname, info["host"]["uname"])
-        u = _os.uname()
+        u = os.uname()
         self.assertTrue(info["host"]["uname"].startswith(u.sysname))
         self.assertIn(u.release, info["host"]["uname"])
         self.assertIn(u.machine, info["host"]["uname"])
