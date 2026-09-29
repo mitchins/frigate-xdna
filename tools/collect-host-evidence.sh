@@ -17,10 +17,25 @@ redact() {
     -e 's/\b[0-9A-Fa-f]{1,4}::([0-9A-Fa-f]{1,4}:?)*\b/<ip6>/g' \
     -e 's/\b([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\b/<ip6>/g' \
     -e 's/(authorization|api[_-]?key|token|secret)[=: ][^ ]+/\1=<redacted>/Ig'
+  return 0
 }
 
-section() { printf '\n===== %s =====\n' "$1"; }
-soft() { if command -v "$1" >/dev/null 2>&1; then "$@"; else echo "(command $1 not available)"; fi; }
+section() {
+  local title="$1"
+  printf '\n===== %s =====\n' "$title"
+  return 0
+}
+
+soft() {
+  local cmd="$1"
+  shift
+  if command -v "$cmd" >/dev/null 2>&1; then
+    "$@"
+  else
+    echo "(command $cmd not available)"
+  fi
+  return 0
+}
 
 section "collected at"
 date -u +"%Y-%m-%dT%H:%M:%SZ (UTC)"
@@ -31,13 +46,13 @@ uname -a 2>/dev/null || echo "(uname failed)"
 section "BIOS / DMI (no serials)"
 for f in product_name board_name bios_vendor bios_version bios_date; do
   p="/sys/class/dmi/id/$f"
-  if [ -r "$p" ]; then printf '%s: %s\n' "$f" "$(cat "$p")"; fi
+  if [[ -r "$p" ]]; then printf '%s: %s\n' "$f" "$(cat "$p")"; fi
 done
-[ -r /sys/class/dmi/id/product_name ] || echo "(DMI not readable)"
+[[ -r /sys/class/dmi/id/product_name ]] || echo "(DMI not readable)"
 
 section "NPU PCI / revision"
 for dev in /sys/class/accel/*/device; do
-  [ -d "$dev" ] || continue
+  [[ -d "$dev" ]] || continue
   printf '%s vendor=%s device=%s revision=%s subsystem=%s:%s\n' \
     "$dev" \
     "$(cat "$dev/vendor" 2>/dev/null)" \
@@ -46,28 +61,29 @@ for dev in /sys/class/accel/*/device; do
     "$(cat "$dev/subsystem_vendor" 2>/dev/null)" \
     "$(cat "$dev/subsystem_device" 2>/dev/null)"
 done
-[ -d /sys/class/accel ] || echo "(no accel class devices)"
+[[ -d /sys/class/accel ]] || echo "(no accel class devices)"
 
 section "amdxdna driver metadata"
-for m in /sys/module/amdxdna; do
-  [ -d "$m" ] || { echo "(amdxdna module not loaded)"; break; }
-  printf 'srcversion: %s\n' "$(cat "$m/srcversion" 2>/dev/null || echo not-exposed)"
-  printf 'version: %s\n' "$(cat "$m/version" 2>/dev/null || echo not-exposed)"
+if [[ -d /sys/module/amdxdna ]]; then
+  printf 'srcversion: %s\n' "$(cat /sys/module/amdxdna/srcversion 2>/dev/null || echo not-exposed)"
+  printf 'version: %s\n' "$(cat /sys/module/amdxdna/version 2>/dev/null || echo not-exposed)"
   printf 'parameters:\n'
-  for p in "$m/parameters"/*; do
-    [ -e "$p" ] || continue
+  for p in /sys/module/amdxdna/parameters/*; do
+    [[ -e "$p" ]] || continue
     printf '  %s = %s\n' "$(basename "$p")" "$(cat "$p" 2>/dev/null)"
   done
-done
+else
+  echo "(amdxdna module not loaded)"
+fi
 
 section "NPU firmware"
 for dev in /sys/class/accel/*/device; do
-  [ -r "$dev/fw_version" ] && printf '%s fw_version=%s\n' "$dev" "$(cat "$dev/fw_version")"
+  [[ -r "$dev/fw_version" ]] && printf '%s fw_version=%s\n' "$dev" "$(cat "$dev/fw_version")"
 done
 
 section "runtime PM configuration"
 for dev in /sys/class/accel/*/device; do
-  [ -d "$dev" ] || continue
+  [[ -d "$dev" ]] || continue
   printf '%s control=%s runtime_status=%s autosuspend_delay_ms=%s\n' \
     "$dev" \
     "$(cat "$dev/power/control" 2>/dev/null)" \

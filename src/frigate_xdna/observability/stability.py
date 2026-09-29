@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 
 RUNS_DIRNAME = "stability"
@@ -37,6 +38,16 @@ ACKNOWLEDGE = "acknowledge.json"
 
 # Bounded tail carried into diagnose bundles.
 DIAGNOSE_TAIL_LINES = 200
+
+# RUN_IDs are operator/CLI-supplied path components: restrict to a
+# flat, separator-free token so no run_id can traverse outside
+# <data>/stability/ (Sonar S8707).
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+def safe_run_id(run_id: str) -> bool:
+    """True when run_id is a flat directory name, never a path."""
+    return bool(_RUN_ID_RE.fullmatch(run_id or ""))
 
 
 def runs_root(data_dir: str) -> str:
@@ -56,7 +67,8 @@ def list_runs(data_dir: str) -> list[str]:
     except OSError:
         return []
     return sorted(n for n in names
-                  if os.path.isfile(os.path.join(root, n, METADATA)))
+                  if safe_run_id(n)
+                  and os.path.isfile(os.path.join(root, n, METADATA)))
 
 
 def latest_run(data_dir: str) -> str | None:
@@ -115,6 +127,8 @@ def detect_interrupted(timeline: list[dict], has_result: bool) -> dict | None:
 
 def load_report(data_dir: str, run_id: str | None = None) -> dict | None:
     """Full report record for a run (latest when run_id is None)."""
+    if run_id is not None and not safe_run_id(run_id):
+        return None
     rid = run_id or latest_run(data_dir)
     if rid is None or not os.path.isfile(
             os.path.join(run_dir(data_dir, rid), METADATA)):
@@ -138,18 +152,11 @@ def load_report(data_dir: str, run_id: str | None = None) -> dict | None:
     }
 
 
-def acknowledge_run(data_dir: str, reason: str,
-                    run_id: str | None = None) -> dict:
-    """Record explicit operator acknowledgement of an interrupted
-    run. Clears the diagnostic-run latch only: ordinary production
-    device-fault inhibition, quarantine and cooldown state are not
-    touched (they live in the registry and keep their own recovery
-    route)."""
-    rid = run_id or latest_run(data_dir)
+def _ack_refusal(rid: str | None, report: dict | None) -> dict | None:
+    """Refusal record for acknowledge, or None when allowed."""
     if rid is None:
         return {"acknowledged": False, "error_code": "NOT_FOUND",
                 "message": "no stability runs recorded"}
-    report = load_report(data_dir, rid)
     if report is None:
         return {"acknowledged": False, "error_code": "NOT_FOUND",
                 "message": f"run {rid} has no metadata"}
@@ -161,6 +168,25 @@ def acknowledge_run(data_dir: str, reason: str,
         return {"acknowledged": False, "error_code": "NOT_INTERRUPTED",
                 "message": f"run {rid} has a final result; nothing to "
                            "acknowledge", "run_id": rid}
+    return None
+
+
+def acknowledge_run(data_dir: str, reason: str,
+                    run_id: str | None = None) -> dict:
+    """Record explicit operator acknowledgement of an interrupted
+    run. Clears the diagnostic-run latch only: ordinary production
+    device-fault inhibition, quarantine and cooldown state are not
+    touched (they live in the registry and keep their own recovery
+    route)."""
+    if run_id is not None and not safe_run_id(run_id):
+        return {"acknowledged": False, "error_code": "INVALID_ARGS",
+                "message": "run id must be a flat directory name"}
+    rid = run_id or latest_run(data_dir)
+    report = (load_report(data_dir, rid) if rid is not None else None)
+    refusal = _ack_refusal(rid, report)
+    if refusal is not None:
+        return refusal
+    assert rid is not None and report is not None
     rec = {"schema_version": 1, "run_id": rid, "reason": reason,
            "acknowledged_at": time.time()}
     path = os.path.join(run_dir(data_dir, rid), ACKNOWLEDGE)

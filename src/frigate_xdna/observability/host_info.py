@@ -63,11 +63,9 @@ def _driver_name(dev: str) -> str | None:
     return os.path.basename(link.rstrip("/"))
 
 
-def collect_host_info(sys_root: str = SYS_ROOT) -> dict:
-    """Passive fingerprint: host, NPU, runtime PM, appliance stack.
-
-    Absent readings are `None` (honest absence), never invented.
-    """
+def _collect_npu(sys_root: str) -> tuple[dict, dict]:
+    """(npu, power) records for the first accel device; honest
+    nulls when nothing is visible."""
     npu: dict = {}
     power: dict = {}
     dev = _npu_device(sys_root)
@@ -81,10 +79,9 @@ def collect_host_info(sys_root: str = SYS_ROOT) -> dict:
         sub_device = _read(os.path.join(dev, "subsystem_device"))
         npu["subsystem_id"] = (f"{sub_vendor}:{sub_device}"
                                if sub_vendor and sub_device else None)
-        if npu["pci_id"]:
-            npu["pci_id"] = npu["pci_id"].replace("0x", "")
-        if npu["subsystem_id"]:
-            npu["subsystem_id"] = npu["subsystem_id"].replace("0x", "")
+        for key in ("pci_id", "subsystem_id"):
+            if npu[key]:
+                npu[key] = npu[key].replace("0x", "")
         driver = _driver_name(dev)
         npu["driver"] = driver
         npu["driver_srcversion"] = (
@@ -107,7 +104,15 @@ def collect_host_info(sys_root: str = SYS_ROOT) -> dict:
         npu.setdefault(key, None)
     for key in ("control", "runtime_status", "autosuspend_delay_ms"):
         power.setdefault(key, None)
+    return npu, power
 
+
+def collect_host_info(sys_root: str = SYS_ROOT) -> dict:
+    """Passive fingerprint: host, NPU, runtime PM, appliance stack.
+
+    Absent readings are `None` (honest absence), never invented.
+    """
+    npu, power = _collect_npu(sys_root)
     dmi_root = os.path.join(sys_root, "class/dmi/id")
     dmi = {f: _read(os.path.join(dmi_root, f)) for f in _DMI_FIELDS}
 
