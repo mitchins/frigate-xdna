@@ -227,7 +227,7 @@ class CompatibilityDocTest(unittest.TestCase):
         rows = self._summary_rows()
         ids = [r[0] for r in rows]
         self.assertEqual(ids, ["[O-001](#o-001)", "[O-002](#o-002)",
-                               "[O-003](#o-003)"])
+                               "[O-003](#o-003)", "[O-004](#o-004)"])
         allowed = ("PASS", "LIMITED", "FAIL", "RESET", "UNKNOWN")
         for r in rows:
             verdict = r[-1].strip("* —-")
