@@ -55,7 +55,10 @@ def runs_root(data_dir: str) -> str:
 
 
 def run_dir(data_dir: str, run_id: str) -> str:
-    return os.path.join(runs_root(data_dir), run_id)
+    """Flat run directory. basename() at this single path sink
+    neutralizes any traversal-shaped run id regardless of upstream
+    validation (defence in depth; callers validate too)."""
+    return os.path.join(runs_root(data_dir), os.path.basename(run_id))
 
 
 def list_runs(data_dir: str) -> list[str]:
@@ -199,17 +202,20 @@ def acknowledge_run(data_dir: str, reason: str,
     return {"acknowledged": True, "run_id": rid, "reason": reason}
 
 
+def _report_header(result, interrupted) -> str:
+    if result is not None:
+        return f"frigate-xdna stability run: {result.get('outcome')}"
+    if interrupted is not None:
+        return "frigate-xdna stability run: INTERRUPTED"
+    return "frigate-xdna stability run: (no final result)"
+
+
 def format_report(report: dict) -> str:
     """Human-readable rendering for `fxdna stability report`."""
-    lines: list[str] = []
+    lines: list[str] = [
+        _report_header(report.get("result"), report.get("interrupted"))]
     res = report.get("result")
     interrupted = report.get("interrupted")
-    if res is not None:
-        lines.append(f"frigate-xdna stability run: {res.get('outcome')}")
-    elif interrupted is not None:
-        lines.append("frigate-xdna stability run: INTERRUPTED")
-    else:
-        lines.append("frigate-xdna stability run: (no final result)")
     meta = report.get("metadata") or {}
     model = meta.get("model") or {}
     if model:

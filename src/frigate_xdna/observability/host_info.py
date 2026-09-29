@@ -63,6 +63,31 @@ def _driver_name(dev: str) -> str | None:
     return os.path.basename(link.rstrip("/"))
 
 
+def _paired_id(dev: str, a: str, b: str) -> str | None:
+    """`vendor:device` style id from two sysfs files, 0x-stripped."""
+    first = _read(os.path.join(dev, a))
+    second = _read(os.path.join(dev, b))
+    if not (first and second):
+        return None
+    return f"{first}:{second}".replace("0x", "")
+
+
+def _module_field(sys_root: str, driver: str | None,
+                  name: str) -> str | None:
+    if not driver:
+        return None
+    return _read(os.path.join(sys_root, "module", driver, name))
+
+
+def _fill_power(dev: str, power: dict) -> None:
+    power_root = os.path.join(dev, "power")
+    power["control"] = _read(os.path.join(power_root, "control"))
+    power["runtime_status"] = _read(
+        os.path.join(power_root, "runtime_status"))
+    power["autosuspend_delay_ms"] = _read_int(
+        os.path.join(power_root, "autosuspend_delay_ms"))
+
+
 def _collect_npu(sys_root: str) -> tuple[dict, dict]:
     """(npu, power) records for the first accel device; honest
     nulls when nothing is visible."""
@@ -70,34 +95,19 @@ def _collect_npu(sys_root: str) -> tuple[dict, dict]:
     power: dict = {}
     dev = _npu_device(sys_root)
     if dev is not None:
-        vendor = _read(os.path.join(dev, "vendor"))
-        device = _read(os.path.join(dev, "device"))
-        npu["pci_id"] = (f"{vendor}:{device}"
-                         if vendor and device else None)
+        npu["pci_id"] = _paired_id(dev, "vendor", "device")
+        npu["subsystem_id"] = _paired_id(
+            dev, "subsystem_vendor", "subsystem_device")
         npu["revision"] = _read(os.path.join(dev, "revision"))
-        sub_vendor = _read(os.path.join(dev, "subsystem_vendor"))
-        sub_device = _read(os.path.join(dev, "subsystem_device"))
-        npu["subsystem_id"] = (f"{sub_vendor}:{sub_device}"
-                               if sub_vendor and sub_device else None)
-        for key in ("pci_id", "subsystem_id"):
-            if npu[key]:
-                npu[key] = npu[key].replace("0x", "")
         driver = _driver_name(dev)
         npu["driver"] = driver
-        npu["driver_srcversion"] = (
-            _read(os.path.join(sys_root, "module", driver, "srcversion"))
-            if driver else None)
-        npu["driver_version"] = (
-            _read(os.path.join(sys_root, "module", driver, "version"))
-            if driver else None)
+        npu["driver_srcversion"] = _module_field(
+            sys_root, driver, "srcversion")
+        npu["driver_version"] = _module_field(
+            sys_root, driver, "version")
         # Standalone fw_version sysfs attribute (amdxdna).
         npu["firmware_version"] = _read(os.path.join(dev, "fw_version"))
-        power_root = os.path.join(dev, "power")
-        power["control"] = _read(os.path.join(power_root, "control"))
-        power["runtime_status"] = _read(
-            os.path.join(power_root, "runtime_status"))
-        power["autosuspend_delay_ms"] = _read_int(
-            os.path.join(power_root, "autosuspend_delay_ms"))
+        _fill_power(dev, power)
     for key in ("pci_id", "revision", "subsystem_id", "driver",
                 "driver_srcversion", "driver_version",
                 "firmware_version"):
