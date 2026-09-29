@@ -83,10 +83,13 @@ class FakeSysfsTest(unittest.TestCase):
         # Shareable artifact: the host's nodename must not leak.
         info = host_info.collect_host_info(sys_root=self.root)
         import socket
+        import os as _os
         hostname = socket.gethostname()
         self.assertNotIn(hostname, info["host"]["uname"])
-        parts = info["host"]["uname"].split()
-        self.assertEqual(len(parts), 4)
+        u = _os.uname()
+        self.assertTrue(info["host"]["uname"].startswith(u.sysname))
+        self.assertIn(u.release, info["host"]["uname"])
+        self.assertIn(u.machine, info["host"]["uname"])
 
     def test_absent_tree_is_nulls_not_crash(self):
         info = host_info.collect_host_info(sys_root=self.root)
