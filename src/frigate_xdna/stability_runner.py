@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import array
 import os
-import random
 import signal
 import time
 
@@ -58,7 +57,6 @@ TIMEOUT_FLOOR_S = 2.0
 TIMEOUT_CEIL_S = 30.0
 PROBE_TIMEOUT_S = 30.0       # H1/H2 hang bound (pre-calibration)
 DEFAULT_SHAPE = (1, 3, 320, 320)
-TENSOR_SEED = 0xF05DA1
 
 
 def _percentile(values: list[float], q: float) -> float:
@@ -85,12 +83,17 @@ def _install_stop_handlers(flag: _StopFlag) -> None:
 
 
 def _make_tensor(shape: tuple[int, ...]) -> bytes:
-    """Deterministic mild-valued float32 tensor (finite, stable)."""
-    rng = random.Random(TENSOR_SEED)
+    """Deterministic mild-valued float32 tensor (finite, stable).
+
+    Pure integer arithmetic (multiplicative hash scaled into
+    [0, 0.2)); no PRNG involved — content is a fixed function of
+    the index, identical on every host and run.
+    """
     n = 1
     for d in shape:
         n *= d
-    vals = array.array("f", (rng.random() * 0.2 for _ in range(n)))
+    vals = array.array("f", (
+        ((i * 2654435761) % 1000003) / 5000015.0 for i in range(n)))
     return vals.tobytes()
 
 
@@ -212,8 +215,7 @@ class _Run:
                      f"{state:<5} {detail}")
 
     # ---- journal -------------------------------------------------
-    def checkpoint(self, phase: str, sub_phase: str,
-                   force: bool = False) -> None:
+    def checkpoint(self, phase: str, sub_phase: str) -> None:
         now = time.monotonic()
         recent = self.latencies[-100:]
         doc = {
@@ -269,7 +271,7 @@ class _Run:
     # ---- phases --------------------------------------------------
     def phase_e0(self, status_doc: dict) -> str | None:
         self.last_phase = "E0"
-        self.checkpoint("E0", "environment", force=True)
+        self.checkpoint("E0", "environment")
         model = (status_doc.get("models") or [{}])[0]
         inhibition = status_doc.get("inhibition")
         if inhibition:
@@ -302,7 +304,7 @@ class _Run:
                             outcome="ACTIVATION_FAILED")
             self.phases.append("H1 ACTIVATE      FAIL (activation)")
             return "ACTIVATION_FAILED"
-        self.checkpoint("H1", "worker-load", force=True)
+        self.checkpoint("H1", "worker-load")
         err = self.infer_once(PROBE_TIMEOUT_S)
         self.j.timeline("H1", "PHASE", "COMPLETED",
                         outcome="PASS" if err is None else err,
@@ -442,6 +444,76 @@ def _finish(journal: StabilityJournal, run: _Run | None, outcome: str,
     return doc
 
 
+def _start_run(sup, journal: StabilityJournal, run_id: str,
+               profile: str, phases_plan: tuple[str, ...], ref: str,
+               out, stop: _StopFlag, steady_duration_s: float,
+               cal_warmup: int, cal_measured: int
+               ) -> tuple[_Run, str | None]:
+    """E0: persist environment before anything device-bound, then
+    evaluate preconditions. Returns (run, error_or_None)."""
+    status_doc = sup.status(ref)
+    model = (status_doc.get("models") or [{}])[0]
+    inspection = model.get("inspection") or {}
+    inspected_shape = inspection.get("input_shape")
+    shape = tuple(inspected_shape) if (
+        isinstance(inspected_shape, list) and len(inspected_shape)
+        == 4) else DEFAULT_SHAPE
+    from .build_identity import get_build_identity
+    from .observability.host_info import collect_host_info
+    journal.metadata({
+        "schema_version": 1,
+        "run_id": run_id,
+        "profile": profile,
+        "phases_plan": list(phases_plan),
+        "model": {
+            "ref": model.get("ref", ref),
+            "state": model.get("state"),
+            "family": (inspection.get("family")
+                       or model.get("ref", ref)),
+            "resolution": shape[-1] if len(shape) == 4 else None,
+            "compile_key": model.get("compile_key"),
+            "input_shape": list(shape),
+            "shape_source": ("inspection" if inspected_shape
+                             else "fallback"),
+        },
+        "host_info": collect_host_info(),
+        "build": get_build_identity(),
+        "inhibition": status_doc.get("inhibition"),
+        "started_at": time.time(),
+    })
+    run = _Run(sup.config, sup, journal, profile, shape,
+               _make_tensor(shape), out, stop,
+               steady_duration_s, cal_warmup, cal_measured)
+    journal.timeline("RUN", "RUN", "STARTED", profile=profile,
+                     ref=model.get("ref", ref))
+    err = run.phase_e0(status_doc)
+    if err is None:
+        run.say("E0", "PASS", _e0_summary())
+    else:
+        run.say("E0", "FAIL", err.lower().replace("_", " "))
+    return run, err
+
+
+def _finish_run(out, journal: StabilityJournal, run: _Run,
+                err: str | None, ref: str) -> int:
+    """Write the deliberate result and map to a CLI exit code."""
+    if err == "NOT_PREPARED":
+        out("MODEL_NOT_PREPARED")
+        out("")
+        out("Prepare it first:")
+        out(f"  fxdna prepare {ref} --wait")
+        doc = _finish(journal, run, "FAIL", "NOT_PREPARED")
+        _print_result(out, doc)
+        return NOT_READY
+    if err is not None:
+        doc = _finish(journal, run, "FAIL", err)
+        _print_result(out, doc)
+        return _exit_for_failure(err)
+    doc = _finish(journal, run, "PASS")
+    _print_result(out, doc)
+    return SUCCESS
+
+
 def run_stability(config, ref: str | None = None,
                   configured: bool = False, profile: str = "gentle",
                   *, steady_duration_s: float = STEADY_DURATION_S,
@@ -490,77 +562,24 @@ def run_stability(config, ref: str | None = None,
     _install_stop_handlers(stop)
     run: _Run | None = None
     try:
-        # E0 — environment, persisted before anything device-bound.
-        status_doc = sup.status(ref)
-        model = (status_doc.get("models") or [{}])[0]
-        inspection = model.get("inspection") or {}
-        inspected_shape = inspection.get("input_shape")
-        shape = tuple(inspected_shape) if (
-            isinstance(inspected_shape, list) and len(inspected_shape)
-            == 4) else DEFAULT_SHAPE
-        from .build_identity import get_build_identity
-        from .observability.host_info import collect_host_info
-        journal.metadata({
-            "schema_version": 1,
-            "run_id": run_id,
-            "profile": profile,
-            "phases_plan": list(phases_plan),
-            "model": {
-                "ref": model.get("ref", ref),
-                "state": model.get("state"),
-                "family": (inspection.get("family")
-                           or model.get("ref", ref)),
-                "resolution": shape[-1] if len(shape) == 4 else None,
-                "compile_key": model.get("compile_key"),
-                "input_shape": list(shape),
-                "shape_source": ("inspection" if inspected_shape
-                                 else "fallback"),
-            },
-            "host_info": collect_host_info(),
-            "build": get_build_identity(),
-            "inhibition": status_doc.get("inhibition"),
-            "started_at": time.time(),
-        })
-        run = _Run(config, sup, journal, profile, shape,
-                   _make_tensor(shape), out, stop,
-                   steady_duration_s, cal_warmup, cal_measured)
-        journal.timeline("RUN", "RUN", "STARTED", profile=profile,
-                         ref=model.get("ref", ref))
-
-        err = run.phase_e0(status_doc)
-        if err is None:
-            run.say("E0", "PASS", _e0_summary())
-        else:
-            run.say("E0", "FAIL", err.lower().replace("_", " "))
-        if err is None and "H1" in phases_plan:
-            err = run.phase_h1(ref)
-        if err is None and "H2" in phases_plan:
-            err = run.phase_h2()
-        if err is None and "H3" in phases_plan:
-            err = run.phase_h3()
-        if err == "NOT_PREPARED":
-            out("MODEL_NOT_PREPARED")
-            out("")
-            out("Prepare it first:")
-            out(f"  fxdna prepare {ref} --wait")
-            doc = _finish(journal, run, "FAIL", "NOT_PREPARED")
-            _print_result(out, doc)
-            return NOT_READY
-        if err is not None:
-            doc = _finish(journal, run, "FAIL", err)
-            _print_result(out, doc)
-            return _exit_for_failure(err)
-        doc = _finish(journal, run, "PASS")
-        _print_result(out, doc)
-        return SUCCESS
+        run, err = _start_run(sup, journal, run_id, profile,
+                              phases_plan, ref, out, stop,
+                              steady_duration_s, cal_warmup,
+                              cal_measured)
+        for phase_id, phase_fn in (
+                ("H1", lambda: run.phase_h1(ref)),
+                ("H2", run.phase_h2),
+                ("H3", run.phase_h3)):
+            if err is None and phase_id in phases_plan:
+                err = phase_fn()
+        return _finish_run(out, journal, run, err, ref)
     finally:
         if run is not None:
             # Final durable checkpoint while the worker still exists
             # (pid/RSS of the retired child are meaningless after
             # stop()); then retire.
             try:
-                run.checkpoint(run.last_phase or "E0", "finished",
-                               force=True)
+                run.checkpoint(run.last_phase or "E0", "finished")
             except Exception:
                 pass
         try:
