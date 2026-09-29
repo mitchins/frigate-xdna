@@ -104,14 +104,18 @@ class TestVendorOutcomes(unittest.TestCase):
         finally:
             w.retire()
 
-    def test_delayed_reply_is_io_failure(self):
+    def test_delayed_reply_is_timeout_not_io_fault(self):
         w = spawn("--sleep", "5")
         try:
             w.load("/tmp/x.rai", 7, "srv", 3)
             t0 = time.monotonic()
             with self.assertRaises(WorkerError) as ctx:
                 w.infer(b"\x00" * 48, [1, 3, 2, 2], 7, timeout_s=0.5)
-            self.assertEqual(ctx.exception.code, "WORKER_IO")
+            # A bounded receive that expired is a timeout: the worker
+            # was not dropped for one slow request (SPEC §6), and the
+            # stability runner can count it as a timeout, not an
+            # error. Bounded: fails well before the 5 s reply lands.
+            self.assertEqual(ctx.exception.code, "TIMEOUT")
             self.assertLess(time.monotonic() - t0, 5.0)
         finally:
             w.retire()

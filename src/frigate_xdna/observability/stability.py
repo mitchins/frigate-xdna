@@ -19,8 +19,9 @@ run finished deliberately (PASS or FAIL). Its absence after device-
 sensitive STARTED breadcrumbs means the run was interrupted; that
 is a fact about the last durable checkpoint, never a causal claim.
 
-The runner (`fxdna stability run`) arrives in a later release; the
-journal contract here is final so its records can be read now.
+The runner (`fxdna stability run`) writes this journal through
+`StabilityJournal`; every device-sensitive transition is durably
+recorded before it begins and only marked COMPLETED after it ends.
 """
 from __future__ import annotations
 
@@ -99,6 +100,56 @@ def _fsync_dir(path: str) -> None:
         pass
 
 
+def _write_durable(path: str, doc) -> None:
+    """Atomic replace + file fsync + directory fsync."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2, sort_keys=True)
+        f.flush()
+        os.fsync(f.fileno())
+    os.rename(tmp, path)
+    _fsync_dir(os.path.dirname(path))
+
+
+class StabilityJournal:
+    """Durable writer for one run's journal directory.
+
+    Timeline records are appended and fsynced one at a time (they
+    are rare: phase boundaries and device-sensitive transitions).
+    `current` is rewritten atomically at most ~1/s during active
+    phases — never per inference, which would perturb the workload.
+    """
+
+    def __init__(self, data_dir: str, run_id: str):
+        self.data_dir = data_dir
+        self.run_id = run_id
+        self.dir = run_dir(data_dir, run_id)
+        os.makedirs(self.dir, exist_ok=True)
+        self._seq = 0
+        self._timeline_path = os.path.join(self.dir, TIMELINE)
+
+    def timeline(self, phase: str, step: str, state: str,
+                 **fields) -> dict:
+        self._seq += 1
+        rec = {"sequence": self._seq, "wall_time": time.time(),
+               "phase": phase, "step": step, "state": state}
+        rec.update(fields)
+        with open(self._timeline_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, sort_keys=True) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        return rec
+
+    def current(self, doc: dict) -> None:
+        _write_durable(os.path.join(self.dir, CURRENT), doc)
+
+    def metadata(self, doc: dict) -> None:
+        _write_durable(os.path.join(self.dir, METADATA), doc)
+
+    def result(self, doc: dict) -> None:
+        _write_durable(os.path.join(self.dir, RESULT), doc)
+
+
 def read_timeline(data_dir: str, run_id: str) -> list[dict]:
     """Parse the append-only journal line by line.
 
@@ -168,6 +219,16 @@ def load_report(data_dir: str, run_id: str | None = None) -> dict | None:
     current = _read_json(os.path.join(run_dir(data_dir, rid), CURRENT))
     ack = _read_json(os.path.join(run_dir(data_dir, rid), ACKNOWLEDGE))
     interrupted = detect_interrupted(timeline, result is not None)
+    if interrupted is not None and current:
+        # The unmatched STARTED carries no counters; the last durable
+        # checkpoint does. Merge position evidence, never invent it.
+        for key in ("submitted", "completed"):
+            if interrupted.get(key) is None and current.get(key) is not None:
+                interrupted[key] = current.get(key)
+        interrupted["checkpoint"] = {
+            k: current.get(k) for k in (
+                "phase", "sub_phase", "submitted", "completed",
+                "errors", "timeouts", "wall_time") if k in current}
     return {
         "schema_version": 1,
         "run_id": rid,
@@ -251,7 +312,8 @@ def format_report(report: dict) -> str:
                   f"  {model.get('family', '?')} / "
                   f"{model.get('resolution', '?')}",
                   f"  prepared compile key: {model.get('compile_key', '?')}"]
-    phases = meta.get("phases") or []
+    phases = ((report.get("result") or {}).get("phases")
+              or meta.get("phases") or [])
     if phases or res or interrupted:
         lines += ["", "Phases"]
         for ph in phases:

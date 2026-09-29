@@ -1384,6 +1384,12 @@ class Supervisor:
                 if e.code in ("DEVICE_FAULT", "WORKER_DEAD", "WORKER_IO",
                               "INFER_SHORT", "WORKER_SPAWN"):
                     self._drop_worker(f"WORKER_{e.code}")
+                if e.code == "TIMEOUT":
+                    # Bounded receive expired; the child was not
+                    # dropped — one slow request is not a device
+                    # fault (SPEC §6: no restart for individual
+                    # client timeouts while execution is healthy).
+                    return ("timeout", b"")
                 return ("failed", b"")
             return ("ok", out)
 

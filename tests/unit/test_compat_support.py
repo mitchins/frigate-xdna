@@ -91,12 +91,12 @@ class StabilityCLITest(unittest.TestCase):
         finally:
             shutil.rmtree(data, ignore_errors=True)
 
-    def test_run_not_implemented_in_this_build(self):
-        rc, out, err, _ = run_cli(
-            ["stability", "run", "--configured", "--profile", "gentle"])
-        self.assertEqual(rc, 3)
-        self.assertIn("not implemented", err)
-        self.assertIn("NOT_IMPLEMENTED", err)
+    def test_run_requires_ref_or_configured(self):
+        # run is implemented: dispatch reaches the runner, which
+        # rejects a missing REF/--configured as invalid args.
+        rc, out, err, _ = run_cli(["stability", "run"])
+        self.assertEqual(rc, 2)
+        self.assertIn("REF", err)
 
     def test_acknowledge_reason_required(self):
         rc, out, err, _ = run_cli(["stability", "acknowledge", "--last"])
@@ -227,7 +227,7 @@ class CompatibilityDocTest(unittest.TestCase):
         rows = self._summary_rows()
         ids = [r[0] for r in rows]
         self.assertEqual(ids, ["[O-001](#o-001)", "[O-002](#o-002)",
-                               "[O-003](#o-003)"])
+                               "[O-003](#o-003)", "[O-004](#o-004)"])
         allowed = ("PASS", "LIMITED", "FAIL", "RESET", "UNKNOWN")
         for r in rows:
             verdict = r[-1].strip("* —-")

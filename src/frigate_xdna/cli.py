@@ -120,13 +120,14 @@ def build_parser() -> argparse.ArgumentParser:
     hp_info.add_argument("--json", action="store_true")
 
     stp = sub.add_parser(
-        "stability", help="Stability diagnostics: journal report and "
-                          "acknowledgement (runner arrives in a later "
-                          "release).")
+        "stability", help="Stability diagnostics: run (smoke/gentle "
+                          "profiles), durable journal report and "
+                          "acknowledgement.")
     stsub = stp.add_subparsers(dest="stability_command", required=True)
     st_run = stsub.add_parser(
         "run", help="Run a stability diagnostic against a prepared "
-                    "model (not yet implemented in this build).")
+                    "model (smoke/gentle profiles; pm/extended/"
+                    "coexistence deferred).")
     st_run.add_argument("ref", nargs="?", default=None)
     st_run.add_argument("--configured", action="store_true",
                         help="Use the single configured model "
@@ -759,11 +760,10 @@ def cmd_stability(config, args) -> int:
     under <data_dir>/stability; no NPU interaction."""
     from .observability import stability
     if args.stability_command == "run":
-        print("fxdna: stability run is not implemented in this build "
-              f"[{NOT_IMPLEMENTED}]; journal, report and acknowledge "
-              "are active — see docs/COMPATIBILITY.md",
-              file=sys.stderr)
-        return NOT_READY
+        from .stability_runner import run_stability
+        return run_stability(config, ref=args.ref,
+                             configured=args.configured,
+                             profile=args.profile)
     if args.stability_command == "report":
         report = stability.load_report(config.data_dir, args.run_id)
         if report is None:
